@@ -18,6 +18,10 @@ set_target_properties(terminal_host PROPERTIES
 
 target_compile_definitions(terminal_host PUBLIC DART_SHARED_LIB)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(terminal_host PRIVATE util pthread)
+endif()
+
 if (ANDROID)
   # Support Android 15 16k page size.
   target_link_options(terminal_host PRIVATE "-Wl,-z,max-page-size=16384")
