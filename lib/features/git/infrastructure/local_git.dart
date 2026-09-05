@@ -76,6 +76,7 @@ final class LocalGit implements GitReader, GitMutator {
     Timer? timer;
     var limited = false;
     var timedOut = false;
+    var completed = false;
     try {
       cancellation?.check();
       process = await Process.start(
@@ -86,7 +87,9 @@ final class LocalGit implements GitReader, GitMutator {
         includeParentEnvironment: false,
       );
       final running = process;
-      cancellation?.whenCancelled.then((_) => running.kill());
+      cancellation?.whenCancelled.then((_) {
+        if (!completed) running.kill();
+      });
       timer = Timer(const Duration(seconds: 30), () {
         timedOut = true;
         running.kill();
@@ -110,6 +113,7 @@ final class LocalGit implements GitReader, GitMutator {
         }
       }).asFuture<void>();
       final code = await running.exitCode;
+      completed = true;
       await Future.wait([stdoutDone, stderrDone]);
       cancellation?.check();
       if (limited) {
@@ -136,6 +140,7 @@ final class LocalGit implements GitReader, GitMutator {
       }
       return result;
     } finally {
+      completed = true;
       timer?.cancel();
       release();
     }
@@ -328,17 +333,27 @@ final class LocalGit implements GitReader, GitMutator {
 
   @override
   Future<GitIdentity> identity(GitRepository repo) async {
-    final author = await _run(repo.root, ['var', 'GIT_AUTHOR_IDENT'], allowFailure: true);
-    final committer = await _run(repo.root, ['var', 'GIT_COMMITTER_IDENT'], allowFailure: true);
+    final author = await _run(repo.root, [
+      'var',
+      'GIT_AUTHOR_IDENT',
+    ], allowFailure: true);
+    final committer = await _run(repo.root, [
+      'var',
+      'GIT_COMMITTER_IDENT',
+    ], allowFailure: true);
     final origins = await _run(repo.root, [
       'config',
       '--show-origin',
       '--get-regexp',
       r'^user\.(name|email)$',
     ], allowFailure: true);
-    final parsed = RegExp(r'^(.+) <([^<>]+)> \d+ [+-]\d+').firstMatch(author.text.trim());
-    return GitIdentity(parsed?.group(1) ?? '', parsed?.group(2) ?? '',
-      '${origins.text}\nEffective author: ${author.text.trim()}\nEffective committer: ${committer.text.trim()}');
+    final parsed = RegExp(r'^(.+) <([^<>]+)> \d+ [+-]\d+')
+        .firstMatch(author.text.trim());
+    return GitIdentity(
+      parsed?.group(1) ?? '',
+      parsed?.group(2) ?? '',
+      '${origins.text}\nEffective author: ${author.text.trim()}\nEffective committer: ${committer.text.trim()}',
+    );
   }
 
   @override
@@ -556,9 +571,8 @@ final class LocalGit implements GitReader, GitMutator {
   ) async {
     final release = await _lock(repo);
     try {
-      final known = (await worktrees(repo))
-          .where((w) => p.equals(w.path, worktree.path))
-          .toList();
+      final all = await worktrees(repo);
+      final known = all.where((w) => p.equals(w.path, worktree.path)).toList();
       if (known.length != 1 ||
           known.single.main ||
           known.single.locked ||
@@ -569,10 +583,18 @@ final class LocalGit implements GitReader, GitMutator {
       if (!p.equals(canonical, p.normalize(p.absolute(worktree.path)))) {
         throw GitFailure('Worktree path changed or is a link.');
       }
-      if (sessionDirectories.any(
-        (cwd) => p.equals(canonical, cwd) || p.isWithin(canonical, cwd),
-      )) {
-        throw GitFailure('Close all Tabryo sessions in this worktree first.');
+      for (final cwd in sessionDirectories) {
+        String resolved;
+        try {
+          resolved = await Directory(cwd).resolveSymbolicLinks();
+        } on FileSystemException {
+          throw GitFailure(
+            'An active session directory cannot be revalidated. Close that session first.',
+          );
+        }
+        if (p.equals(canonical, resolved) || p.isWithin(canonical, resolved)) {
+          throw GitFailure('Close all Tabryo sessions in this worktree first.');
+        }
       }
       final state = await _run(canonical, [
         'status',
@@ -590,7 +612,7 @@ final class LocalGit implements GitReader, GitMutator {
       if (!p.equals(checked.commonDirectory, repo.commonDirectory)) {
         throw GitFailure('Worktree repository identity changed.');
       }
-      await _run(repo.root, [
+      await _run(all.first.path, [
         'worktree',
         'remove',
         '--',

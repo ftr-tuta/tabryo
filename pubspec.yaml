@@ -48,6 +48,7 @@ dependencies:
   path: 1.9.1
 
 dev_dependencies:
+  ffi: ^2.1.4
   dartitect_lints:
     git:
       url: https://github.com/ftr-tuta/dartitect.git

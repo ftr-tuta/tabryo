@@ -445,6 +445,54 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
   );
 
   Widget _panes(PaneNode node) => switch (node) {
+    TerminalPane(:final session)
+        when model.restoredSessions.containsKey(session) =>
+      InkWell(
+        onTap: () => model.focusSession(session),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(model.restoredSessions[session]!),
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text('Restored layout · no process is running.'),
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilledButton(
+                    onPressed: () {
+                      model.focusSession(session);
+                      model.openTerminal();
+                    },
+                    child: const Text('Start shell'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () {
+                      model.focusSession(session);
+                      model.openTerminal(codex: true);
+                    },
+                    child: const Text('Start Codex'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () {
+                      model.focusSession(session);
+                      model.openTerminal(codex: true, resume: true);
+                    },
+                    child: const Text('Resume Codex'),
+                  ),
+                  IconButton(
+                    tooltip: 'Close restored pane',
+                    onPressed: () => model.closeSession(session),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     TerminalPane(:final session) => TerminalPaneView(
       key: ValueKey(session),
       session: model.sessions[session]!,

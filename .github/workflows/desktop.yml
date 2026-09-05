@@ -40,6 +40,12 @@ jobs:
       - name: Linux native terminal tests
         if: runner.os == 'Linux'
         run: xvfb-run -a flutter test integration_test/terminal_host_test.dart -d linux
+      - name: Windows desktop integration
+        if: runner.os == 'Windows'
+        run: flutter test integration_test/workbench_test.dart -d windows
+      - name: Linux desktop integration
+        if: runner.os == 'Linux'
+        run: xvfb-run -a flutter test integration_test/workbench_test.dart -d linux
       - run: flutter build ${{ matrix.device }} --release
       - name: Package Windows
         if: runner.os == 'Windows'

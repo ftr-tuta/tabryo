@@ -30,6 +30,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final PreferencesStore preferencesStore;
   final workspaces = <Workspace>[];
   final sessions = <int, TerminalSession>{};
+  final restoredSessions = <int, String>{};
   Preferences preferences = const Preferences();
   int activeWorkspace = 0;
   int? focusedSession;
@@ -72,8 +73,77 @@ final class WorkbenchViewModel extends DartitectViewModel {
         workspaces.add(Workspace(root));
       }
     }
+    if (preferences.restoreLayout) {
+      for (final item in preferences.layout) {
+        final root = item['root'];
+        if (root is! String || !p.isAbsolute(root)) continue;
+        var owner = workspaces.where((w) => p.equals(w.root, root)).firstOrNull;
+        if (owner == null) {
+          owner = Workspace(root);
+          workspaces.add(owner);
+        }
+        for (final saved
+            in (item['tabs'] is List ? item['tabs'] as List : []).take(30)) {
+          if (saved is! Map) continue;
+          var pane = _restorePane(saved['panes'], 0);
+          if (pane == null) continue;
+          for (final extra in pane.sessions.skip(4).toList()) {
+            pane = pane!.remove(extra);
+            restoredSessions.remove(extra);
+          }
+          final title = saved['title'] is String
+              ? saved['title'] as String
+              : 'Restored terminal';
+          owner.tabs.add(
+            WorkspaceTab(
+              ++_nextId,
+              title.substring(0, title.length.clamp(0, 80)),
+              pane!,
+            ),
+          );
+        }
+        owner.activeTab =
+            (item['activeTab'] is int ? item['activeTab'] as int : 0).clamp(
+              0,
+              owner.tabs.isEmpty ? 0 : owner.tabs.length - 1,
+            );
+        if (item['active'] == true) activeWorkspace = workspaces.indexOf(owner);
+      }
+      focusedSession = tab?.panes.sessions.firstOrNull;
+    }
     notifyListeners();
   }
+
+  PaneNode? _restorePane(Object? value, int depth) {
+    if (value is! Map || depth > 3) return null;
+    if (value['direction'] case final String direction) {
+      final first = _restorePane(value['first'], depth + 1);
+      final second = _restorePane(value['second'], depth + 1);
+      if (first == null || second == null) return first ?? second;
+      return SplitPane(
+        direction == 'vertical'
+            ? SplitDirection.vertical
+            : SplitDirection.horizontal,
+        first,
+        second,
+      );
+    }
+    final title = value['title'] is String ? value['title'] as String : 'Shell';
+    final id = ++_nextId;
+    restoredSessions[id] = title.length > 80 ? title.substring(0, 80) : title;
+    return TerminalPane(id);
+  }
+
+  Map<String, Object?> _savePane(PaneNode node) => switch (node) {
+    TerminalPane(:final session) => {
+      'title': sessions[session]?.title ?? restoredSessions[session] ?? 'Shell',
+    },
+    SplitPane(:final direction, :final first, :final second) => {
+      'direction': direction.name,
+      'first': _savePane(first),
+      'second': _savePane(second),
+    },
+  };
 
   Future<void> guarded(Future<void> Function() operation) async {
     try {
@@ -309,7 +379,15 @@ final class WorkbenchViewModel extends DartitectViewModel {
     session.addListener(_sessionChanged);
     sessions[session.id] = session;
     final currentTab = owner.selectedTab;
-    if (split != null &&
+    if (split == null &&
+        currentTab != null &&
+        restoredSessions.containsKey(focusedSession)) {
+      currentTab.panes = currentTab.panes.replace(
+        focusedSession!,
+        TerminalPane(session.id),
+      );
+      restoredSessions.remove(focusedSession);
+    } else if (split != null &&
         currentTab != null &&
         currentTab.panes.sessions.length < 4) {
       final selected = currentTab.panes.sessions.contains(focusedSession)
@@ -345,6 +423,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     focusedSession = tab?.panes.sessions.firstOrNull;
     _visibility();
     notifyListeners();
+    unawaited(guarded(_save));
   }
 
   void cycleTab(int direction) {
@@ -370,11 +449,14 @@ final class WorkbenchViewModel extends DartitectViewModel {
 
   Future<void> closeSession(int id) => guarded(() async {
     final session = sessions[id];
-    if (session == null) return;
-    await session.close();
-    session.removeListener(_sessionChanged);
-    session.dispose();
-    sessions.remove(id);
+    if (session == null && !restoredSessions.containsKey(id)) return;
+    if (session != null) {
+      await session.close();
+      session.removeListener(_sessionChanged);
+      session.dispose();
+      sessions.remove(id);
+    }
+    restoredSessions.remove(id);
     for (final w in workspaces) {
       for (final t in w.tabs.toList()) {
         final panes = t.panes.remove(id);
@@ -438,10 +520,15 @@ final class WorkbenchViewModel extends DartitectViewModel {
         return;
       }
       final owned = command;
-      _start(owner, owned.spec, title, onFinished: () async {
-        await owned.finish();
-        if (!_shutdown && workspace == owner) await refresh();
-      });
+      _start(
+        owner,
+        owned.spec,
+        title,
+        onFinished: () async {
+          await owned.finish();
+          if (!_shutdown && workspace == owner) await refresh();
+        },
+      );
     } catch (_) {
       await command?.finish();
       rethrow;
@@ -515,11 +602,15 @@ final class WorkbenchViewModel extends DartitectViewModel {
     }
     preferences = preferences.copyWith(
       roots: workspaces.map((w) => w.root).toList(),
-      layout: sessions.values
+      layout: workspaces
           .map(
-            (s) => <String, Object?>{
-              'root': s.spec.workingDirectory,
-              'title': s.title,
+            (w) => <String, Object?>{
+              'root': w.root,
+              'active': w == workspace,
+              'activeTab': w.activeTab,
+              'tabs': w.tabs
+                  .map((t) => {'title': t.title, 'panes': _savePane(t.panes)})
+                  .toList(),
             },
           )
           .toList(),

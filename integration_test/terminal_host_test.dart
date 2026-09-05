@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
+import 'package:ffi/ffi.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:terminal_host/terminal_host.dart';
 
@@ -32,6 +35,21 @@ Future<String> collect(TerminalPty pty, {int? exit}) async {
   final text = utf8.decode(await output);
   if (exit != null) expect(code, exit, reason: text);
   return text;
+}
+
+Future<int> windowsHandleCount() async {
+  final count = calloc<Uint32>();
+  try {
+    final getCount = DynamicLibrary.open('kernel32.dll')
+        .lookupFunction<
+          Int32 Function(Pointer<Void>, Pointer<Uint32>),
+          int Function(Pointer<Void>, Pointer<Uint32>)
+        >('GetProcessHandleCount');
+    expect(getCount(Pointer<Void>.fromAddress(-1), count), 1);
+    return count.value;
+  } finally {
+    calloc.free(count);
+  }
 }
 
 void main() {
@@ -220,9 +238,15 @@ void main() {
   testWidgets(
     '100 sessions finish and release without accumulating owned child processes',
     (_) async {
+      // Initialize the SDK/ConPTY thread pools before measuring retained owners.
+      final warmup = TerminalPty.start(
+        command("[Console]::WriteLine('warmup')", "printf 'warmup\\n'"),
+      );
+      expect(await collect(warmup, exit: 0), contains('warmup'));
       final before = Platform.isLinux
           ? await Directory('/proc/self/fd').list().length
-          : 0;
+          : await windowsHandleCount();
+      final childPids = <int>[];
       for (var index = 0; index < 100; index++) {
         final spec = Platform.isWindows
             ? TerminalLaunchSpec(
@@ -234,6 +258,7 @@ void main() {
               )
             : command('', "printf 'cycle-$index\\n'");
         final pty = TerminalPty.start(spec);
+        childPids.add(pty.pid);
         expect(await collect(pty, exit: 0), contains('cycle-$index'));
         await pty.close();
       }
@@ -242,6 +267,23 @@ void main() {
           await Directory('/proc/self/fd').list().length,
           lessThanOrEqualTo(before + 3),
         );
+        for (final child in childPids) {
+          expect(await Directory('/proc/$child').exists(), isFalse);
+        }
+      } else {
+        final after = await windowsHandleCount();
+        debugPrint(
+          'Windows process handles after warmup: $before; after 100 closed sessions: $after',
+        );
+        expect(after, lessThanOrEqualTo(before + 4));
+        final alive = await Process.run(command('', '').executable, [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Get-Process -Id ${childPids.join(',')} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id',
+        ]);
+        expect('${alive.stdout}'.trim(), isEmpty);
       }
     },
     timeout: const Timeout(Duration(minutes: 4)),
