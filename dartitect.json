@@ -1,0 +1,23 @@
+{
+  "configVersion": 3,
+  "profile": "native_strict",
+  "layers": {
+    "domain": ["**/domain/**"],
+    "application": ["**/application/**"],
+    "data": ["**/data/**"],
+    "infrastructure": ["**/infrastructure/**"],
+    "presentation": ["**/presentation/**"]
+  },
+  "compositionRoots": ["lib/main.dart", "lib/composition/**", "test/**", "integration_test/**"],
+  "generatedInfrastructure": ["**/infrastructure/**/*.g.dart"],
+  "generatedSuffixes": [".g.dart", ".dartitect.g.dart"],
+  "suppressions": [],
+  "targets": {"platforms": ["windows", "linux"]},
+  "storageContexts": {},
+  "transports": {},
+  "contracts": {},
+  "observability": {"provider": "developer"},
+  "scheduler": {"provider": "none"},
+  "features": {"declarations": {}},
+  "extensionSources": []
+}
