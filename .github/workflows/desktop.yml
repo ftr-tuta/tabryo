@@ -46,6 +46,19 @@ jobs:
       - name: Linux desktop integration
         if: runner.os == 'Linux'
         run: xvfb-run -a flutter test integration_test/workbench_test.dart -d linux
+      - name: Build Release integration entrypoint for memory observation
+        run: flutter build ${{ matrix.device }} --release -t integration_test/workbench_test.dart
+      - name: Windows Release integration and memory
+        if: runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $app = Start-Process -FilePath build/windows/x64/runner/Release/tabryo.exe -Wait -PassThru -NoNewWindow
+          exit $app.ExitCode
+      - name: Linux Release integration and memory
+        if: runner.os == 'Linux'
+        timeout-minutes: 3
+        run: xvfb-run -a build/linux/x64/release/bundle/tabryo
       - run: flutter build ${{ matrix.device }} --release
       - name: Package Windows
         if: runner.os == 'Windows'

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,160 +69,164 @@ Future<void> until(WidgetTester tester, bool Function() condition) async {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-  testWidgets(
-    'desktop gestures, Unicode paste, splits, and real Git PTY commands',
-    (tester) async {
-      final temporary = await Directory.systemTemp.createTemp(
-        'tabryo-desktop-',
-      );
-      final root = await Directory(
-        p.join(temporary.path, 'workspace ação & test'),
-      ).create();
-      final cache = PreviewCache();
-      final config = await File(p.join(temporary.path, 'gitconfig'))
-          .writeAsString('');
-      final environment = {
-        'GIT_CONFIG_NOSYSTEM': '1',
-        'GIT_CONFIG_GLOBAL': config.path,
-        'GIT_AUTHOR_NAME': 'Desktop Test',
-        'GIT_AUTHOR_EMAIL': 'desktop@example.invalid',
-        'GIT_COMMITTER_NAME': 'Desktop Test',
-        'GIT_COMMITTER_EMAIL': 'desktop@example.invalid',
-      };
-      final executable = findExecutable(['git.exe', 'git'])!;
-      Future<ProcessResult> fixtureGit(List<String> args) => Process.run(
-        executable,
-        args,
-        workingDirectory: root.path,
-        environment: environment,
-      );
-      expect((await fixtureGit(['init', '-b', 'main'])).exitCode, 0);
-      final remote = p.join(temporary.path, 'remote.git');
-      expect((await fixtureGit(['init', '--bare', remote])).exitCode, 0);
-      expect(
-        (await fixtureGit(['remote', 'add', 'origin', remote])).exitCode,
-        0,
-      );
-      final git = LocalGit(
-        executable: executable,
-        cache: cache,
-        environment: environment,
-      );
-      final host = CountingHost();
-      final model = WorkbenchViewModel(
-        host: host,
-        launcher: InteractiveLauncher(),
-        files: LocalWorkspaceFiles(cache),
-        gitReader: git,
-        gitMutator: git,
-        preferencesStore: LocalPreferencesStore(
-          File(p.join(temporary.path, 'preferences.json')),
-        ),
-      );
-      addTearDown(() async {
-        await model.shutdown();
-        await temporary.delete(recursive: true);
-      });
-      final boundary = GlobalKey();
-      await tester.pumpWidget(
-        RepaintBoundary(
-          key: boundary,
-          child: TabryoApp(createViewModel: () => model),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(host.starts, 0);
-      await tester.tap(find.widgetWithText(TextButton, 'Open workspace'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextFormField), root.path);
-      await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
-      await until(tester, () => model.workspace != null && !model.loading);
-      expect(host.starts, 0);
-      await tester.tap(find.widgetWithText(TextButton, 'Shell'));
-      await until(
-        tester,
-        () =>
-            model.activeSession != null &&
-            terminalText(model.activeSession!).contains('SHELL_READY'),
-      );
-      final shell = model.activeSession!;
-      await Clipboard.setData(
-        const ClipboardData(text: 'ação 🌱\nsecond line\n'),
-      );
-      await tester.tap(find.byTooltip('Paste (Ctrl+Shift+V)'));
-      await tester.pumpAndSettle();
-      expect(find.text('Paste multiple lines?'), findsOneWidget);
-      await tester.tap(find.widgetWithText(FilledButton, 'Paste'));
-      await until(
-        tester,
-        () => terminalText(shell).contains('ECHO:second line'),
-      );
-      expect(terminalText(shell), contains('ação 🌱'));
-      await model.openTerminal(codex: true, resume: true);
-      await until(
-        tester,
-        () => terminalText(model.activeSession!).contains('RESUME_READY'),
-      );
-      await model.openTerminal(split: SplitDirection.horizontal);
-      await model.openTerminal(split: SplitDirection.vertical);
-      await until(
-        tester,
-        () => model.sessions.values.every(
-          (s) => terminalText(s).contains('READY'),
-        ),
-      );
-      expect(host.starts, 4);
-      expect(tester.takeException(), isNull);
-      await tester.pump(const Duration(milliseconds: 100));
-      final rendered =
-          await (boundary.currentContext!.findRenderObject()
-                  as RenderRepaintBoundary)
-              .toImage();
-      final png = await rendered.toByteData(format: ui.ImageByteFormat.png);
-      if (Platform.environment['TABRYO_SCREENSHOT'] case final String path) {
-        await File(path).writeAsBytes(png!.buffer.asUint8List());
-      }
-      rendered.dispose();
-      await File(p.join(root.path, 'notes.txt'))
-          .writeAsString('Desktop commit\n');
-      await model.selectSidebar(SidebarPage.changes);
-      await model.stage(model.changes.single);
-      await model.runGitCommand(
-        (repo) => git.commit(repo, 'Desktop integration commit'),
-        'Commit',
-      );
-      final commit = model.activeSession!;
-      await until(tester, () => commit.status == SessionStatus.exited);
-      expect(commit.exitCode, 0, reason: terminalText(commit));
-      expect(
-        (await git.history(await git.repository(root.path))).single.subject,
-        'Desktop integration commit',
-      );
-      // Explicit refspec belongs only to disposable fixture setup; product push uses configured upstreams.
-      expect(
-        (await fixtureGit(['config', 'branch.main.remote', 'origin'])).exitCode,
-        0,
-      );
-      expect(
-        (await fixtureGit(['config', 'branch.main.merge', 'refs/heads/main']))
-            .exitCode,
-        0,
-      );
-      await model.runGitCommand(
-        (repo) => git.remoteCommand(repo, 'push', 'origin'),
-        'Push',
-      );
-      final push = model.activeSession!;
-      await until(tester, () => push.status == SessionStatus.exited);
-      expect(push.exitCode, 0, reason: terminalText(push));
-      expect(
-        (await fixtureGit(['--git-dir', remote, 'rev-parse', 'main'])).stdout,
-        (await fixtureGit(['rev-parse', 'HEAD'])).stdout,
-      );
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  // The Flutter desktop driver requires debug/profile. A compiled Release
+  // test entrypoint still runs the same native integration_test cases; use its
+  // aggregate result as the process exit status when launched directly.
+  if (kReleaseMode) {
+    binding.allTestsPassed.future.then((passed) => exit(passed ? 0 : 1));
+  }
+  testWidgets('desktop gestures, Unicode paste, splits, and real Git PTY commands', (
+    tester,
+  ) async {
+    final temporary = await Directory.systemTemp.createTemp('tabryo-desktop-');
+    final root = await Directory(
+      p.join(temporary.path, 'workspace ação & test'),
+    ).create();
+    final cache = PreviewCache();
+    final config = await File(p.join(temporary.path, 'gitconfig'))
+        .writeAsString('');
+    final environment = {
+      'GIT_CONFIG_NOSYSTEM': '1',
+      'GIT_CONFIG_GLOBAL': config.path,
+      'GIT_AUTHOR_NAME': 'Desktop Test',
+      'GIT_AUTHOR_EMAIL': 'desktop@example.invalid',
+      'GIT_COMMITTER_NAME': 'Desktop Test',
+      'GIT_COMMITTER_EMAIL': 'desktop@example.invalid',
+    };
+    final executable = findExecutable(['git.exe', 'git'])!;
+    Future<ProcessResult> fixtureGit(List<String> args) => Process.run(
+      executable,
+      args,
+      workingDirectory: root.path,
+      environment: environment,
+    );
+    expect((await fixtureGit(['init', '-b', 'main'])).exitCode, 0);
+    final remote = p.join(temporary.path, 'remote.git');
+    expect((await fixtureGit(['init', '--bare', remote])).exitCode, 0);
+    expect((await fixtureGit(['remote', 'add', 'origin', remote])).exitCode, 0);
+    final git = LocalGit(
+      executable: executable,
+      cache: cache,
+      environment: environment,
+    );
+    final host = CountingHost();
+    final model = WorkbenchViewModel(
+      host: host,
+      launcher: InteractiveLauncher(),
+      files: LocalWorkspaceFiles(cache),
+      gitReader: git,
+      gitMutator: git,
+      preferencesStore: LocalPreferencesStore(
+        File(p.join(temporary.path, 'preferences.json')),
+      ),
+    );
+    addTearDown(() async {
       await model.shutdown();
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-    timeout: const Timeout(Duration(minutes: 3)),
-  );
+      await temporary.delete(recursive: true);
+    });
+    final boundary = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundary,
+        child: TabryoApp(createViewModel: () => model),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(host.starts, 0);
+    debugPrint(
+      'App RSS (${kReleaseMode ? "Release with integration binding" : "Debug"}), empty: ${ProcessInfo.currentRss ~/ (1024 * 1024)} MiB',
+    );
+    await tester.tap(find.widgetWithText(TextButton, 'Open workspace'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), root.path);
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await until(tester, () => model.workspace != null && !model.loading);
+    expect(host.starts, 0);
+    await tester.tap(find.widgetWithText(TextButton, 'Shell'));
+    await until(
+      tester,
+      () =>
+          model.activeSession != null &&
+          terminalText(model.activeSession!).contains('SHELL_READY'),
+    );
+    final shell = model.activeSession!;
+    debugPrint(
+      'App RSS, one fixture terminal: ${ProcessInfo.currentRss ~/ (1024 * 1024)} MiB',
+    );
+    await Clipboard.setData(
+      const ClipboardData(text: 'ação 🌱\nsecond line\n'),
+    );
+    await tester.tap(find.byTooltip('Paste (Ctrl+Shift+V)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Paste multiple lines?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Paste'));
+    await until(tester, () => terminalText(shell).contains('ECHO:second line'));
+    expect(terminalText(shell), contains('ação 🌱'));
+    await model.openTerminal(codex: true, resume: true);
+    await until(
+      tester,
+      () => terminalText(model.activeSession!).contains('RESUME_READY'),
+    );
+    await model.openTerminal(split: SplitDirection.horizontal);
+    await model.openTerminal(split: SplitDirection.vertical);
+    await until(
+      tester,
+      () =>
+          model.sessions.values.every((s) => terminalText(s).contains('READY')),
+    );
+    expect(host.starts, 4);
+    debugPrint(
+      'App RSS, four fixture terminals: ${ProcessInfo.currentRss ~/ (1024 * 1024)} MiB; child processes excluded',
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 100));
+    final rendered =
+        await (boundary.currentContext!.findRenderObject()
+                as RenderRepaintBoundary)
+            .toImage();
+    final png = await rendered.toByteData(format: ui.ImageByteFormat.png);
+    if (Platform.environment['TABRYO_SCREENSHOT'] case final String path) {
+      await File(path).writeAsBytes(png!.buffer.asUint8List());
+    }
+    rendered.dispose();
+    await File(p.join(root.path, 'notes.txt'))
+        .writeAsString('Desktop commit\n');
+    await model.selectSidebar(SidebarPage.changes);
+    await model.stage(model.changes.single);
+    await model.runGitCommand(
+      (repo) => git.commit(repo, 'Desktop integration commit'),
+      'Commit',
+    );
+    final commit = model.activeSession!;
+    await until(tester, () => commit.status == SessionStatus.exited);
+    expect(commit.exitCode, 0, reason: terminalText(commit));
+    expect(
+      (await git.history(await git.repository(root.path))).single.subject,
+      'Desktop integration commit',
+    );
+    // Explicit refspec belongs only to disposable fixture setup; product push uses configured upstreams.
+    expect(
+      (await fixtureGit(['config', 'branch.main.remote', 'origin'])).exitCode,
+      0,
+    );
+    expect(
+      (await fixtureGit(['config', 'branch.main.merge', 'refs/heads/main']))
+          .exitCode,
+      0,
+    );
+    await model.runGitCommand(
+      (repo) => git.remoteCommand(repo, 'push', 'origin'),
+      'Push',
+    );
+    final push = model.activeSession!;
+    await until(tester, () => push.status == SessionStatus.exited);
+    expect(push.exitCode, 0, reason: terminalText(push));
+    expect(
+      (await fixtureGit(['--git-dir', remote, 'rev-parse', 'main'])).stdout,
+      (await fixtureGit(['rev-parse', 'HEAD'])).stdout,
+    );
+    await model.shutdown();
+    await tester.pumpWidget(const SizedBox.shrink());
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }

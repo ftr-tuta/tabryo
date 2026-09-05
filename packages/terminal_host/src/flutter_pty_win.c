@@ -53,6 +53,45 @@ typedef struct PtyHandle {
 static volatile LONG64 global_input_bytes = 0;
 static char error_message[256] = "";
 
+typedef HRESULT (WINAPI *CreateConsoleFn)(COORD, HANDLE, HANDLE, DWORD, HPCON *);
+typedef HRESULT (WINAPI *ResizeConsoleFn)(HPCON, COORD);
+typedef HRESULT (WINAPI *ReleaseConsoleFn)(HPCON);
+typedef void (WINAPI *CloseConsoleFn)(HPCON);
+static CreateConsoleFn api_create;
+static ResizeConsoleFn api_resize;
+static ReleaseConsoleFn api_release;
+static CloseConsoleFn api_close;
+static INIT_ONCE conpty_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK initialize_conpty(PINIT_ONCE once, PVOID parameter, PVOID *context) {
+    (void)once; (void)parameter; (void)context;
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    api_release = (ReleaseConsoleFn)GetProcAddress(kernel, "ReleasePseudoConsole");
+    if (api_release) {
+        api_create = CreatePseudoConsole; api_resize = ResizePseudoConsole; api_close = ClosePseudoConsole;
+        return TRUE;
+    }
+    // Older inbox ConPTY versions leak a conhost process handle at close.
+    // Use Microsoft's pinned redistributable on those systems. Resolve only
+    // next to this module, never relative to the terminal working directory.
+    HMODULE owner = NULL;
+    wchar_t path[32768];
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&pty_create, &owner)) return FALSE;
+    DWORD length = GetModuleFileNameW(owner, path, 32768);
+    if (length == 0 || length >= 32768) return FALSE;
+    wchar_t *name = wcsrchr(path, L'\\');
+    if (!name || wcscpy_s(name + 1, 32768 - (size_t)(name + 1 - path), L"conpty.dll") != 0) return FALSE;
+    HMODULE library = LoadLibraryExW(path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!library) return FALSE;
+    api_create = (CreateConsoleFn)GetProcAddress(library, "ConptyCreatePseudoConsole");
+    api_resize = (ResizeConsoleFn)GetProcAddress(library, "ConptyResizePseudoConsole");
+    api_release = (ReleaseConsoleFn)GetProcAddress(library, "ConptyReleasePseudoConsole");
+    api_close = (CloseConsoleFn)GetProcAddress(library, "ConptyClosePseudoConsole");
+    if (api_create && api_resize && api_release && api_close) return TRUE;
+    FreeLibrary(library);
+    return FALSE;
+}
+
 static void set_error(const char *message) {
     strncpy_s(error_message, sizeof(error_message), message, _TRUNCATE);
 }
@@ -261,7 +300,7 @@ static DWORD WINAPI wait_loop(LPVOID context) {
     if (handle->automatic_eof) WaitForSingleObject(handle->reader_thread, INFINITE);
     EnterCriticalSection(&handle->lifecycle_lock);
     if (handle->pseudo_console != NULL) {
-        ClosePseudoConsole(handle->pseudo_console);
+        api_close(handle->pseudo_console);
         handle->pseudo_console = NULL;
     }
     LeaveCriticalSection(&handle->lifecycle_lock);
@@ -270,6 +309,10 @@ static DWORD WINAPI wait_loop(LPVOID context) {
 }
 
 FFI_PLUGIN_EXPORT PtyHandle *pty_create(PtyOptions *options) {
+    if (!InitOnceExecuteOnce(&conpty_once, initialize_conpty, NULL, NULL)) {
+        set_error("The bundled Microsoft ConPTY runtime is missing or invalid. Extract the complete Tabryo bundle.");
+        return NULL;
+    }
     HANDLE input_read = NULL, input_write = NULL, output_read = NULL, output_write = NULL;
     PPROC_THREAD_ATTRIBUTE_LIST attributes = NULL;
     int attributes_initialized = 0;
@@ -287,7 +330,7 @@ FFI_PLUGIN_EXPORT PtyHandle *pty_create(PtyOptions *options) {
     SetHandleInformation(input_write, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(output_read, HANDLE_FLAG_INHERIT, 0);
     COORD size = {(SHORT)options->cols, (SHORT)options->rows};
-    if (FAILED(CreatePseudoConsole(size, input_read, output_write, 0, &pseudo_console))) { set_error("Failed to create pseudoconsole"); goto failure; }
+    if (FAILED(api_create(size, input_read, output_write, 0, &pseudo_console))) { set_error("Failed to create pseudoconsole"); goto failure; }
     CloseHandle(input_read); input_read = NULL; CloseHandle(output_write); output_write = NULL;
     SIZE_T bytes = 0;
     InitializeProcThreadAttributeList(NULL, 1, 0, &bytes);
@@ -311,9 +354,7 @@ FFI_PLUGIN_EXPORT PtyHandle *pty_create(PtyOptions *options) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0}; limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(handle->job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { set_error("Failed to configure terminal process ownership"); goto failure; }
     if (!AssignProcessToJobObject(handle->job, handle->process)) { set_error("Failed to own terminal process tree"); goto failure; }
-    typedef HRESULT (WINAPI *ReleaseConsoleFn)(HPCON);
-    ReleaseConsoleFn release_console = (ReleaseConsoleFn)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "ReleasePseudoConsole");
-    handle->automatic_eof = release_console != NULL && SUCCEEDED(release_console(handle->pseudo_console));
+    handle->automatic_eof = SUCCEEDED(api_release(handle->pseudo_console));
     handle->reader_thread = CreateThread(NULL, 0, reader_loop, handle, 0, NULL); handle->writer_thread = CreateThread(NULL, 0, writer_loop, handle, 0, NULL); handle->wait_thread = CreateThread(NULL, 0, wait_loop, handle, 0, NULL);
     if (handle->reader_thread == NULL || handle->writer_thread == NULL || handle->wait_thread == NULL) { set_error("Failed to start PTY workers"); goto failure; }
     if (ResumeThread(process.hThread) == (DWORD)-1) { set_error("Failed to resume terminal process"); goto failure; }
@@ -332,7 +373,7 @@ failure:
         begin_closing(handle);
         if (handle->input) { CancelIoEx(handle->input, NULL); CloseHandle(handle->input); handle->input = NULL; }
         EnterCriticalSection(&handle->lifecycle_lock);
-        if (handle->pseudo_console) { ClosePseudoConsole(handle->pseudo_console); handle->pseudo_console = NULL; }
+        if (handle->pseudo_console) { api_close(handle->pseudo_console); handle->pseudo_console = NULL; }
         LeaveCriticalSection(&handle->lifecycle_lock);
         if (handle->reader_thread) WaitForSingleObject(handle->reader_thread, INFINITE);
         if (handle->writer_thread) { CancelSynchronousIo(handle->writer_thread); WaitForSingleObject(handle->writer_thread, INFINITE); }
@@ -351,7 +392,7 @@ failure:
         free(handle);
     }
     if (attributes) { if (attributes_initialized) DeleteProcThreadAttributeList(attributes); free(attributes); }
-    if (pseudo_console) ClosePseudoConsole(pseudo_console);
+    if (pseudo_console) api_close(pseudo_console);
     if (input_read) CloseHandle(input_read); if (input_write) CloseHandle(input_write); if (output_read) CloseHandle(output_read); if (output_write) CloseHandle(output_write);
     free(executable); free(command); free(environment); free(working_directory);
     return NULL;
@@ -370,7 +411,7 @@ FFI_PLUGIN_EXPORT int pty_write(PtyHandle *handle, char *buffer, int length) {
 }
 
 FFI_PLUGIN_EXPORT void pty_ack_read(PtyHandle *handle) { if (handle && handle->output_ack) ReleaseSemaphore(handle->output_ack, 1, NULL); }
-FFI_PLUGIN_EXPORT int pty_resize(PtyHandle *handle, int rows, int cols) { if (!handle || rows < 1 || cols < 1) return -1; if (!TryEnterCriticalSection(&handle->lifecycle_lock)) return -2; int result = -1; if (handle->pseudo_console) { COORD size = {(SHORT)cols, (SHORT)rows}; result = (int)ResizePseudoConsole(handle->pseudo_console, size); } LeaveCriticalSection(&handle->lifecycle_lock); return result; }
+FFI_PLUGIN_EXPORT int pty_resize(PtyHandle *handle, int rows, int cols) { if (!handle || rows < 1 || cols < 1) return -1; if (!TryEnterCriticalSection(&handle->lifecycle_lock)) return -2; int result = -1; if (handle->pseudo_console) { COORD size = {(SHORT)cols, (SHORT)rows}; result = (int)api_resize(handle->pseudo_console, size); } LeaveCriticalSection(&handle->lifecycle_lock); return result; }
 FFI_PLUGIN_EXPORT int pty_getpid(PtyHandle *handle) { return handle ? (int)handle->process_id : -1; }
 FFI_PLUGIN_EXPORT char *pty_error(void) { return error_message; }
 FFI_PLUGIN_EXPORT void pty_close(PtyHandle *handle) {
@@ -391,7 +432,7 @@ FFI_PLUGIN_EXPORT int pty_destroy(PtyHandle *handle) {
     // A done flag is set before a worker returns; wait for actual completion
     // without blocking Dart before freeing any memory used by that worker.
     if (WaitForSingleObject(handle->wait_thread, 0) != WAIT_OBJECT_0 || WaitForSingleObject(handle->reader_thread, 0) != WAIT_OBJECT_0 || WaitForSingleObject(handle->writer_thread, 0) != WAIT_OBJECT_0 || (handle->close_thread && WaitForSingleObject(handle->close_thread, 0) != WAIT_OBJECT_0)) return 0;
-    if (handle->input) CloseHandle(handle->input); if (handle->output) CloseHandle(handle->output); if (handle->process) CloseHandle(handle->process); if (handle->job) CloseHandle(handle->job); if (handle->pseudo_console) ClosePseudoConsole(handle->pseudo_console);
+    if (handle->input) CloseHandle(handle->input); if (handle->output) CloseHandle(handle->output); if (handle->process) CloseHandle(handle->process); if (handle->job) CloseHandle(handle->job); if (handle->pseudo_console) api_close(handle->pseudo_console);
     if (handle->reader_thread) CloseHandle(handle->reader_thread); if (handle->writer_thread) CloseHandle(handle->writer_thread); if (handle->wait_thread) CloseHandle(handle->wait_thread); if (handle->close_thread) CloseHandle(handle->close_thread); if (handle->input_event) CloseHandle(handle->input_event); if (handle->output_ack) CloseHandle(handle->output_ack);
     DeleteCriticalSection(&handle->input_lock);
     DeleteCriticalSection(&handle->lifecycle_lock);
