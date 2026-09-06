@@ -86,7 +86,10 @@ jobs:
             if ($children.Count -ne 0) { throw 'The app started a child process without a gesture.' }
             $app.Refresh()
             Write-Output "Extracted Release app working set: $([math]::Round($app.WorkingSet64 / 1MB, 1)) MiB; child processes: 0"
-            if (-not $app.CloseMainWindow() -or -not $app.WaitForExit(5000)) { throw 'Extracted app did not close normally.' }
+            # CloseMainWindow ignores hidden windows. Without /F, taskkill
+            # sends the normal window-close request to this exact owned PID.
+            taskkill /PID $app.Id
+            if ($LASTEXITCODE -ne 0 -or -not $app.WaitForExit(5000) -or $app.ExitCode -ne 0) { throw 'Extracted app did not close normally.' }
           } finally {
             if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() }
           }
