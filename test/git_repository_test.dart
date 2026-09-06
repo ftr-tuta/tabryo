@@ -204,6 +204,13 @@ void main() {
       git.removeWorktree(repo, linked, [destination]),
       throwsA(isA<GitFailure>()),
     );
+    await fixtureGit(['worktree', 'lock', destination]);
+    await expectLater(
+      git.removeWorktree(repo, linked, []),
+      throwsA(isA<GitFailure>()),
+    );
+    expect(await Directory(destination).exists(), isTrue);
+    await fixtureGit(['worktree', 'unlock', destination]);
     for (final name in ['ignored.txt', 'untracked.txt', '.gitignore']) {
       final file = File(p.join(destination, name));
       final existed = await file.exists();

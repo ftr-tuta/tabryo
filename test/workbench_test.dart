@@ -241,6 +241,59 @@ void main() {
     },
   );
 
+  test('fragmented and oversized escapes recover, alternate screen preserves scrollback', () async {
+    final session = TerminalSession(
+      id: 1,
+      title: 'Shell',
+      spec: MemoryLauncher().shell(root),
+      host: host,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    final process = host.processes.single;
+    String text() => [
+      for (var i = 0; i < session.terminal.buffer.lines.length; i++)
+        session.terminal.buffer.lines[i].getText(),
+    ].join('\n');
+    final clipboardCalls = <String>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method.startsWith('Clipboard.')) clipboardCalls.add(call.method);
+      return {'text': 'private clipboard'};
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    process.emit('\x1b]52;c;cmVwbGFjZWQ=\x07\x1b]52;c;?\x07');
+    await Future<void>.delayed(Duration.zero);
+    expect(clipboardCalls, isEmpty);
+    expect(
+      utf8.decode(process.input),
+      isNot(contains(base64.encode(utf8.encode('private clipboard')))),
+    );
+    process.emit('MAIN\r\n\x1b[');
+    await Future<void>.delayed(Duration.zero);
+    process.emit('31mCOLOR\x1b[0m\r\n\x1b[?1049hALTERNATE');
+    await Future<void>.delayed(Duration.zero);
+    expect(text(), contains('ALTERNATE'));
+    process.emit('\x1b[?1049l');
+    await Future<void>.delayed(Duration.zero);
+    expect(text(), contains('MAIN'));
+    expect(text(), contains('COLOR'));
+    expect(text(), isNot(contains('ALTERNATE')));
+    process.emit('\x1b]0;${'a' * 20000}\x07\x1bP${'b' * 20000}\x1b\\');
+    process.emit('\x1b[${'1' * 20000}m\r\nRECOVERED\r\n');
+    await Future<void>.delayed(Duration.zero);
+    expect(text(), contains('RECOVERED'));
+    process.emit('${'line\r\n' * 10000}FINAL');
+    await Future<void>.delayed(Duration.zero);
+    expect(session.terminal.buffer.lines.length, lessThanOrEqualTo(2000));
+    expect(text(), contains('FINAL'));
+  });
+
   testWidgets('toolbar and keyboard create and split only after gestures', (
     tester,
   ) async {

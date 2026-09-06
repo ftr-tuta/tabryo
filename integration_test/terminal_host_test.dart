@@ -44,6 +44,7 @@ Future<String> collect(TerminalPty pty, {int? exit}) async {
   await pty.drained.timeout(const Duration(seconds: 15));
   await pty.close().timeout(const Duration(seconds: 15));
   final text = await output;
+  terminal.dispose();
   if (exit != null) expect(code, exit, reason: text);
   return text;
 }
