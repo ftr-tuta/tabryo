@@ -139,7 +139,12 @@ void main() {
     );
     await tester.tap(find.widgetWithText(TextButton, 'Open workspace'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField), root.path);
+    // The integration binding uses the real IME. TestTextInput's synthetic
+    // client -1 only works in Debug, so deliver to the actual text client.
+    tester
+        .state<EditableTextState>(find.byType(EditableText))
+        .updateEditingValue(TextEditingValue(text: root.path));
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
     await until(tester, () => model.workspace != null && !model.loading);
     expect(host.starts, 0);

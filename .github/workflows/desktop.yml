@@ -2,6 +2,7 @@ name: Desktop
 
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -71,6 +72,41 @@ jobs:
         run: |
           cp LICENSE THIRD_PARTY_NOTICES.md README.md build/linux/x64/release/bundle/
           tar -czf tabryo-0.1.0-linux-x64.tar.gz -C build/linux/x64/release/bundle .
+      - name: Test extracted Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'tabryo-extracted'
+          Expand-Archive -LiteralPath tabryo-0.1.0-windows-x64.zip -DestinationPath $destination
+          $app = Start-Process -FilePath (Join-Path $destination 'tabryo.exe') -WorkingDirectory $destination -WindowStyle Hidden -PassThru
+          try {
+            Start-Sleep -Seconds 3
+            if ($app.HasExited) { throw 'Extracted app exited during startup.' }
+            $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($app.Id)")
+            if ($children.Count -ne 0) { throw 'The app started a child process without a gesture.' }
+            $app.Refresh()
+            Write-Output "Extracted Release app working set: $([math]::Round($app.WorkingSet64 / 1MB, 1)) MiB; child processes: 0"
+            if (-not $app.CloseMainWindow() -or -not $app.WaitForExit(5000)) { throw 'Extracted app did not close normally.' }
+          } finally {
+            if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() }
+          }
+      - name: Test extracted Linux bundle
+        if: runner.os == 'Linux'
+        run: |
+          destination="$RUNNER_TEMP/tabryo-extracted"
+          mkdir "$destination"
+          tar -xzf tabryo-0.1.0-linux-x64.tar.gz -C "$destination"
+          xvfb-run -a sh -eu -c '
+            cd "$1"
+            ./tabryo & app=$!
+            trap "kill $app 2>/dev/null || true" EXIT
+            sleep 3
+            kill -0 "$app"
+            test -z "$(cat /proc/$app/task/$app/children)"
+            awk "/VmRSS/ {print \"Extracted Release app RSS: \" \$2 \" KiB; child processes: 0\"}" /proc/$app/status
+            kill "$app"
+            wait "$app" || test "$?" -eq 143
+          ' sh "$destination"
       - uses: actions/upload-artifact@v4
         with:
           name: tabryo-${{ matrix.device }}-${{ github.sha }}

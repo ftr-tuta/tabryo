@@ -61,7 +61,7 @@ final class LocalGit implements GitReader, GitMutator {
           'GIT_INDEX_FILE',
           'GIT_OBJECT_DIRECTORY',
           'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-        ].contains(key),
+        ].contains(Platform.isWindows ? key.toUpperCase() : key),
       );
 
   Future<_Result> _run(

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:ffi/ffi.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:terminal_host/terminal_host.dart';
+import 'package:tabryo/features/terminals/presentation/terminal_session.dart';
 
 TerminalLaunchSpec command(
   String windows,
@@ -28,11 +29,21 @@ TerminalLaunchSpec command(
 );
 
 Future<String> collect(TerminalPty pty, {int? exit}) async {
-  final output = pty.output.expand((chunk) => chunk).toList();
+  // ConPTY queries terminal capabilities at startup. Use the product parser
+  // to answer them, while retaining the original output for byte assertions.
+  final terminal = BoundedTerminal(maxLines: 2000);
+  terminal.onOutput = (value) =>
+      pty.write(Uint8List.fromList(utf8.encode(value)));
+  final output = pty.output.cast<List<int>>().transform(utf8.decoder).map((
+    value,
+  ) {
+    terminal.write(value);
+    return value;
+  }).join();
   final code = await pty.exitCode.timeout(const Duration(seconds: 15));
   await pty.drained.timeout(const Duration(seconds: 15));
   await pty.close().timeout(const Duration(seconds: 15));
-  final text = utf8.decode(await output);
+  final text = await output;
   if (exit != null) expect(code, exit, reason: text);
   return text;
 }

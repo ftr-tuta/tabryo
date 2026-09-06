@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish only bundles from a successful Desktop run at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          candidate="$(git rev-parse HEAD)"
+          run_id="$(gh run list --workflow Desktop --branch main --event push --commit "$candidate" --status success --json databaseId --jq '.[0].databaseId')"
+          test -n "$run_id" && test "$run_id" != null
+          gh run download "$run_id" --dir "$RUNNER_TEMP/bundles"
+          mkdir "$RUNNER_TEMP/release"
+          cp "$RUNNER_TEMP/bundles/tabryo-windows-$candidate/tabryo-0.1.0-windows-x64.zip" "$RUNNER_TEMP/release/"
+          cp "$RUNNER_TEMP/bundles/tabryo-linux-$candidate/tabryo-0.1.0-linux-x64.tar.gz" "$RUNNER_TEMP/release/"
+          cd "$RUNNER_TEMP/release"
+          sha256sum tabryo-0.1.0-windows-x64.zip tabryo-0.1.0-linux-x64.tar.gz > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Tabryo $GITHUB_REF_NAME" --notes-from-tag tabryo-0.1.0-windows-x64.zip tabryo-0.1.0-linux-x64.tar.gz SHA256SUMS
+          gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/downloaded"
+          cd "$RUNNER_TEMP/downloaded"
+          sha256sum --check SHA256SUMS

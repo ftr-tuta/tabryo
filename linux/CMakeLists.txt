@@ -89,7 +89,7 @@ install(CODE "
   " COMPONENT Runtime)
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/tabryo.svg"
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/tabryo.png"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 

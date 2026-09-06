@@ -56,7 +56,7 @@ static void my_application_activate(GApplication* application) {
   g_autofree gchar* executable = g_file_read_link("/proc/self/exe", nullptr);
   if (executable != nullptr) {
     g_autofree gchar* directory = g_path_get_dirname(executable);
-    g_autofree gchar* icon = g_build_filename(directory, "data", "tabryo.svg", nullptr);
+    g_autofree gchar* icon = g_build_filename(directory, "data", "tabryo.png", nullptr);
     gtk_window_set_icon_from_file(window, icon, nullptr);
   }
 

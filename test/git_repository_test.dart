@@ -68,6 +68,21 @@ void main() {
     await temporary.delete(recursive: true);
   });
 
+  test('selected repository ignores inherited repository overrides', () async {
+    final isolated = LocalGit(
+      executable: executable,
+      cache: PreviewCache(),
+      environment: {
+        ...environment,
+        'GIT_DIR': p.join(temporary.path, 'missing.git'),
+        if (Platform.isWindows) 'git_work_tree': temporary.path,
+      },
+    );
+    final repo = await isolated.repository(checkout.path);
+    await File(p.join(checkout.path, 'selected.txt')).writeAsString('selected');
+    expect((await isolated.status(repo)).single.path, 'selected.txt');
+  });
+
   test(
     'unborn repository, literal stage and unstage preserve every working file',
     () async {
