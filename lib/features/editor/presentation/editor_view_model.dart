@@ -3,10 +3,13 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../domain/document_files.dart';
+import '../domain/editor_assets.dart';
 
 final class EditorBuffer {
   EditorBuffer(this.baseline)
     : controller = TextEditingController.fromValue(
+        // Flutter editing state is presentation state, not an infrastructure model.
+        // ignore: dartitect_dt3121
         TextEditingValue(
           text: baseline.text,
           selection: const TextSelection.collapsed(offset: 0),
@@ -15,6 +18,9 @@ final class EditorBuffer {
   DocumentSnapshot baseline;
   final TextEditingController controller;
   final undo = UndoHistoryController();
+  int version = 0;
+  bool webCanUndo = false;
+  bool webCanRedo = false;
   bool saving = false;
   String? error;
   String? diskText;
@@ -28,8 +34,12 @@ final class EditorBuffer {
 }
 
 final class EditorViewModel extends DartitectViewModel {
-  EditorViewModel(this.files);
+  EditorViewModel(this.files, {this.webAssets});
   final DocumentFiles files;
+  final EditorAssets? webAssets;
+  Future<EditorPage> openWebEditor() => webAssets!.open();
+  Future<void> Function(EditorBuffer)? synchronize;
+  void Function(String)? webCommand;
   static const documentLimit = 12;
   final _buffers = <EditorBuffer>[];
   final _retired = <EditorBuffer>{};
@@ -88,7 +98,12 @@ final class EditorViewModel extends DartitectViewModel {
         buffer = EditorBuffer(snapshot);
         final owned = buffer;
         var wasDirty = false;
+        var lastText = owned.controller.text;
         owned.controller.addListener(() {
+          if (lastText != owned.controller.text) {
+            lastText = owned.controller.text;
+            owned.version++;
+          }
           if (owned.dirty != wasDirty) {
             wasDirty = owned.dirty;
             notifyListeners();
@@ -119,6 +134,8 @@ final class EditorViewModel extends DartitectViewModel {
 
   Future<bool> save(EditorBuffer buffer) async {
     if (!_buffers.contains(buffer) || buffer.saving) return false;
+    if (!await synchronizeBuffer(buffer)) return false;
+    if (!_buffers.contains(buffer) || buffer.saving) return false;
     if (!buffer.dirty) return true;
     buffer.saving = true;
     buffer.error = null;
@@ -139,6 +156,46 @@ final class EditorViewModel extends DartitectViewModel {
     }
   }
 
+  Future<bool> synchronizeBuffer(EditorBuffer buffer) async {
+    if (webAssets == null) return true;
+    try {
+      if (synchronize == null) {
+        throw const DocumentFailure(
+          'The code editor is not connected. Your buffer is preserved.',
+        );
+      }
+      await synchronize!(buffer);
+      return true;
+    } catch (_) {
+      buffer.error = 'The code editor did not synchronize. Your buffer is preserved; reconnect before saving or closing.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void undoBuffer(EditorBuffer buffer) {
+    if (webAssets != null) {
+      webCommand?.call('undo');
+    } else {
+      buffer.undo.undo();
+    }
+  }
+
+  void redoBuffer(EditorBuffer buffer) {
+    if (webAssets != null) {
+      webCommand?.call('redo');
+    } else {
+      buffer.undo.redo();
+    }
+  }
+
+  void webHistoryChanged(EditorBuffer buffer, bool canUndo, bool canRedo) {
+    if (buffer.webCanUndo == canUndo && buffer.webCanRedo == canRedo) return;
+    buffer.webCanUndo = canUndo;
+    buffer.webCanRedo = canRedo;
+    notifyListeners();
+  }
+
   void rejectInput(EditorBuffer buffer) {
     buffer.error = 'This edit exceeds 512 KiB and was not applied. The existing buffer is preserved.';
     notifyListeners();
@@ -153,6 +210,11 @@ final class EditorViewModel extends DartitectViewModel {
       if (_closed || !_buffers.contains(buffer)) return;
       buffer.error = '$error';
     }
+    notifyListeners();
+  }
+
+  void closeComparison(EditorBuffer buffer) {
+    buffer.diskText = null;
     notifyListeners();
   }
 
@@ -212,6 +274,7 @@ final class EditorViewModel extends DartitectViewModel {
   @override
   Future<void> disposeAsync() async {
     _closed = true;
+    await webAssets?.close();
     for (final buffer in _buffers) {
       buffer.dispose();
     }

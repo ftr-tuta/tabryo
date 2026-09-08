@@ -189,6 +189,9 @@ final class LocalDocumentFiles implements DocumentFiles {
       try {
         if (replacement != null) await replacement.delete();
         if (staging != null) await staging.delete();
+        // A successful replacement must not be reported as a failed save because
+        // Windows temporarily holds a staging handle. Do not retry the write.
+        // ignore: dartitect_empty_catch
       } on FileSystemException {
         // A sharing lock can retain the staging file; no recursive cleanup.
       }

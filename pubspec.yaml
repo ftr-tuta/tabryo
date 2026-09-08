@@ -48,6 +48,8 @@ dependencies:
   path: 1.9.1
   sqlite3: ^3.5.2
   crypto: ^3.0.7
+  webview_win_floating: 3.0.3
+  webview_flutter_platform_interface: 2.15.1
 
 dev_dependencies:
   ffi: ^2.1.4
@@ -85,6 +87,8 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/editor/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

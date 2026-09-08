@@ -6,6 +6,7 @@ import 'composition/collaboration_service.dart';
 import 'features/preferences/domain/preferences.dart';
 import 'features/workspaces/presentation/workbench_view_model.dart';
 import 'features/workspaces/presentation/workbench_screen.dart';
+import 'features/editor/presentation/monaco_editor.dart';
 
 void main(List<String> arguments) {
   if (arguments.contains('--collaboration-service')) {
@@ -21,11 +22,14 @@ final class TabryoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ViewModelHost.create(
     create: () => (createViewModel ?? createWorkbench)()..initialize(),
+    // MaterialApp uses the captured model's theme; this subtree is dynamic.
+    // ignore: dartitect_dt3142
     builder: (_, model) => ListenableBuilder(
       listenable: model,
       builder: (_, _) => MaterialApp(
         title: 'Tabryo',
         debugShowCheckedModeBanner: false,
+        navigatorObservers: [editorRoutes],
         themeMode: switch (model.preferences.theme) {
           AppTheme.system => ThemeMode.system,
           AppTheme.dark => ThemeMode.dark,

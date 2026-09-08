@@ -1,10 +1,13 @@
 import 'dart:ui' show AppExitResponse;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../editor/presentation/editor_pane.dart';
+import '../../editor/presentation/monaco_editor.dart';
 import '../../collaboration/presentation/collaboration_screen.dart';
 import '../../mcp_studio/presentation/mcp_studio_screen.dart';
 import '../../mcp_studio/domain/studio_project.dart';
@@ -240,6 +243,8 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   KeyEventResult _key(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    // Flutter keyboard state is part of presentation input handling.
+    // ignore: dartitect_dt3121
     final keys = HardwareKeyboard.instance;
     final key = event.logicalKey;
     if (keys.isControlPressed && keys.isShiftPressed) {
@@ -281,218 +286,242 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Focus(
-    onKeyEvent: _key,
-    child: Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Tabryo',
-          style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: -.5),
-        ),
-        actions: [
-          SizedBox(
-            width: (MediaQuery.sizeOf(context).width - 140).clamp(0, 850),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextButton.icon(
-                    onPressed: dialogs.openWorkspace,
-                    icon: const Icon(Icons.create_new_folder_outlined),
-                    label: const Text('Open workspace'),
-                  ),
-                  TextButton.icon(
-                    onPressed: model.workspace == null
-                        ? null
-                        : () => model.openTerminal(),
-                    icon: const Icon(Icons.terminal),
-                    label: const Text('Shell'),
-                  ),
-                  TextButton(
-                    onPressed: model.workspace == null
-                        ? null
-                        : () => model.openTerminal(codex: true),
-                    child: const Text('Codex'),
-                  ),
-                  TextButton(
-                    onPressed: model.workspace == null
-                        ? null
-                        : () => model.openTerminal(codex: true, resume: true),
-                    child: const Text('Resume'),
-                  ),
-                  IconButton(
-                    tooltip: 'MCP Hub',
-                    onPressed: model.workspace == null || model.mcpHub == null
-                        ? null
-                        : _openMcpHub,
-                    icon: const Icon(Icons.hub_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'MCP Studio',
-                    onPressed: model.workspace == null || model.studio == null
-                        ? null
-                        : _openMcpStudio,
-                    icon: const Icon(Icons.construction_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Command palette (Ctrl+Shift+P)',
-                    onPressed: _palette,
-                    icon: const Icon(Icons.search),
-                  ),
-                  IconButton(
-                    tooltip: 'Collaboration',
-                    onPressed: model.collaboration == null
-                        ? null
-                        : _openCollaboration,
-                    icon: const Icon(Icons.groups_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Preferences',
-                    onPressed: dialogs.preferences,
-                    icon: const Icon(Icons.settings_outlined),
-                  ),
-                  const SizedBox(width: 8),
-                ],
+  Widget build(BuildContext context) => Actions(
+    actions: {
+      EditorShortcutIntent: CallbackAction<EditorShortcutIntent>(
+        onInvoke: (intent) {
+          switch (intent.command) {
+            case 'palette':
+              unawaited(_palette());
+            case 'open':
+              unawaited(dialogs.openWorkspace());
+            case 'nextTab':
+              model.editor?.cycle(1);
+            case 'previousTab':
+              model.editor?.cycle(-1);
+          }
+          return null;
+        },
+      ),
+    },
+    child: Focus(
+      onKeyEvent: _key,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            'Tabryo',
+            style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: -.5),
+          ),
+          actions: [
+            SizedBox(
+              width: (MediaQuery.sizeOf(context).width - 140).clamp(0, 850),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton.icon(
+                      onPressed: dialogs.openWorkspace,
+                      icon: const Icon(Icons.create_new_folder_outlined),
+                      label: const Text('Open workspace'),
+                    ),
+                    TextButton.icon(
+                      onPressed: model.workspace == null
+                          ? null
+                          : () => model.openTerminal(),
+                      icon: const Icon(Icons.terminal),
+                      label: const Text('Shell'),
+                    ),
+                    TextButton(
+                      onPressed: model.workspace == null
+                          ? null
+                          : () => model.openTerminal(codex: true),
+                      child: const Text('Codex'),
+                    ),
+                    TextButton(
+                      onPressed: model.workspace == null
+                          ? null
+                          : () => model.openTerminal(codex: true, resume: true),
+                      child: const Text('Resume'),
+                    ),
+                    IconButton(
+                      tooltip: 'MCP Hub',
+                      onPressed: model.workspace == null || model.mcpHub == null
+                          ? null
+                          : _openMcpHub,
+                      icon: const Icon(Icons.hub_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'MCP Studio',
+                      onPressed: model.workspace == null || model.studio == null
+                          ? null
+                          : _openMcpStudio,
+                      icon: const Icon(Icons.construction_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Command palette (Ctrl+Shift+P)',
+                      onPressed: _palette,
+                      icon: const Icon(Icons.search),
+                    ),
+                    IconButton(
+                      tooltip: 'Collaboration',
+                      onPressed: model.collaboration == null
+                          ? null
+                          : _openCollaboration,
+                      icon: const Icon(Icons.groups_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Preferences',
+                      onPressed: dialogs.preferences,
+                      icon: const Icon(Icons.settings_outlined),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (model.loading || model.busy)
-            const LinearProgressIndicator(minHeight: 2),
-          if (model.message != null)
-            MaterialBanner(
-              content: Text(model.message!),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    model.message = null;
-                    setState(() {});
-                  },
-                  child: const Text('Dismiss'),
-                ),
-              ],
-            ),
-          Expanded(
-            child: Row(
-              children: [
-                _sidebar(context),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: Column(
-                    children: [
-                      if (model.editor != null)
-                        Row(
-                          children: [
-                            TextButton.icon(
-                              onPressed: () => model.showEditor(true),
-                              icon: const Icon(Icons.edit_note),
-                              label: Text(
-                                'Editor${model.editor!.hasDirty ? ' ●' : ''}',
-                              ),
-                            ),
-                            TextButton.icon(
-                              onPressed: () => model.showEditor(false),
-                              icon: const Icon(Icons.terminal),
-                              label: const Text('Terminals'),
-                            ),
-                          ],
-                        ),
-                      Expanded(
-                        child: IndexedStack(
-                          index: model.editing && model.editor != null ? 0 : 1,
-                          children: [
-                            if (model.editor != null)
-                              ExcludeFocus(
-                                excluding: !model.editing,
-                                child: EditorPane(model: model.editor!),
-                              )
-                            else
-                              const SizedBox.shrink(),
-                            Column(
-                              children: [
-                                _tabs(context),
-                                Expanded(
-                                  child: model.tab == null
-                                      ? _welcome(context)
-                                      : _panes(model.tab!.panes),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+          ],
+        ),
+        body: Column(
+          children: [
+            if (model.loading || model.busy)
+              const LinearProgressIndicator(minHeight: 2),
+            if (model.message != null)
+              MaterialBanner(
+                content: Text(model.message!),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      model.message = null;
+                      setState(() {});
+                    },
+                    child: const Text('Dismiss'),
                   ),
-                ),
-                if (model.previewText != null) ...[
+                ],
+              ),
+            Expanded(
+              child: Row(
+                children: [
+                  _sidebar(context),
                   const VerticalDivider(width: 1),
-                  SizedBox(
-                    width: MediaQuery.sizeOf(context).width * .38,
+                  Expanded(
                     child: Column(
                       children: [
-                        ListTile(
-                          dense: true,
-                          title: Text(
-                            model.previewTitle ?? 'Preview',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: IconButton(
-                            tooltip: 'Close preview',
-                            onPressed: model.dismissPreview,
-                            icon: const Icon(Icons.close),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        Expanded(
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.all(16),
-                            child: SelectionArea(
-                              child: Text(
-                                model.previewText!,
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
+                        if (model.editor != null)
+                          Row(
+                            children: [
+                              TextButton.icon(
+                                onPressed: () => model.showEditor(true),
+                                icon: const Icon(Icons.edit_note),
+                                label: Text(
+                                  'Editor${model.editor!.hasDirty ? ' ●' : ''}',
                                 ),
                               ),
-                            ),
+                              TextButton.icon(
+                                onPressed: () => model.showEditor(false),
+                                icon: const Icon(Icons.terminal),
+                                label: const Text('Terminals'),
+                              ),
+                            ],
+                          ),
+                        Expanded(
+                          child: IndexedStack(
+                            index: model.editing && model.editor != null
+                                ? 0
+                                : 1,
+                            children: [
+                              if (model.editor != null)
+                                ExcludeFocus(
+                                  excluding: !model.editing,
+                                  child: EditorPane(
+                                    model: model.editor!,
+                                    visible: model.editing,
+                                  ),
+                                )
+                              else
+                                const SizedBox.shrink(),
+                              Column(
+                                children: [
+                                  _tabs(context),
+                                  Expanded(
+                                    child: model.tab == null
+                                        ? _welcome(context)
+                                        : _panes(model.tab!.panes),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
+                  if (model.previewText != null) ...[
+                    const VerticalDivider(width: 1),
+                    SizedBox(
+                      width: MediaQuery.sizeOf(context).width * .38,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            dense: true,
+                            title: Text(
+                              model.previewTitle ?? 'Preview',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: IconButton(
+                              tooltip: 'Close preview',
+                              onPressed: model.dismissPreview,
+                              icon: const Icon(Icons.close),
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(16),
+                              child: SelectionArea(
+                                child: Text(
+                                  model.previewText!,
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          Container(
-            height: 28,
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    model.workspace?.root ??
-                        'Local workspace · No process is running',
-                    style: Theme.of(context).textTheme.labelSmall,
-                    overflow: TextOverflow.ellipsis,
+            Container(
+              height: 28,
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      model.workspace?.root ??
+                          'Local workspace · No process is running',
+                      style: Theme.of(context).textTheme.labelSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                Text(
-                  '${model.sessions.length} sessions',
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-                const SizedBox(width: 20),
-                const Text('0.1.0', style: TextStyle(fontSize: 11)),
-              ],
+                  Text(
+                    '${model.sessions.length} sessions',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  const SizedBox(width: 20),
+                  const Text('0.1.0', style: TextStyle(fontSize: 11)),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     ),
   );
@@ -567,6 +596,8 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
               const SizedBox(height: 24),
               Text(
                 'Ctrl+Shift+P  Command palette',
+                // Synchronous build; awaits above belong to separate tap callbacks.
+                // ignore: dartitect_dt3128
                 style: Theme.of(context).textTheme.labelMedium,
               ),
             ],

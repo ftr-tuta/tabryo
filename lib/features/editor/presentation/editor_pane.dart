@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../domain/document_files.dart';
 import 'editor_view_model.dart';
+import 'monaco_editor.dart';
 
 /// The caller closes only after this returns true; Cancel never drops a buffer.
 Future<bool> confirmDocumentClose(
@@ -14,8 +15,12 @@ Future<bool> confirmDocumentClose(
   List<EditorBuffer> buffers,
 ) async {
   if (buffers.any((b) => b.saving)) return false;
+  for (final buffer in buffers) {
+    if (!await editor.synchronizeBuffer(buffer)) return false;
+  }
   final dirty = buffers.where((b) => b.dirty).toList();
   if (dirty.isEmpty) return true;
+  if (!context.mounted) return false;
   final choice = await showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
@@ -49,15 +54,14 @@ Future<bool> confirmDocumentClose(
   for (final buffer in dirty) {
     if (!await editor.save(buffer)) {
       editor.select(buffer);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${buffer.path}: ${buffer.error ?? 'Unsaved changes remain.'}',
-            ),
+      if (!context.mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${buffer.path}: ${buffer.error ?? 'Unsaved changes remain.'}',
           ),
-        );
-      }
+        ),
+      );
       return false;
     }
   }
@@ -65,8 +69,9 @@ Future<bool> confirmDocumentClose(
 }
 
 final class EditorPane extends StatelessWidget {
-  const EditorPane({required this.model, super.key});
+  const EditorPane({required this.model, this.visible = true, super.key});
   final EditorViewModel model;
+  final bool visible;
 
   Future<void> _close(BuildContext context, EditorBuffer buffer) async {
     if (await confirmDocumentClose(context, model, [buffer])) {
@@ -75,6 +80,7 @@ final class EditorPane extends StatelessWidget {
   }
 
   Future<void> _reload(BuildContext context, EditorBuffer buffer) async {
+    if (!await model.synchronizeBuffer(buffer) || !context.mounted) return;
     if (buffer.dirty) {
       final accepted = await showDialog<bool>(
         context: context,
@@ -168,15 +174,23 @@ final class EditorPane extends StatelessWidget {
                       children: [
                         IconButton(
                           tooltip: 'Undo (Ctrl+Z)',
-                          onPressed: value.canUndo && !active.saving
-                              ? active.undo.undo
+                          onPressed:
+                              (model.webAssets != null
+                                      ? active.webCanUndo
+                                      : value.canUndo) &&
+                                  !active.saving
+                              ? () => model.undoBuffer(active)
                               : null,
                           icon: const Icon(Icons.undo),
                         ),
                         IconButton(
                           tooltip: 'Redo (Ctrl+Y)',
-                          onPressed: value.canRedo && !active.saving
-                              ? active.undo.redo
+                          onPressed:
+                              (model.webAssets != null
+                                      ? active.webCanRedo
+                                      : value.canRedo) &&
+                                  !active.saving
+                              ? () => model.redoBuffer(active)
                               : null,
                           icon: const Icon(Icons.redo),
                         ),
@@ -186,10 +200,17 @@ final class EditorPane extends StatelessWidget {
                   PopupMenuButton<String>(
                     tooltip: 'Document actions',
                     enabled: !active.saving,
-                    onSelected: (value) => value == 'compare'
-                        ? model.compare(active)
-                        : _reload(context, active),
-                    itemBuilder: (_) => const [
+                    onSelected: (value) => switch (value) {
+                      'compare' => model.compare(active),
+                      'closeDiff' => model.closeComparison(active),
+                      _ => _reload(context, active),
+                    },
+                    itemBuilder: (_) => [
+                      if (active.diskText != null)
+                        const PopupMenuItem(
+                          value: 'closeDiff',
+                          child: Text('Close comparison'),
+                        ),
                       PopupMenuItem(
                         value: 'compare',
                         child: Text('Compare with disk'),
@@ -221,24 +242,26 @@ final class EditorPane extends StatelessWidget {
             ),
           ],
           Expanded(
-            child: IndexedStack(
-              index: active == null
-                  ? model.buffers.length
-                  : model.buffers.indexOf(active),
-              children: [
-                for (final buffer in model.buffers)
-                  KeyedSubtree(
-                    key: ObjectKey(buffer),
-                    child: ExcludeFocus(
-                      excluding: !identical(buffer, active),
-                      child: _document(buffer),
-                    ),
+            child: model.webAssets != null && model.buffers.isNotEmpty
+                ? MonacoEditor(model: model, visible: visible)
+                : IndexedStack(
+                    index: active == null
+                        ? model.buffers.length
+                        : model.buffers.indexOf(active),
+                    children: [
+                      for (final buffer in model.buffers)
+                        KeyedSubtree(
+                          key: ObjectKey(buffer),
+                          child: ExcludeFocus(
+                            excluding: !identical(buffer, active),
+                            child: _document(buffer),
+                          ),
+                        ),
+                      const Center(
+                        child: Text('Open a text file from Files to edit it.'),
+                      ),
+                    ],
                   ),
-                const Center(
-                  child: Text('Open a text file from Files to edit it.'),
-                ),
-              ],
-            ),
           ),
         ],
       );
@@ -276,6 +299,8 @@ final class EditorPane extends StatelessWidget {
               smartQuotesType: SmartQuotesType.disabled,
               keyboardType: TextInputType.multiline,
               inputFormatters: [
+                // Flutter text input formatting is presentation, not application I/O.
+                // ignore: dartitect_dt3121, dartitect_dt3123
                 TextInputFormatter.withFunction((previous, next) {
                   if (utf8.encode(next.text).length +
                           (active.baseline.bom ? 3 : 0) >

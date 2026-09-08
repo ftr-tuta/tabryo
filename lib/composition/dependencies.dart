@@ -1,9 +1,13 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+
 import '../core/preview_cache.dart';
 import '../features/collaboration/infrastructure/local_collaboration_client.dart';
 import '../features/collaboration/presentation/collaboration_view_model.dart';
 import '../features/editor/infrastructure/local_document_files.dart';
+import '../features/editor/infrastructure/bundled_editor_assets.dart';
 import '../features/editor/presentation/editor_view_model.dart';
 import '../features/mcp_studio/application/mcp_studio.dart';
 import '../features/mcp_studio/infrastructure/local_studio_storage.dart';
@@ -30,7 +34,28 @@ WorkbenchViewModel createWorkbench() {
     host: NativePtyHost(),
     launcher: LocalCodexLauncher(),
     files: LocalWorkspaceFiles(cache),
-    editor: EditorViewModel(LocalDocumentFiles(cache)),
+    editor: EditorViewModel(
+      LocalDocumentFiles(cache),
+      webAssets: BundledEditorAssets(
+        load: (name) async {
+          final data = await rootBundle.load(name);
+          return data.buffer.asUint8List(
+            data.offsetInBytes,
+            data.lengthInBytes,
+          );
+        },
+        list: () async =>
+            (await AssetManifest.loadFromAssetBundle(rootBundle)).listAssets(),
+        profileDirectory: p.join(
+          Platform.isWindows
+              ? Platform.environment['LOCALAPPDATA']!
+              : (Platform.environment['XDG_CACHE_HOME'] ??
+                    p.join(Platform.environment['HOME']!, '.cache')),
+          'Tabryo',
+          'editor-webview',
+        ),
+      ),
+    ),
     studio: McpStudioViewModel(McpStudio(LocalStudioStorage())),
     gitReader: git,
     gitMutator: git,

@@ -13,8 +13,9 @@ Update manually by closing Tabryo and extracting a newer release into a new fold
 
 Windows requires the latest
 [Microsoft Visual C++ v14 Redistributable for x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+Editing also requires the Microsoft Edge WebView2 Runtime on Windows.
 Ubuntu 24.04 requires a graphical session and the GTK/OpenGL runtime:
-`sudo apt install libgtk-3-0t64 libstdc++6 libgl1`.
+`sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libstdc++6 libgl1`.
 The [Ubuntu GTK package](https://packages.ubuntu.com/noble/libgtk-3-0t64)
 provides its dependent desktop libraries. Git and Codex are separate installations.
 
@@ -54,6 +55,12 @@ Ctrl+Z/Ctrl+Y undo and redo. A dot marks unsaved changes. Closing a document,
 workspace or the application offers Save, Discard and Cancel when needed.
 
 The editor supports UTF-8, optional BOM, and consistent LF or CRLF line endings.
+Monaco **0.56.0** supplies syntax colors, multiple selections, folding, snippets,
+Ctrl+F search, Ctrl+H replacement, and disk comparison. Its assets and workers
+ship inside the application and are served on a private loopback endpoint;
+editing needs no CDN or internet connection. The embedded surface hides during
+Flutter dialogs and inactive activities. Language-server intelligence and
+format-on-save are separate integrations and remain pending.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare
@@ -231,16 +238,20 @@ Use Flutter **3.47.2**, Dart **3.13.2**, and the committed pubspec.lock. Dartite
 native_strict MVVM with constructor-injected ports and an explicit composition root.
 
 ```sh
+npm --prefix packages/editor_web ci --ignore-scripts --no-audit --no-fund
+npm --prefix packages/editor_web run build
 flutter pub get --enforce-lockfile
 flutter analyze
 dart run dartitect_cli:dartitect scan
 flutter test --concurrency=1
 flutter test integration_test/terminal_host_test.dart -d windows
 flutter test integration_test/workbench_test.dart -d windows
+flutter test integration_test/editor_test.dart -d windows
 flutter build windows --release
 ```
 
-On Ubuntu install Flutter's Linux desktop dependencies, use `-d linux` and
+Use Node.js 22 or newer to bundle the pinned editor before Flutter builds.
+On Ubuntu install Flutter's Linux desktop dependencies plus `libwebkit2gtk-4.1-dev`, use `-d linux` and
 `flutter build linux --release`. Headless integration tests use `xvfb-run -a`.
 The Desktop workflow runs the native tests and packages the entire Release
 bundle on both operating systems. Distribute every file in the bundle, not just
