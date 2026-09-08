@@ -1,5 +1,9 @@
 import 'dart:ui' show AppExitResponse;
 
+// Dartitect 1.1.0 classifies Flutter HardwareKeyboard as infrastructure because
+// its SDK source lives under services/. It is presentation input state.
+// ignore_for_file: dartitect_dt3121
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -243,8 +247,6 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   KeyEventResult _key(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    // Flutter keyboard state is part of presentation input handling.
-    // ignore: dartitect_dt3121
     final keys = HardwareKeyboard.instance;
     final key = event.logicalKey;
     if (keys.isControlPressed && keys.isShiftPressed) {
@@ -526,86 +528,86 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ),
   );
 
-  Widget _welcome(BuildContext context) => Center(
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 510),
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.terminal,
-                size: 48,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(height: 22),
-              Text(
-                model.workspace == null
-                    ? 'Your projects. Your terminal.'
-                    : 'Ready when you are.',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'No process is running. Open a shell or Codex explicitly.',
-              ),
-              const SizedBox(height: 22),
-              FilledButton.icon(
-                onPressed: model.workspace == null
-                    ? dialogs.openWorkspace
-                    : () => model.openTerminal(),
-                icon: Icon(
-                  model.workspace == null ? Icons.folder_open : Icons.terminal,
+  Widget _welcome(BuildContext context) {
+    final labelStyle = Theme.of(context).textTheme.labelMedium;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 510),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.terminal,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
-                label: Text(
-                  model.workspace == null ? 'Open a workspace' : 'Open shell',
+                const SizedBox(height: 22),
+                Text(
+                  model.workspace == null
+                      ? 'Your projects. Your terminal.'
+                      : 'Ready when you are.',
+                  style: Theme.of(context).textTheme.headlineMedium,
                 ),
-              ),
-              if (model.preferences.restoreLayout &&
-                  model.preferences.layout.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                const Text('Previous sessions — start explicitly:'),
-                ...model.preferences.layout
-                    .take(6)
-                    .map(
-                      (item) => ListTile(
-                        dense: true,
-                        title: Text('${item['title'] ?? 'Terminal'}'),
-                        subtitle: Text(
-                          '${item['root'] ?? ''}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 14),
+                const Text(
+                  'No process is running. Open a shell or Codex explicitly.',
+                ),
+                const SizedBox(height: 22),
+                FilledButton.icon(
+                  onPressed: model.workspace == null
+                      ? dialogs.openWorkspace
+                      : () => model.openTerminal(),
+                  icon: Icon(
+                    model.workspace == null
+                        ? Icons.folder_open
+                        : Icons.terminal,
+                  ),
+                  label: Text(
+                    model.workspace == null ? 'Open a workspace' : 'Open shell',
+                  ),
+                ),
+                if (model.preferences.restoreLayout &&
+                    model.preferences.layout.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  const Text('Previous sessions — start explicitly:'),
+                  ...model.preferences.layout
+                      .take(6)
+                      .map(
+                        (item) => ListTile(
+                          dense: true,
+                          title: Text('${item['title'] ?? 'Terminal'}'),
+                          subtitle: Text(
+                            '${item['root'] ?? ''}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: const Icon(Icons.play_arrow),
+                          onTap: () async {
+                            final root = item['root'];
+                            if (root is String) {
+                              await model.openWorkspace(root);
+                              await model.openTerminal(
+                                codex: '${item['title']}'.startsWith('Codex'),
+                                resume: '${item['title']}'.contains('resume'),
+                              );
+                            }
+                          },
                         ),
-                        trailing: const Icon(Icons.play_arrow),
-                        onTap: () async {
-                          final root = item['root'];
-                          if (root is String) {
-                            await model.openWorkspace(root);
-                            await model.openTerminal(
-                              codex: '${item['title']}'.startsWith('Codex'),
-                              resume: '${item['title']}'.contains('resume'),
-                            );
-                          }
-                        },
                       ),
-                    ),
+                ],
+                const SizedBox(height: 24),
+                Text('Ctrl+Shift+P  Command palette', style: labelStyle),
               ],
-              const SizedBox(height: 24),
-              Text(
-                'Ctrl+Shift+P  Command palette',
-                // Synchronous build; awaits above belong to separate tap callbacks.
-                // ignore: dartitect_dt3128
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
-            ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _tabs(BuildContext context) => Container(
     height: 42,
@@ -722,6 +724,8 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
         ),
       ),
     TerminalPane(:final session) => TerminalPaneView(
+      readClipboard: model.readClipboard,
+      writeClipboard: model.writeClipboard,
       key: ValueKey(session),
       session: model.sessions[session]!,
       preferences: model.preferences,

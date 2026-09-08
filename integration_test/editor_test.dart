@@ -328,6 +328,25 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       expect(state.ready, isTrue);
       await expectWeb(tester, browser, "location.protocol === 'http:'", true);
+      final retained = buffer.controller.text;
+      await browser.runJavaScript(
+        "setTimeout(() => { throw new Error('Fixture editor failure'); }, 0)",
+      );
+      await until(tester, () => !state.ready);
+      expect(buffer.controller.text, retained);
+      await tester.tap(find.text('Reconnect editor'));
+      await until(tester, () => state.surfaceVisible);
+      final reconnected = tester
+          .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
+          .controller;
+      await expectWeb(
+        tester,
+        reconnected,
+        "document.querySelector('.view-lines').innerText.includes('local')",
+        true,
+      );
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      expect(buffer.controller.text, retained);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

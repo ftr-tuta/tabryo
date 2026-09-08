@@ -12,6 +12,8 @@ final class TerminalPaneView extends StatefulWidget {
     required this.focused,
     required this.onFocus,
     required this.onClose,
+    required this.readClipboard,
+    required this.writeClipboard,
     super.key,
   });
   final TerminalSession session;
@@ -19,6 +21,8 @@ final class TerminalPaneView extends StatefulWidget {
   final bool focused;
   final VoidCallback onFocus;
   final VoidCallback onClose;
+  final Future<String?> Function() readClipboard;
+  final Future<void> Function(String) writeClipboard;
   @override
   State<TerminalPaneView> createState() => _TerminalPaneViewState();
 }
@@ -70,17 +74,14 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
     final range = _controller.selection;
     if (range != null) {
       final text = widget.session.terminal.buffer.getText(range);
-      // User-initiated Flutter clipboard access belongs to this focused view.
-      // ignore: dartitect_dt3123, dartitect_dt3121
-      await Clipboard.setData(ClipboardData(text: text));
+      await widget.writeClipboard(text);
     }
   }
 
   Future<void> _paste() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = await widget.readClipboard();
     if (!mounted) return;
-    if (data?.text == null) return;
-    final text = data!.text!;
+    if (text == null) return;
     if (text.contains('\n') || text.contains('\r')) {
       final accepted = await showDialog<bool>(
         context: context,

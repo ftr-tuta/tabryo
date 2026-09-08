@@ -32,10 +32,14 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.editor,
     this.studio,
     this.collaboration,
+    this.clipboard,
   }) {
     editor?.addListener(_editorChanged);
   }
   final PtyHost host;
+  final TextClipboard? clipboard;
+  Future<String?> readClipboard() async => clipboard?.readText();
+  Future<void> writeClipboard(String text) async => clipboard?.writeText(text);
   final CodexLauncher launcher;
   final WorkspaceFiles files;
   final GitReader gitReader;

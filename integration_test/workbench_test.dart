@@ -21,6 +21,7 @@ import 'package:tabryo/features/git/infrastructure/local_git.dart';
 import 'package:tabryo/features/preferences/infrastructure/local_preferences.dart';
 import 'package:tabryo/features/terminals/domain/terminal_ports.dart';
 import 'package:tabryo/features/terminals/infrastructure/native_terminal.dart';
+import 'package:tabryo/features/terminals/infrastructure/local_text_clipboard.dart';
 import 'package:tabryo/features/terminals/presentation/terminal_session.dart';
 import 'package:tabryo/features/workspaces/domain/workspace.dart';
 import 'package:tabryo/features/workspaces/presentation/workbench_view_model.dart';
@@ -161,6 +162,7 @@ void main() {
     final host = CountingHost();
     final model = WorkbenchViewModel(
       host: host,
+      clipboard: LocalTextClipboard(),
       launcher: InteractiveLauncher(),
       files: LocalWorkspaceFiles(cache),
       gitReader: git,

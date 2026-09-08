@@ -1,3 +1,7 @@
+// Flutter TextEditingValue/UndoHistory are presentation state. Dartitect 1.1.0
+// mistakes Flutter's services/ source directory for application infrastructure.
+// ignore_for_file: dartitect_dt3121
+
 import 'package:dartitect_flutter/dartitect_flutter.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
@@ -8,8 +12,6 @@ import '../domain/editor_assets.dart';
 final class EditorBuffer {
   EditorBuffer(this.baseline)
     : controller = TextEditingController.fromValue(
-        // Flutter editing state is presentation state, not an infrastructure model.
-        // ignore: dartitect_dt3121
         TextEditingValue(
           text: baseline.text,
           selection: const TextSelection.collapsed(offset: 0),

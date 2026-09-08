@@ -16,6 +16,7 @@ import '../features/files/infrastructure/local_workspace_files.dart';
 import '../features/git/infrastructure/local_git.dart';
 import '../features/preferences/infrastructure/local_preferences.dart';
 import '../features/terminals/infrastructure/native_terminal.dart';
+import '../features/terminals/infrastructure/local_text_clipboard.dart';
 import '../features/workspaces/presentation/workbench_view_model.dart';
 import '../features/codex/infrastructure/local_codex_connection.dart';
 import '../features/mcp/application/mcp_hub.dart';
@@ -32,6 +33,7 @@ WorkbenchViewModel createWorkbench() {
         ? CollaborationViewModel(LocalCollaborationClient())
         : null,
     host: NativePtyHost(),
+    clipboard: LocalTextClipboard(),
     launcher: LocalCodexLauncher(),
     files: LocalWorkspaceFiles(cache),
     editor: EditorViewModel(

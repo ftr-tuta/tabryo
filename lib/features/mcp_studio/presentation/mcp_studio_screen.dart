@@ -121,6 +121,7 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: model,
     builder: (context, _) {
+      final theme = Theme.of(context);
       final disabled = model.busy || _acting;
       final plan = model.preview;
       final project = model.selected;
@@ -142,7 +143,7 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
               if (disabled) const LinearProgressIndicator(),
               Text(
                 'Create a new STDIO server in ${model.workspace}',
-                style: Theme.of(context).textTheme.titleMedium,
+                style: theme.textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
               const Text(
@@ -263,7 +264,7 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
                 const Divider(height: 32),
                 Text(
                   'Created this session',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: theme.textTheme.titleMedium,
                 ),
                 DropdownButton<StudioPlan>(
                   isExpanded: true,
