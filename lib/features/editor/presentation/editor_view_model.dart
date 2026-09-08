@@ -57,7 +57,10 @@ final class EditorViewModel extends DartitectViewModel {
   bool _recovering = false;
 
   Future<void> configureRecovery(bool enabled) async {
-    if (_closed || recovery == null || recoveryEnabled == enabled) return;
+    if (_closed ||
+        recovery == null ||
+        (recoveryEnabled == enabled && recoveryError == null))
+      return;
     recoveryEnabled = enabled;
     _recoveryTimer?.cancel();
     try {

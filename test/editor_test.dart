@@ -52,6 +52,26 @@ final class MemoryDocuments implements DocumentFiles {
   }
 }
 
+final class FailingRecovery implements DocumentRecovery {
+  FailingRecovery(this.delegate);
+  final DocumentRecovery delegate;
+  bool failWrites = false;
+  @override
+  String? get warning => delegate.warning;
+  @override
+  Future<List<RecoveredDocument>> pending() => delegate.pending();
+  @override
+  Future<void> save(List<RecoveredDocument> documents) async {
+    if (failWrites) throw const DocumentFailure('Storage unavailable');
+    await delegate.save(documents);
+  }
+
+  @override
+  Future<void> remove(String id) => delegate.remove(id);
+  @override
+  Future<void> close() => delegate.close();
+}
+
 final class PendingEditorAssets implements EditorAssets {
   final attempts = <Completer<EditorPage>>[];
   @override
@@ -93,6 +113,50 @@ void main() {
   setUp(() {
     files = MemoryDocuments();
     editor = EditorViewModel(files)..selectWorkspace(root);
+  });
+
+  test('disabling recovery can retry a failed deletion without losing the last copy', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'editor-recovery-storage-',
+    );
+    final root = await directory.resolveSymbolicLinks();
+    final copies = Directory(p.join(root, 'copies'));
+    final recovery = FailingRecovery(LocalDocumentRecovery(copies));
+    final model = EditorViewModel(MemoryDocuments(), recovery: recovery)
+      ..selectWorkspace(root);
+    addTearDown(() async {
+      await model.disposeAsync();
+      await directory.delete(recursive: true);
+    });
+    await model.configureRecovery(true);
+    await model.open(root, p.join(root, 'source.dart'));
+    model.active!.controller.text = 'recoverable edits';
+    expect(await model.flushRecovery(), isTrue);
+    final snapshot =
+        (await copies
+                    .list(recursive: true)
+                    .where(
+                      (v) =>
+                          v is File && p.basename(v.path) == 'documents.json',
+                    )
+                    .toList())
+                .single
+            as File;
+    recovery.failWrites = true;
+    await model.configureRecovery(false);
+    expect(model.recoveryError, contains('Storage unavailable'));
+    expect(
+      (jsonDecode(await snapshot.readAsString()) as Map)['documents'],
+      hasLength(1),
+    );
+    recovery.failWrites = false;
+    await model.configureRecovery(false);
+    expect(model.recoveryError, isNull);
+    expect(
+      (jsonDecode(await snapshot.readAsString()) as Map)['documents'],
+      isEmpty,
+    );
+    expect(model.active!.controller.text, 'recoverable edits');
   });
 
   test('recovery survives process death and excludes live owners', () async {
