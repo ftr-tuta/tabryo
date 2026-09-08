@@ -903,6 +903,12 @@ final class WorkbenchViewModel extends DartitectViewModel {
   ) async {
     final selected = await projects?.apply(project, value);
     if (selected == null) return;
+    for (final session in editor?.language?.sessions.values.toList() ?? []) {
+      if (p.equals(session.spec.root, project.directory) &&
+          p.equals(session.spec.workspace, project.workspace)) {
+        await editor?.language?.stop(session.spec.id);
+      }
+    }
     final formatters = {...preferences.dartFormatters};
     if (project.kind != ProjectKind.python) {
       final dart = selected[ProjectTool.dart];

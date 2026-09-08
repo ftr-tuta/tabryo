@@ -336,7 +336,7 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       ),
       'Project .venv',
     );
-    for (final tool in [ProjectTool.uv, ProjectTool.poetry]) {
+    for (final tool in [ProjectTool.uv, ProjectTool.poetry, ProjectTool.ruff]) {
       await add(
         tool,
         p.join(
@@ -390,11 +390,18 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       ProjectTool.uv: windows ? ['uv.exe'] : ['uv'],
       ProjectTool.poetry: windows ? ['poetry.exe'] : ['poetry'],
       ProjectTool.pyenv: windows ? ['pyenv.bat'] : ['pyenv'],
+      ProjectTool.node: windows ? ['node.exe'] : ['node'],
+      ProjectTool.ruff: windows ? ['ruff.exe'] : ['ruff'],
     }.entries) {
       for (final executable in _path(entry.value)) {
         await add(entry.key, executable, 'PATH');
       }
     }
+    await add(
+      ProjectTool.pyright,
+      p.join(root, 'node_modules', 'pyright', 'dist', 'pyright-langserver.js'),
+      'Project node_modules',
+    );
     return ToolchainHints(Map.unmodifiable(candidates));
   }
 
@@ -430,8 +437,13 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
           (windows &&
               tool != ProjectTool.flutter &&
               tool != ProjectTool.pyenv &&
+              tool != ProjectTool.pyright &&
               p.extension(path).toLowerCase() != '.exe') ||
-          (!windows && (await File(path).stat()).mode & 0x49 == 0)) {
+          (tool == ProjectTool.pyright &&
+              p.extension(path).toLowerCase() != '.js') ||
+          (!windows &&
+              tool != ProjectTool.pyright &&
+              (await File(path).stat()).mode & 0x49 == 0)) {
         throw ProjectFailure(
           'Select an installed ${tool.name} ${tool == ProjectTool.flutter ? 'SDK directory' : 'executable'}: $path',
         );

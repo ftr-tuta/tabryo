@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor/editor/editor.main.js';
 import './editor.css';
+import { installLanguage } from './language.js';
 
 self.MonacoEnvironment = {
   getWorker: (_module, label) => {
@@ -12,7 +13,11 @@ const documents = new Map();
 let active = null;
 let changing = false;
 let diff = null;
+let diffVisible = false;
 let diskModel = null;
+const diffContainer = document.createElement('div');
+diffContainer.style.width = '100%';
+diffContainer.style.height = '100%';
 const container = document.getElementById('editor');
 const editor = monaco.editor.create(container, {
   theme: 'vs-dark', automaticLayout: true, minimap: { enabled: false },
@@ -90,8 +95,12 @@ function changed(doc, event) {
   emit(snapshot(doc));
 }
 function closeDiff() {
-  if (!diff) return;
-  diff.dispose(); diff = null;
+  if (!diffVisible) return;
+  diffVisible = false;
+  // Monaco 0.56 installs shared hover/render factories from the last standalone
+  // editor. Keep this one comparison editor alive for the page, but release its
+  // models on close so later completion/hover cannot use a disposed service.
+  diff.setModel(null);
   diskModel?.dispose(); diskModel = null;
   container.replaceChildren(editor.getDomNode());
   editor.layout();
@@ -108,11 +117,14 @@ function activate(doc) {
   if (doc?.view) editor.restoreViewState(doc.view);
 }
 
+const language = installLanguage(editor, documents, emit, snapshot);
+
 window.tabryoReceive = (packet) => {
   if (packet.token !== token) return;
   changing = true;
   try {
     switch (packet.type) {
+      case 'languageResult': language.receive(packet); break;
       case 'sync': {
         const keep = new Set(packet.documents.map(d => d.id));
         for (const [id, doc] of documents) {
@@ -125,7 +137,8 @@ window.tabryoReceive = (packet) => {
           let doc = documents.get(input.id);
           if (!doc) {
             const model = monaco.editor.createModel(input.text, input.language, monaco.Uri.parse(input.uri));
-            doc = { id: input.id, model, acceptedText: input.text, generation: input.generation, readOnly: input.readOnly };
+            doc = { id: input.id, model, acceptedText: input.text, generation: input.generation, readOnly: input.readOnly,
+              hostSequence: model.getVersionId() };
             doc.pendingSelection = { start: input.start, end: input.end };
             doc.listener = model.onDidChangeContent(event => changed(doc, event));
             documents.set(input.id, doc);
@@ -134,7 +147,11 @@ window.tabryoReceive = (packet) => {
             // Input may arrive after Flutter's last snapshot but before this
             // replacement crosses the native bridge. Keep that input and
             // report it in the new generation instead of overwriting it.
-            if (input.expectedSequence != null && doc.model.getVersionId() !== input.expectedSequence) {
+            // Consecutive host replacements may cross before Flutter receives
+            // the first acknowledgement. Only a version produced by actual
+            // browser input conflicts; an unchanged host replacement is safe.
+            if (input.expectedSequence != null && doc.model.getVersionId() !== input.expectedSequence &&
+                doc.model.getVersionId() !== doc.hostSequence) {
               emit(snapshot(doc, { type: 'superseded' }));
               continue;
             }
@@ -145,10 +162,12 @@ window.tabryoReceive = (packet) => {
               doc.model.pushEditOperations([], [{ range: doc.model.getFullModelRange(), text: input.text }], () => null);
               doc.model.pushStackElement();
             }
+            doc.hostSequence = doc.model.getVersionId();
           }
           doc.readOnly = input.readOnly;
           doc.newline = input.newline;
           doc.bom = input.bom;
+          language.sync(doc, input);
         }
         activate(documents.get(packet.active) ?? null);
         if (active?.pendingSelection) {
@@ -178,18 +197,35 @@ window.tabryoReceive = (packet) => {
         } else if (packet.command === 'find') editor.getAction('actions.find').run();
         else if (packet.command === 'replace') editor.getAction('editor.action.startFindReplaceAction').run();
         else if (packet.command === 'closeDiff') closeDiff();
+        else if (({ rename: 'tabryo.rename', completion: 'editor.action.triggerSuggest',
+          symbols: 'editor.action.quickOutline', references: 'tabryo.references',
+          fixes: 'editor.action.quickFix' })[packet.command]) {
+          editor.focus();
+          editor.getAction(({ rename: 'tabryo.rename', completion: 'editor.action.triggerSuggest',
+            symbols: 'editor.action.quickOutline', references: 'tabryo.references',
+            fixes: 'editor.action.quickFix' })[packet.command])?.run();
+        }
+        else if (packet.command === 'reveal' && active) {
+          const input = packet;
+          if (input.start != null) {
+            const at = active.model.getPositionAt(input.start);
+            editor.setPosition(at); editor.revealPositionInCenter(at); editor.focus();
+          }
+        }
         break;
       }
       case 'compare': {
         closeDiff();
         if (!active) break;
-        container.replaceChildren();
+        container.replaceChildren(diffContainer);
         diskModel = monaco.editor.createModel(packet.text, active.model.getLanguageId());
-        diff = monaco.editor.createDiffEditor(container, {
+        diff ??= monaco.editor.createDiffEditor(diffContainer, {
           automaticLayout: true, readOnly: true, originalEditable: false,
           renderSideBySide: true, minimap: { enabled: false },
         });
         diff.setModel({ original: diskModel, modified: active.model });
+        diffVisible = true;
+        diff.layout();
         break;
       }
     }

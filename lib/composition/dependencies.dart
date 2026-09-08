@@ -19,6 +19,8 @@ import '../features/git/infrastructure/local_git.dart';
 import '../features/preferences/infrastructure/local_preferences.dart';
 import '../features/projects/infrastructure/local_project_environment.dart';
 import '../features/projects/presentation/projects_view_model.dart';
+import '../features/language/application/language_service.dart';
+import '../features/language/infrastructure/lsp_connection.dart';
 import '../features/terminals/infrastructure/native_terminal.dart';
 import '../features/terminals/infrastructure/local_text_clipboard.dart';
 import '../features/workspaces/presentation/workbench_view_model.dart';
@@ -45,6 +47,7 @@ WorkbenchViewModel createWorkbench() {
       LocalDocumentFiles(cache),
       recovery: LocalDocumentRecovery.forUser(),
       formatter: LocalDartFormatter(),
+      language: LanguageService(LocalLanguageServers()),
       webAssets: BundledEditorAssets(
         load: (name) async {
           final data = await rootBundle.load(name);

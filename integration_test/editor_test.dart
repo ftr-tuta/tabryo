@@ -16,6 +16,9 @@ import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart'
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/editor/presentation/monaco_editor.dart';
+import 'package:tabryo/features/language/application/language_service.dart';
+import 'package:tabryo/features/language/domain/language_server.dart';
+import 'package:tabryo/features/language/infrastructure/lsp_connection.dart';
 import 'package:webview_win_floating/webview_win_floating.dart';
 
 void controlKey(int key) {
@@ -130,7 +133,12 @@ Future<void> expectWeb(
     if (value == expected) return;
     await tester.pump(const Duration(milliseconds: 100));
   }
-  expect(value, expected, reason: expression);
+  final details = await browser.runJavaScriptReturningResult("""
+    JSON.stringify({focus: document.activeElement?.className,
+      suggestions: [...document.querySelectorAll('.suggest-widget')].map(e => ({display: getComputedStyle(e).display, text: e.textContent.slice(0, 100)})),
+      errors: window.editorFailures ?? []})
+  """);
+  expect(value, expected, reason: '$expression\n$details');
 }
 
 void main() {
@@ -157,6 +165,7 @@ void main() {
       final editor = EditorViewModel(
         LocalDocumentFiles(PreviewCache()),
         formatter: LocalDartFormatter(),
+        language: LanguageService(LocalLanguageServers()),
         webAssets: BundledEditorAssets(
           load: (name) async =>
               (await rootBundle.load(name)).buffer.asUint8List(),
@@ -263,7 +272,10 @@ void main() {
       } else {
         expect((await Process.run('xdotool', ['key', 'ctrl+s'])).exitCode, 0);
       }
-      await until(tester, () => !buffer.dirty && !buffer.saving);
+      await until(tester, () {
+        if (buffer.error != null) fail(buffer.error!);
+        return !buffer.dirty && !buffer.saving;
+      });
       expect(buffer.error, isNull);
       final saved = await file.readAsBytes();
       expect(saved.take(3), [0xef, 0xbb, 0xbf]);
@@ -486,6 +498,111 @@ void main() {
       editor.redoBuffer(buffer);
       await until(tester, () => buffer.controller.text == formatted);
       expect(buffer.dirty, isFalse);
+      debugPrint('Native editor: qualifying Dart language intelligence');
+      await reconnected.runJavaScript("""
+        window.editorFailures = [];
+        for (const type of ['error', 'unhandledrejection']) window.addEventListener(type, event => {
+          if (window.editorFailures.length < 5) window.editorFailures.push(String(event.message ?? event.reason));
+        });
+      """);
+      await editor.language!.start(
+        LanguageServerSpec(
+          kind: LanguageServerKind.dart,
+          workspace: root,
+          root: root,
+          executable: editor.dartFormatters[root]!,
+        ),
+      );
+      const source =
+          'int value = 1;\nvoid main(){ print(value); missingName(); }\n';
+      buffer.controller.value = TextEditingValue(
+        text: source,
+        selection: TextSelection.collapsed(offset: source.indexOf('value') + 2),
+      );
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      await until(
+        tester,
+        () => editor.language!.problems.any(
+          (p) => '${p.diagnostic['message']}'.contains('missingName'),
+        ),
+      );
+      await expectWeb(
+        tester,
+        reconnected,
+        "document.querySelectorAll('.squiggly-error').length > 0",
+        true,
+      );
+      await tester.tap(find.byTooltip('Document actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename symbol'));
+      await tester.pumpAndSettle();
+      await until(
+        tester,
+        () => find
+            .widgetWithText(TextField, 'New symbol name')
+            .evaluate()
+            .isNotEmpty,
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'New symbol name'),
+        'count',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Review rename'));
+      await until(
+        tester,
+        () => find.text('Review proposed edits').evaluate().isNotEmpty,
+      );
+      expect(state.surfaceVisible, isFalse);
+      await tester.tap(find.text('Apply unsaved edits'));
+      await until(
+        tester,
+        () => buffer.controller.text.contains('print(count)'),
+      );
+      expect(buffer.dirty, isTrue);
+      expect(await file.readAsString(), isNot(contains('count')));
+      debugPrint('Native editor: rename review applied; checking completion');
+      await until(tester, () => state.surfaceVisible);
+      const completionSource =
+          'void main() { final value = "ação"; value.toStr; }\n';
+      buffer.controller.value = TextEditingValue(
+        text: completionSource,
+        selection: TextSelection.collapsed(
+          offset: completionSource.indexOf('toStr') + 5,
+        ),
+      );
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      expect(buffer.controller.text, completionSource);
+      expect(
+        buffer.controller.selection.extentOffset,
+        completionSource.indexOf('toStr') + 5,
+      );
+      await tester.tap(find.byTooltip('Document actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Complete code'));
+      await tester.pumpAndSettle();
+      await expectWeb(
+        tester,
+        reconnected,
+        "document.querySelector('.suggest-widget')?.innerText.includes('toString') ?? false",
+        true,
+      );
+      buffer.controller.text = 'void main(){print("ação 🌱");}\n';
+      debugPrint(
+        'Native editor: completion rendered; checking language format on save',
+      );
+      expect(await editor.save(buffer), isTrue, reason: buffer.error);
+      expect(buffer.controller.text, contains('  print('));
+      await editor.language!.closeWorkspace(root);
+      debugPrint(
+        'Native editor: language server stopped; checking surface disposal',
+      );
+      await expectWeb(
+        tester,
+        reconnected,
+        "document.querySelectorAll('.squiggly-error').length",
+        0,
+      );
       if (Platform.isLinux) {
         // Removing an absent channel must not add a tombstone that prevents
         // the remaining channels from being disposed when the surface closes.

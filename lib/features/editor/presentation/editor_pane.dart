@@ -210,6 +210,11 @@ final class EditorPane extends StatelessWidget {
                     tooltip: 'Document actions',
                     enabled: !active.saving,
                     onSelected: (value) => switch (value) {
+                      'rename' ||
+                      'completion' ||
+                      'symbols' ||
+                      'references' ||
+                      'fixes' => model.webCommand?.call(value),
                       'compare' => model.compare(active),
                       'closeDiff' => model.closeComparison(active),
                       'keep' => model.keepLocalEdits(active),
@@ -220,6 +225,32 @@ final class EditorPane extends StatelessWidget {
                       _ => _reload(context, active),
                     },
                     itemBuilder: (_) => [
+                      if (model.language?.sessions.values.any(
+                            (s) =>
+                                s.ready && s.contains(active.root, active.path),
+                          ) ==
+                          true) ...[
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('Rename symbol'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'completion',
+                          child: Text('Complete code'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'symbols',
+                          child: Text('Go to symbol'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'references',
+                          child: Text('Find project references'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'fixes',
+                          child: Text('Quick fixes'),
+                        ),
+                      ],
                       if (active.formatFailed)
                         const PopupMenuItem(
                           value: 'unformatted',
@@ -287,6 +318,71 @@ final class EditorPane extends StatelessWidget {
                     ],
                   ),
           ),
+          if (model.language?.sessions.isNotEmpty == true)
+            ExpansionTile(
+              title: Text(
+                'Problems · ${model.language!.problems.where((p) => p.workspace == model.workspace).length}${model.language!.diagnosticsLimited ? ' (limit reached)' : ''}',
+              ),
+              subtitle: Text(
+                model.language!.sessions.values
+                    .where((s) => s.spec.workspace == model.workspace)
+                    .map(
+                      (s) =>
+                          '${s.spec.kind.name}: ${s.error ?? (s.ready ? 'connected' : 'starting')}',
+                    )
+                    .join(' · '),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              children: [
+                SizedBox(
+                  height: 150,
+                  child: ListView(
+                    children: [
+                      for (final problem in model.language!.problems.where(
+                        (p) => p.workspace == model.workspace,
+                      ))
+                        ListTile(
+                          dense: true,
+                          leading: Icon(
+                            problem.diagnostic['severity'] == 1
+                                ? Icons.error_outline
+                                : Icons.warning_amber,
+                          ),
+                          title: Text(
+                            '${problem.diagnostic['message']}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '${problem.diagnostic['source'] ?? problem.server.split(':').first} ${problem.diagnostic['code'] ?? ''} · ${p.relative(problem.path, from: model.workspace)}',
+                          ),
+                          onTap: active == null
+                              ? null
+                              : () async {
+                                  try {
+                                    await model.navigateLanguage(
+                                      active,
+                                      Uri.file(problem.path).toString(),
+                                      (problem.diagnostic['range']
+                                              as Map)['start']
+                                          as Map,
+                                    );
+                                  } catch (error) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            SnackBar(content: Text('$error')),
+                                          );
+                                    }
+                                  }
+                                },
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
         ],
       );
     },

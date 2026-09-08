@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../domain/project.dart';
 import 'projects_view_model.dart';
 import 'project_setup_panel.dart';
+import '../../language/application/language_service.dart';
+import '../../language/presentation/language_dialog.dart';
 
 final class ProjectsScreen extends StatelessWidget {
   const ProjectsScreen({
@@ -10,9 +12,11 @@ final class ProjectsScreen extends StatelessWidget {
     required this.onApply,
     this.onRun,
     this.onCreate,
+    this.language,
     super.key,
   });
   final ProjectsViewModel model;
+  final LanguageService? language;
   final Future<void> Function(DevelopmentProject, ToolchainSelection) onApply;
   final Future<void> Function(DevelopmentProject, ProjectCommand)? onRun;
   final Future<void> Function(ProjectCreation)? onCreate;
@@ -124,6 +128,32 @@ final class ProjectsScreen extends StatelessWidget {
                                   model: model,
                                   onApply: onApply,
                                 ),
+                                if (language != null)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                    child: OutlinedButton.icon(
+                                      icon: const Icon(Icons.code),
+                                      label: const Text(
+                                        'Language intelligence',
+                                      ),
+                                      onPressed:
+                                          model.applying || model.selecting
+                                          ? null
+                                          : () => showDialog<void>(
+                                              context: context,
+                                              barrierDismissible: false,
+                                              builder: (_) => LanguageDialog(
+                                                service: language!,
+                                                project: project,
+                                                selection: model.selection,
+                                                projects:
+                                                    model.discovery.projects,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
                                 ProjectSetupPanel(
                                   key: ValueKey(project.id),
                                   model: model,
@@ -166,6 +196,9 @@ final class _ToolchainFormState extends State<_ToolchainForm> {
       ProjectTool.python,
       ProjectTool.uv,
       ProjectTool.poetry,
+      ProjectTool.node,
+      ProjectTool.pyright,
+      ProjectTool.ruff,
     ],
   };
   final _fields = <ProjectTool, TextEditingController>{};
@@ -212,6 +245,8 @@ final class _ToolchainFormState extends State<_ToolchainForm> {
           decoration: InputDecoration(
             labelText: tool == ProjectTool.flutter
                 ? 'Flutter SDK directory'
+                : tool == ProjectTool.pyright
+                ? 'Pyright langserver JavaScript file'
                 : '${tool.name} executable',
             helperText: tool == ProjectTool.flutter
                 ? 'Uses its bundled Dart SDK for format on save.'

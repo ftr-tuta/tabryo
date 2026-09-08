@@ -5,7 +5,17 @@ enum ProjectKind { dart, flutter, python }
 
 enum PythonManager { uv, poetry, pip }
 
-enum ProjectTool { dart, flutter, python, uv, poetry, pyenv }
+enum ProjectTool {
+  dart,
+  flutter,
+  python,
+  uv,
+  poetry,
+  pyenv,
+  node,
+  pyright,
+  ruff,
+}
 
 final class DevelopmentProject {
   const DevelopmentProject({

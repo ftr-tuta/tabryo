@@ -9,8 +9,22 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import '../domain/document_files.dart';
 import '../domain/editor_assets.dart';
 import 'editor_view_model.dart';
+import '../../../core/cancellation.dart';
+import '../../language/domain/language_server.dart';
 
-final editorRoutes = RouteObserver<ModalRoute<dynamic>>();
+final editorRoutes = _EditorRouteObserver();
+
+final class _EditorRouteObserver extends RouteObserver<ModalRoute<dynamic>> {
+  Future<void> settled = Future<void>.value();
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    settled = route is TransitionRoute<dynamic>
+        ? route.completed.then((_) {})
+        : Future<void>.value();
+    super.didPop(route, previousRoute);
+  }
+}
 
 final class EditorShortcutIntent extends Intent {
   const EditorShortcutIntent(this.command);
@@ -34,6 +48,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   bool _ready = false;
   bool _presented = false;
   bool _scheduled = false;
+  int _syncRevision = 0;
   Future<void>? _synchronizing;
   String? _comparison;
   EditorBuffer? _comparisonDocument;
@@ -43,6 +58,22 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   int _request = 0;
   final _documents = <EditorBuffer, _WebDocument>{};
   final _pending = <int, Completer<void>>{};
+  final _languageRequests = <int, Cancellation>{};
+  final _languageActions =
+      <
+        int,
+        ({
+          EditorBuffer buffer,
+          int version,
+          int revision,
+          int authority,
+          Map edit,
+        })
+      >{};
+  int _nextAction = 0;
+  bool _reviewingLanguage = false;
+  bool _promptingRename = false;
+  final _commands = <({String command, EditorBuffer? buffer})>[];
   EditorViewModel get model => widget.model;
   bool get ready => _ready;
   bool get surfaceVisible =>
@@ -115,6 +146,12 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   void _fail() {
     if (!mounted) return;
     _opening++;
+    for (final cancellation in _languageRequests.values) {
+      cancellation.cancel();
+    }
+    _languageRequests.clear();
+    _languageActions.clear();
+    _commands.clear();
     _loadTimeout?.cancel();
     setState(() {
       _ready = false;
@@ -173,11 +210,24 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
 
   @override
   void didPopNext() {
-    _covered = false;
-    _schedule();
+    // Native surfaces must wait for the covering route's reverse transition
+    // and focus restoration, not just Navigator.pop's early notification.
+    unawaited(
+      editorRoutes.settled.then((_) {
+        if (!mounted) return;
+        _covered = _route?.isCurrent != true;
+        _schedule();
+      }),
+    );
   }
 
   void _schedule() {
+    _syncRevision++;
+    // Retire the old generation synchronously. A browser state packet already
+    // in flight must not overwrite a host edit before the next Flutter frame.
+    for (final entry in _documents.entries) {
+      _captureHostText(entry.key, entry.value);
+    }
     if (_scheduled || !mounted) return;
     _scheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -185,6 +235,14 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       if (mounted) unawaited(_sync());
     });
     WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _captureHostText(EditorBuffer buffer, _WebDocument doc) {
+    if (doc.text == buffer.controller.text) return;
+    doc.expectedSequence ??= doc.sequence;
+    doc.text = buffer.controller.text;
+    doc.generation++;
+    doc.sequence = 0;
   }
 
   Future<void> _send(Map<String, Object?> packet) async {
@@ -211,7 +269,14 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   }
 
   Future<void> _syncDocuments() async {
+    final revision = _syncRevision;
     try {
+      _languageActions.removeWhere(
+        (_, action) =>
+            !model.buffers.contains(action.buffer) ||
+            action.revision != model.languageRevision ||
+            action.authority != model.language?.generation,
+      );
       _documents.removeWhere((buffer, _) => !model.buffers.contains(buffer));
       final documents = <Map<String, Object?>>[];
       for (final buffer in model.buffers) {
@@ -219,12 +284,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           buffer,
           () => _WebDocument('document-${++_request}', buffer.controller.text),
         );
-        if (doc.text != buffer.controller.text) {
-          doc.expectedSequence ??= doc.sequence;
-          doc.text = buffer.controller.text;
-          doc.generation++;
-          doc.sequence = 0;
-        }
+        _captureHostText(buffer, doc);
         documents.add({
           'id': doc.id,
           'generation': doc.generation,
@@ -252,6 +312,19 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
             '.json' => 'json',
             _ => 'plaintext',
           },
+          'sourceUri': Uri.file(buffer.path).toString(),
+          'languageEnabled':
+              model.language?.sessions.values.any(
+                (s) => s.ready && s.contains(buffer.root, buffer.path),
+              ) ??
+              false,
+          'diagnostics': [
+            for (final problem
+                in model.language?.problems ?? <LanguageProblem>[])
+              if (p.equals(problem.workspace, buffer.root) &&
+                  p.equals(problem.path, buffer.path))
+                problem.diagnostic,
+          ],
           'readOnly': buffer.saving,
           'newline': buffer.baseline.newline,
           'bom': buffer.baseline.bom,
@@ -274,12 +347,28 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         );
       }
       final visible = _ready && widget.visible && !_covered;
-      await _browser?.setVisibility(visible);
+      if (visible != _presented) await _browser?.setVisibility(visible);
       if (visible && !_presented) {
         await _browser?.requestFocus();
         await _send({'type': 'command', 'command': 'focus'});
       }
       _presented = visible;
+      if (visible && !_covered) {
+        while (_commands.isNotEmpty) {
+          // A save, tab change or host edit may finish while this snapshot is
+          // crossing the bridge. Deliver the next snapshot before its command.
+          if (revision != _syncRevision) return;
+          final queued = _commands.removeAt(0);
+          if (!identical(queued.buffer, model.active)) continue;
+          final command = queued.command;
+          await _send({
+            'type': 'command',
+            'command': command,
+            if (command == 'reveal')
+              'start': model.active?.controller.selection.extentOffset,
+          });
+        }
+      }
     } catch (_) {
       _fail();
     }
@@ -320,6 +409,61 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       if (entry == null || !model.buffers.contains(entry.key)) return;
       final buffer = entry.key;
       final doc = entry.value;
+      if (type == 'languageCancel') {
+        _languageRequests[value['request']]?.cancel();
+        return;
+      }
+      if (type == 'language') {
+        if (value['request'] is int &&
+            value['method'] is String &&
+            value['params'] is Map &&
+            value['generation'] == doc.generation &&
+            value['sequence'] == doc.sequence &&
+            _languageRequests.length < 32) {
+          unawaited(
+            _languageRequest(
+              buffer,
+              value['request'] as int,
+              value['method'] as String,
+              Map<String, Object?>.from(value['params'] as Map),
+            ),
+          );
+        }
+        return;
+      }
+      if (type == 'languageReview') {
+        final action = _languageActions.remove(value['action']);
+        if (action != null && identical(action.buffer, buffer)) {
+          unawaited(
+            _reviewLanguageEdit(
+              buffer,
+              action.version,
+              action.edit,
+              action.revision,
+              action.authority,
+            ),
+          );
+        }
+        return;
+      }
+      if (type == 'languageRename' && value['position'] is Map) {
+        unawaited(_promptRename(buffer, value['position'] as Map));
+        return;
+      }
+      if (type == 'languageNavigate') {
+        if (value['uri'] is String && value['position'] is Map) {
+          unawaited(
+            model
+                .navigateLanguage(
+                  buffer,
+                  value['uri'] as String,
+                  value['position'] as Map,
+                )
+                .catchError((Object error) => _languageError(error)),
+          );
+        }
+        return;
+      }
       if (type == 'rejected') {
         model.rejectInput(buffer);
         return;
@@ -382,6 +526,258 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
     }
   }
 
+  void _languageError(Object error) {
+    if (mounted && error is! Cancelled) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  Future<void> _promptRename(EditorBuffer buffer, Map position) async {
+    if (_promptingRename || _reviewingLanguage) return;
+    _promptingRename = true;
+    final version = buffer.version;
+    final revision = model.languageRevision;
+    final authority = model.language?.generation ?? 0;
+    try {
+      languageOffset(buffer.controller.text, position);
+      var name = '';
+      final chosen = await showDialog<String>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+            title: const Text('Rename symbol'),
+            content: SizedBox(
+              width: 400,
+              child: TextField(
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'New symbol name'),
+                onChanged: (value) => update(() => name = value.trim()),
+                onSubmitted: (_) {
+                  if (name.isNotEmpty) Navigator.pop(context, name);
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: name.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, name),
+                child: const Text('Review rename'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      if (version != buffer.version ||
+          revision != model.languageRevision ||
+          authority != model.language?.generation) {
+        throw const Cancelled();
+      }
+      final result = await model.languageRequest(
+        buffer,
+        'textDocument/rename',
+        {'position': Map<String, Object?>.from(position), 'newName': chosen},
+      );
+      if (result is Map && mounted) {
+        await _reviewLanguageEdit(buffer, version, result, revision, authority);
+      }
+    } catch (error) {
+      _languageError(error);
+    } finally {
+      _promptingRename = false;
+    }
+  }
+
+  Future<void> _reviewLanguageEdit(
+    EditorBuffer buffer,
+    int version,
+    Map edit,
+    int revision,
+    int authority,
+  ) async {
+    if (_reviewingLanguage || !mounted) return;
+    _reviewingLanguage = true;
+    try {
+      if (authority != model.language?.generation) throw const Cancelled();
+      final changes = await model.prepareLanguageEdit(
+        buffer,
+        edit,
+        version: version,
+        revision: revision,
+      );
+      if (!mounted) return;
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Review proposed edits'),
+          content: SizedBox(
+            width: 850,
+            height: 420,
+            child: ListView(
+              children: [
+                const Text(
+                  'Apply to unsaved editor buffers. Save each document to write it to disk. Expand every file to compare the complete text.',
+                ),
+                for (final change in changes)
+                  ExpansionTile(
+                    title: Text(change.buffer.path),
+                    children: [
+                      const Text('Before'),
+                      SelectableText(change.before),
+                      const Divider(),
+                      const Text('After'),
+                      SelectableText(change.after),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Apply unsaved edits'),
+            ),
+          ],
+        ),
+      );
+      if (accepted == true && mounted) {
+        if (authority != model.language?.generation) throw const Cancelled();
+        await model.applyReviewedLanguageEdit(changes);
+      }
+    } catch (error) {
+      _languageError(error);
+    } finally {
+      _reviewingLanguage = false;
+    }
+  }
+
+  Future<void> _languageRequest(
+    EditorBuffer buffer,
+    int request,
+    String method,
+    Map<String, Object?> params,
+  ) async {
+    if (_languageRequests.containsKey(request)) return;
+    final cancellation = Cancellation();
+    _languageRequests[request] = cancellation;
+    final opening = _opening;
+    final version = buffer.version;
+    final revision = model.languageRevision;
+    final authority = model.language?.generation ?? 0;
+    Object? result;
+    try {
+      if (params['position'] case final Map position) {
+        languageOffset(buffer.controller.text, position);
+      }
+      if (method == 'textDocument/codeAction') {
+        params['context'] = {
+          'diagnostics': [
+            for (final problem
+                in model.language?.problems ?? <LanguageProblem>[])
+              if (problem.workspace == buffer.root &&
+                  problem.path == buffer.path &&
+                  !problem.server.startsWith('pyright:'))
+                problem.diagnostic,
+          ],
+          'only': ['quickfix', 'source.organizeImports'],
+        };
+      }
+      result = await model.languageRequest(
+        buffer,
+        method,
+        params,
+        cancellation: cancellation,
+        lint: method == 'textDocument/codeAction',
+      );
+      if (!mounted || opening != _opening || cancellation.isCancelled) return;
+      if (method == 'textDocument/rename' && result is Map) {
+        await _reviewLanguageEdit(buffer, version, result, revision, authority);
+        result = null;
+      } else if (method == 'textDocument/codeAction') {
+        _languageActions.clear();
+        final actions = <Map<String, Object?>>[];
+        for (final item in (result is List ? result : []).take(20)) {
+          if (item is! Map ||
+              item['edit'] is! Map ||
+              item['title'] is! String ||
+              item['disabled'] != null) {
+            continue;
+          }
+          while (_languageActions.length >= 20) {
+            _languageActions.remove(_languageActions.keys.first);
+          }
+          final id = ++_nextAction;
+          _languageActions[id] = (
+            buffer: buffer,
+            version: version,
+            revision: revision,
+            authority: authority,
+            edit: item['edit'] as Map,
+          );
+          actions.add({'id': id, 'title': item['title'], 'kind': item['kind']});
+        }
+        result = actions;
+      } else if (method == 'textDocument/references' &&
+          result is List &&
+          result.isNotEmpty) {
+        final selected = await showDialog<Map>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: const Text('Project references'),
+            children: [
+              for (final location in (result as List).take(200))
+                if (location is Map &&
+                    location['uri'] is String &&
+                    location['range'] is Map)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, location),
+                    child: Text(
+                      '${location['uri']} · ${((location['range'] as Map)['start'] as Map)['line'] + 1}',
+                    ),
+                  ),
+            ],
+          ),
+        );
+        if (selected != null && mounted) {
+          await model.navigateLanguage(
+            buffer,
+            selected['uri'] as String,
+            (selected['range'] as Map)['start'] as Map,
+          );
+        }
+        result = null;
+      }
+    } catch (error) {
+      _languageError(error);
+      result = null;
+    } finally {
+      if (identical(_languageRequests[request], cancellation)) {
+        _languageRequests.remove(request);
+      }
+      if (mounted && _ready && opening == _opening) {
+        try {
+          await _send({
+            'type': 'languageResult',
+            'request': request,
+            'result': result,
+          });
+        } catch (_) {
+          /* Reconnection owns the next provider request. */
+        }
+      }
+    }
+  }
+
   Future<void> _flush(EditorBuffer buffer) async {
     if (!_ready) throw const DocumentFailure('The code editor is not ready.');
     // A save must acknowledge pending host replacements before it reads back
@@ -403,13 +799,15 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   }
 
   void _command(String command) {
-    if (_ready) {
-      unawaited(
-        _sync()
-            .then((_) => _send({'type': 'command', 'command': command}))
-            .catchError((_) => _fail()),
+    if (!_ready) return;
+    if (_commands.length >= 32) {
+      _languageError(
+        const LanguageFailure('Wait for the pending editor actions to finish.'),
       );
+      return;
     }
+    _commands.add((command: command, buffer: model.active));
+    _schedule();
   }
 
   @override
@@ -426,6 +824,10 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       );
     }
     _pending.clear();
+    for (final cancellation in _languageRequests.values) {
+      cancellation.cancel();
+    }
+    _languageActions.clear();
     unawaited(_browser?.dispose());
     super.dispose();
   }

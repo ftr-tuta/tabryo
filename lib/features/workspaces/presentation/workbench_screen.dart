@@ -128,6 +128,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
       useSafeArea: false,
       builder: (dialogContext) => Dialog.fullscreen(
         child: ProjectsScreen(
+          language: model.editor?.language,
           model: projects,
           onApply: model.applyProjectToolchains,
           onRun: (project, command) async {

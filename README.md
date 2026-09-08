@@ -59,7 +59,8 @@ Monaco **0.56.0** supplies syntax colors, multiple selections, folding, snippets
 Ctrl+F search, Ctrl+H replacement, and disk comparison. Its assets and workers
 ship inside the application and are served on a private loopback endpoint;
 editing needs no CDN or internet connection. The embedded surface hides during
-Flutter dialogs and inactive activities. Language-server intelligence remains pending.
+Flutter dialogs and inactive activities. Language intelligence can be started
+explicitly from **Projects and toolchains → Language intelligence**.
 The native editor scenario passes in Debug and Release on Windows and Ubuntu
 24.04, including reconnection and Dart formatting. The
 [desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/runs/34247734251)
@@ -108,8 +109,9 @@ it never writes the source directly. The normal conflict checks still govern
 the final save. Syntax errors, unavailable SDKs, a 30-second timeout, or edits
 arriving during formatting keep the buffer. Retry with Ctrl+S or use
 **Document actions → Save without formatting** after a formatter failure.
-Project SDK discovery is available from **Projects and toolchains**. LSP
-formatting and Flutter hot reload remain pending.
+Project SDK discovery is available from **Projects and toolchains**. An active
+Dart language server supplies formatting; the selected SDK process is the fallback
+when no server provides it. Flutter hot reload remains pending.
 
 Preferences, remembered directories, layout and file watching are opt-in.
 Disabling persistence clears the corresponding persisted data. Watching monitors
@@ -164,8 +166,8 @@ only after success; existing destinations are refused. Cancel removes an empty
 preview, while failed generator output remains at the reported path for recovery.
 Dart and Flutter use `--no-pub`; Python uses uv without modifying a parent
 workspace or initializing Git. Install dependencies as a separate reviewed step.
-Language servers, test exploration, DAP, Flutter execution and DevTools remain
-pending; installing development packages does not enable these integrations.
+Language servers are started separately through Language intelligence. Test
+exploration, DAP, Flutter execution and DevTools remain pending.
 
 The native project tests exercise Dart/Flutter generation, Python environment
 creation, uv **0.8.22**, Poetry **2.2.1**, and pip with Python **3.12.10**.
@@ -327,6 +329,55 @@ remain pending. Generated HTTP projects are not offered in this initial Studio.
 `TABRYO_TEST_NODE` to native executable paths. These tests install dependencies
 into disposable projects, run their native tests and use an isolated Codex
 configuration to discover/call tools and read resources without invoking a model.
+
+## Language intelligence
+
+Select a project in **Projects and toolchains**, apply its installed tool paths,
+then open **Language intelligence** and review **Start language servers**.
+Dart/Flutter use `dart language-server --protocol=lsp`. Python uses Node with
+the installed `pyright/dist/pyright-langserver.js` file for types/navigation and
+`ruff server` for lint, imports and formatting. Supply the project's Python
+executable so Pyright resolves that environment's imports. The Node, Pyright and
+Ruff paths can be selected alongside the existing toolchains; they persist only
+when preference persistence is enabled. The dialog also accepts session overrides.
+No server starts on opening a workspace. Changing applied toolchains stops the
+project's servers; start them again explicitly.
+
+Monaco provides completion, hover documentation, signature help, definition,
+document symbols, rename and quick fixes when the selected server supports them.
+**Document actions** also exposes completion, rename, symbols, references and
+quick fixes. Ctrl+Space requests completion, F12 goes to definition, Ctrl+Shift+O
+lists symbols and Shift+F12 opens the bounded project-reference list. Locations
+outside the authorized workspace are refused; SDK/dependency source browsing
+outside it is not included. Diagnostics appear as editor markers and in
+**Problems**, with source, severity and code. Build/test/runtime output is not
+included in this static-analysis panel.
+
+Rename and quick fixes require native review and apply only to unsaved buffers.
+All affected files must already be open and synchronized with that language
+session; open any reported missing file and retry. Every affected buffer is
+checked again after review. Normal protected saves write to disk separately.
+File creation/deletion/renaming and commands returned by servers are refused.
+Full refactoring support, completion auto-imports and Black selection remain open.
+An active Ruff server enables Python format on save. Formatter failures and
+concurrent input preserve the buffer and expose **Save without formatting**.
+
+Sessions isolate workspace/project roots and known nested projects. At most four
+servers run, with 32 pending requests per connection, 20-second request timeouts,
+4 MiB protocol messages and bounded diagnostics (100 files, 200 per file, 2,000
+total, 2 MiB retained). Reached diagnostic limits are visible. Versioned stale
+responses are discarded; servers that omit diagnostic versions cannot provide
+the same freshness guarantee. Stop/restart servers from the language dialog;
+closing their workspace or Tabryo closes their connections and processes.
+Server stderr is drained without retaining or exposing logs.
+
+Native Flutter tests exercise Dart 3.13.2, Pyright 1.1.413 and Ruff 0.16.6 with
+unsaved documents, a real Python virtual environment, review, formatting,
+fragmented framing, cancellation, disconnect and project isolation. Pyright is
+a pinned development dependency for these tests; language servers are not
+bundled into the application. Desktop CI requires the Python language tests
+with `TABRYO_TEST_LANGUAGE_PYTHON=1` and installed Node/Python/Ruff. Optional
+`TABRYO_TEST_NODE`, `TABRYO_TEST_PYTHON` and `TABRYO_TEST_RUFF` paths override PATH.
 
 ## Build and test
 

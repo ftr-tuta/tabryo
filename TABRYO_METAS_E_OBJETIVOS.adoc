@@ -428,7 +428,16 @@ A preparação oferece comandos revisados em terminais próprios, ambientes Pyth
 locais, dependências e criação por geradores oficiais com publicação após sucesso.
 Os testes existentes em `test/projects_test.dart` e `integration_test/workbench_test.dart`
 cobrem esses fluxos; o workflow Desktop inclui Python 3.12.10, uv 0.8.22 e Poetry 2.2.1.
-Serviços de linguagem, LSP/formatação Python, tarefas/testes, DAP, execução Flutter,
+Transporte LSP próprio, sincronização de buffers, diagnósticos e navegação estão
+implementados para Dart Analysis Server, Pyright e Ruff, com início explícito e
+isolamento de projetos. Monaco recebe autocomplete, documentação, assinaturas,
+definição, símbolos, referências e propostas de renomeação/correção. As propostas
+exigem arquivos abertos, revisão e conferência de versões antes de alterar buffers;
+o salvamento permanece separado. Ruff oferece formatação Python ao salvar.
+Os testes nativos de linguagem exercitam servidores reais e ambiente Python próprio.
+Refatorações que criam/removem/renomeiam arquivos, auto-imports de completion,
+seleção de Black e fontes de dependências fora do workspace permanecem abertas.
+Tarefas/testes, DAP, execução Flutter,
 DevTools, perfis Django/FastAPI e contexto IDE/Codex continuam pendentes no mesmo PR;
 esta entrega não conclui a matriz Python/Dart/Flutter nem os aceites IME/DPI.
 

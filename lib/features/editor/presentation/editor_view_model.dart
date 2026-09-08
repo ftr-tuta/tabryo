@@ -14,6 +14,17 @@ import '../domain/document_files.dart';
 import '../domain/document_formatter.dart';
 import '../domain/document_recovery.dart';
 import '../domain/editor_assets.dart';
+import '../../language/application/language_service.dart';
+import '../../language/domain/language_server.dart';
+import '../../../core/cancellation.dart';
+
+final class LanguageBufferEdit {
+  LanguageBufferEdit(this.buffer, this.before, this.after, this.version);
+  final EditorBuffer buffer;
+  final String before;
+  final String after;
+  final int version;
+}
 
 final class EditorBuffer {
   EditorBuffer(this.baseline)
@@ -44,7 +55,324 @@ final class EditorBuffer {
 }
 
 final class EditorViewModel extends DartitectViewModel {
-  EditorViewModel(this.files, {this.webAssets, this.formatter, this.recovery});
+  EditorViewModel(
+    this.files, {
+    this.webAssets,
+    this.formatter,
+    this.recovery,
+    this.language,
+  }) {
+    _languageEvents = language?.changes.listen((_) {
+      if (!_closed) notifyListeners();
+    });
+  }
+  final LanguageService? language;
+  int languageRevision = 0;
+  StreamSubscription<void>? _languageEvents;
+  LanguageDocument languageDocument(EditorBuffer buffer) => LanguageDocument(
+    buffer.root,
+    buffer.path,
+    buffer.controller.text,
+    buffer.version,
+  );
+  void synchronizeLanguage() =>
+      language?.synchronize(_buffers.map(languageDocument).toList());
+
+  Future<FormattedDocument> _formatLanguageBuffer(
+    EditorBuffer buffer,
+    ({String root, String executable})? sdk,
+  ) async {
+    final original = buffer.controller.text;
+    final selection = buffer.controller.selection;
+    final edits = await languageRequest(buffer, 'textDocument/formatting', {
+      'options': {'tabSize': 2, 'insertSpaces': true},
+    }, lint: true);
+    if (edits is List) {
+      final text = applyLanguageEdits(original, edits);
+      if (text.contains('\r') ||
+          text.contains('\u0000') ||
+          utf8.decode(utf8.encode(text)) != text) {
+        throw const LanguageFailure('The formatter returned unsupported text.');
+      }
+      int mapped(int offset) {
+        var delta = 0;
+        final ordered = edits.map((e) => e as Map).toList()
+          ..sort(
+            (a, b) =>
+                languageOffset(
+                  original,
+                  (a['range'] as Map)['start'] as Map,
+                ).compareTo(
+                  languageOffset(original, (b['range'] as Map)['start'] as Map),
+                ),
+          );
+        for (final edit in ordered) {
+          final range = edit['range'] as Map;
+          final start = languageOffset(original, range['start'] as Map);
+          final end = languageOffset(original, range['end'] as Map);
+          final inserted = (edit['newText'] as String)
+              .replaceAll('\r\n', '\n')
+              .length;
+          if (offset < start) break;
+          if (offset <= end) {
+            return (start + delta + (offset - start).clamp(0, inserted)).clamp(
+              0,
+              text.length,
+            );
+          }
+          delta += inserted - (end - start);
+        }
+        return (offset + delta).clamp(0, text.length);
+      }
+
+      final a = selection.baseOffset.clamp(0, original.length);
+      final b = selection.extentOffset.clamp(0, original.length);
+      final selected = original.substring(a < b ? a : b, a < b ? b : a);
+      if (selected.isNotEmpty) {
+        // Formatters commonly replace a whole line/document. Preserve a unique
+        // primary selection even when their edit does not carry cursor metadata.
+        final found = text.indexOf(selected);
+        if (found >= 0 && text.indexOf(selected, found + 1) < 0) {
+          return FormattedDocument(
+            text,
+            a <= b ? found : found + selected.length,
+            a <= b ? found + selected.length : found,
+          );
+        }
+      }
+      return FormattedDocument(
+        text,
+        mapped(selection.baseOffset.clamp(0, original.length)),
+        mapped(selection.extentOffset.clamp(0, original.length)),
+      );
+    }
+    if (sdk == null || formatter == null) {
+      throw const LanguageFailure(
+        'This language server does not provide formatting.',
+      );
+    }
+    return formatter!.format(
+      executable: sdk.executable,
+      root: sdk.root,
+      path: buffer.path,
+      text: original,
+      start: selection.baseOffset.clamp(0, original.length),
+      end: selection.extentOffset.clamp(0, original.length),
+    );
+  }
+
+  Future<Object?> languageRequest(
+    EditorBuffer buffer,
+    String method,
+    Map<String, Object?> params, {
+    Cancellation? cancellation,
+    bool lint = false,
+  }) async {
+    if (!_buffers.contains(buffer) || _closed) return null;
+    synchronizeLanguage();
+    final version = buffer.version;
+    final result = await language?.request(
+      languageDocument(buffer),
+      method,
+      params,
+      cancellation: cancellation,
+      lint: lint,
+    );
+    if (_closed || !_buffers.contains(buffer) || version != buffer.version) {
+      throw const Cancelled();
+    }
+    return result;
+  }
+
+  Future<void> navigateLanguage(
+    EditorBuffer origin,
+    String uriValue,
+    Map position,
+  ) async {
+    final uri = Uri.parse(uriValue);
+    if (uri.scheme != 'file' || uri.hasQuery || uri.hasFragment) {
+      throw const LanguageFailure('Only project files can be opened.');
+    }
+    final path = p.normalize(uri.toFilePath());
+    if (!p.isWithin(origin.root, path)) {
+      throw const LanguageFailure('This location is outside the workspace.');
+    }
+    if (!await open(origin.root, path)) return;
+    final target = _buffers
+        .where((b) => p.equals(b.root, origin.root) && p.equals(b.path, path))
+        .firstOrNull;
+    if (target == null) return;
+    final offset = languageOffset(target.controller.text, position);
+    target.controller.selection = TextSelection.collapsed(offset: offset);
+    webCommand?.call('reveal');
+    notifyListeners();
+  }
+
+  Future<List<LanguageBufferEdit>> prepareLanguageEdit(
+    EditorBuffer origin,
+    Map edit, {
+    required int version,
+    int? revision,
+  }) async {
+    revision ??= languageRevision;
+    if (origin.version != version || !_buffers.contains(origin)) {
+      throw const Cancelled();
+    }
+    final changes = <String, List>{};
+    final versions = <String, int?>{};
+    if (edit['changes'] case final Map values) {
+      for (final entry in values.entries) {
+        if (entry.key is! String || entry.value is! List) {
+          throw const LanguageFailure('Invalid workspace edit.');
+        }
+        changes[entry.key as String] = entry.value as List;
+      }
+    }
+    if (edit['documentChanges'] case final List values) {
+      for (final value in values) {
+        if (value is! Map ||
+            value['textDocument'] is! Map ||
+            value['edits'] is! List ||
+            value.containsKey('kind')) {
+          throw const LanguageFailure(
+            'File creation, deletion and renaming are not supported by this review.',
+          );
+        }
+        final doc = value['textDocument'] as Map;
+        final uri = doc['uri'];
+        if (uri is! String ||
+            changes.containsKey(uri) ||
+            (doc['version'] != null && doc['version'] is! int)) {
+          throw const LanguageFailure('Duplicate or invalid document edit.');
+        }
+        changes[uri] = value['edits'] as List;
+        versions[uri] = doc['version'] as int?;
+      }
+    }
+    if (changes.isEmpty || changes.length > documentLimit) {
+      throw const LanguageFailure(
+        'No supported edits, or too many affected documents.',
+      );
+    }
+    final result = <LanguageBufferEdit>[];
+    for (final entry in changes.entries) {
+      final uri = Uri.parse(entry.key);
+      if (uri.scheme != 'file' || uri.hasQuery || uri.hasFragment) {
+        throw const LanguageFailure(
+          'Only existing project files can be edited.',
+        );
+      }
+      final path = p.normalize(uri.toFilePath());
+      if (!p.isWithin(origin.root, path)) {
+        throw const LanguageFailure('A proposed edit leaves the workspace.');
+      }
+      // Reauthorize existing files through the document adapter, including symlinks.
+      final disk = await files.open(origin.root, path);
+      final buffer = _buffers
+          .where(
+            (b) => p.equals(b.root, origin.root) && p.equals(b.path, disk.path),
+          )
+          .firstOrNull;
+      if (buffer == null) {
+        throw LanguageFailure(
+          'Open $path in the editor, then request this change again so its buffer version can be checked.',
+        );
+      }
+      if (!await synchronizeBuffer(buffer) ||
+          buffer.saving ||
+          buffer.reviewRequired ||
+          disk.text != buffer.baseline.text ||
+          (versions[entry.key] != null &&
+              versions[entry.key] != buffer.version)) {
+        throw const LanguageFailure(
+          'A document changed. Review its disk comparison before retrying.',
+        );
+      }
+      final owningSessions = language?.sessions.values
+          .where((s) => s.ready && s.contains(origin.root, origin.path))
+          .toList();
+      if (owningSessions != null &&
+          !owningSessions.any(
+            (s) =>
+                s.contains(buffer.root, buffer.path) &&
+                s.documents[buffer.path]?.version == buffer.version &&
+                s.documents[buffer.path]?.text == buffer.controller.text,
+          )) {
+        throw const LanguageFailure(
+          'The proposed document is outside this language session. Open its project and retry.',
+        );
+      }
+      if (result.any((edit) => identical(edit.buffer, buffer))) {
+        throw const LanguageFailure(
+          'The proposal names the same file more than once.',
+        );
+      }
+      final text = applyLanguageEdits(buffer.controller.text, entry.value);
+      if (text.contains('\r') ||
+          text.contains('\u0000') ||
+          utf8.decode(utf8.encode(text)) != text) {
+        throw const LanguageFailure('The proposal contains unsupported text.');
+      }
+      final next = TextEditingValue(text: text);
+      if (inputFormatter(buffer)
+              .formatEditUpdate(buffer.controller.value, next) !=
+          next) {
+        throw const LanguageFailure(
+          'Proposed edits exceed the document limit or contain unsupported text.',
+        );
+      }
+      result.add(
+        LanguageBufferEdit(
+          buffer,
+          buffer.controller.text,
+          text,
+          buffer.version,
+        ),
+      );
+    }
+    if (origin.version != version || revision != languageRevision) {
+      throw const Cancelled();
+    }
+    select(origin);
+    return result;
+  }
+
+  Future<void> applyReviewedLanguageEdit(List<LanguageBufferEdit> edits) async {
+    for (final edit in edits) {
+      if (!await synchronizeBuffer(edit.buffer)) throw const Cancelled();
+      final disk = await files.open(edit.buffer.root, edit.buffer.path);
+      if (disk.text != edit.buffer.baseline.text) {
+        throw const LanguageFailure(
+          'Disk changed during review. No edits were applied.',
+        );
+      }
+    }
+    // Check the entire proposal before changing any buffer. Disk writes remain
+    // separate, explicit saves with the normal byte/mode/baseline protection.
+    if (_closed ||
+        edits.any(
+          (edit) =>
+              !_buffers.contains(edit.buffer) ||
+              edit.buffer.saving ||
+              edit.buffer.reviewRequired ||
+              edit.buffer.version != edit.version ||
+              edit.buffer.controller.text != edit.before,
+        )) {
+      throw const Cancelled();
+    }
+    for (final edit in edits) {
+      final offset = edit.buffer.controller.selection.extentOffset.clamp(
+        0,
+        edit.after.length,
+      );
+      edit.buffer.controller.value = TextEditingValue(
+        text: edit.after,
+        selection: TextSelection.collapsed(offset: offset),
+      );
+    }
+    notifyListeners();
+  }
+
   final DocumentFiles files;
   final DocumentRecovery? recovery;
   bool recoveryEnabled = false;
@@ -376,17 +704,22 @@ final class EditorViewModel extends DartitectViewModel {
         var wasDirty = false;
         var lastText = owned.controller.text;
         owned.controller.addListener(() {
-          if (lastText != owned.controller.text) {
+          final textChanged = lastText != owned.controller.text;
+          if (textChanged) {
             lastText = owned.controller.text;
             owned.version++;
+            languageRevision++;
             _scheduleRecovery();
+            synchronizeLanguage();
           }
-          if (owned.dirty != wasDirty) {
+          if (textChanged || owned.dirty != wasDirty) {
             wasDirty = owned.dirty;
             notifyListeners();
           }
         });
         _buffers.add(buffer);
+        languageRevision++;
+        synchronizeLanguage();
       }
       _selected[root] = buffer;
       message = null;
@@ -425,23 +758,22 @@ final class EditorViewModel extends DartitectViewModel {
     notifyListeners();
     try {
       final sdk = _formatterFor(buffer);
+      final languageFormatter = language?.sessionFor(
+        languageDocument(buffer),
+        lint: true,
+      );
       if (!withoutFormatting &&
-          sdk != null &&
-          p.extension(buffer.path) == '.dart') {
+          ((sdk != null && p.extension(buffer.path) == '.dart') ||
+              languageFormatter != null)) {
         try {
           final version = buffer.version;
-          final selection = buffer.controller.selection;
-          final formatted = await formatter!.format(
-            executable: sdk.executable,
-            root: sdk.root,
-            path: buffer.path,
-            text: buffer.controller.text,
-            start: selection.baseOffset.clamp(0, buffer.controller.text.length),
-            end: selection.extentOffset.clamp(0, buffer.controller.text.length),
-          );
+          final formatted = await _formatLanguageBuffer(buffer, sdk);
           if (_closed || !_buffers.contains(buffer)) return false;
           if (!await synchronizeBuffer(buffer)) return false;
-          if (buffer.version != version || _formatterFor(buffer) != sdk) {
+          if (buffer.version != version ||
+              _formatterFor(buffer) != sdk ||
+              language?.sessionFor(languageDocument(buffer), lint: true) !=
+                  languageFormatter) {
             throw const DocumentFailure(
               'The document or SDK selection changed during formatting. Retry with the current buffer.',
             );
@@ -640,6 +972,8 @@ final class EditorViewModel extends DartitectViewModel {
     if (!_buffers.contains(buffer)) return true;
     if (buffer.saving || (buffer.dirty && !discard)) return false;
     _buffers.remove(buffer);
+    languageRevision++;
+    synchronizeLanguage();
     _scheduleRecovery();
     if (identical(_selected[buffer.root], buffer)) {
       _selected.remove(buffer.root);
@@ -659,6 +993,7 @@ final class EditorViewModel extends DartitectViewModel {
     final owned = inWorkspace(root);
     if (owned.any((b) => b.saving || (b.dirty && !discard))) return false;
     _epochs[root] = (_epochs[root] ?? 0) + 1;
+    unawaited(language?.closeWorkspace(root));
     for (final buffer in owned) {
       close(buffer, discard: discard);
     }
@@ -670,6 +1005,8 @@ final class EditorViewModel extends DartitectViewModel {
     await flushRecovery();
     _recoveryTimer?.cancel();
     _closed = true;
+    await _languageEvents?.cancel();
+    await language?.close();
     formatter?.close();
     _monitorEpoch++;
     _monitor?.cancel();

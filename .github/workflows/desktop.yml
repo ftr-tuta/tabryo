@@ -48,13 +48,14 @@ jobs:
         with:
           python-version: '3.12.10'
       - name: Install native project tools
-        run: python -m pip install uv==0.8.22 poetry==2.2.1
+        run: python -m pip install uv==0.8.22 poetry==2.2.1 ruff==0.16.6
       - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
       - run: dart run dartitect_cli:dartitect scan
       - run: flutter test --concurrency=1
         env:
           TABRYO_TEST_PROJECT_SETUP: '1'
+          TABRYO_TEST_LANGUAGE_PYTHON: '1'
       - name: Windows native terminal tests
         if: runner.os == 'Windows'
         run: flutter test integration_test/terminal_host_test.dart -d windows
