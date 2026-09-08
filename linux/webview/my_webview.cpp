@@ -427,7 +427,8 @@ void MyWebView::addScriptChannelByName(gchar* channelName) {
                              WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START,
                              NULL, NULL);
     webkit_user_content_manager_add_script(m_user_content_manager, info->initScript);
-    webkit_user_script_unref(info->initScript);
+    // The manager retains the internal API script, not this public boxed
+    // wrapper. Keep our wrapper alive until remove_script uses it on disposal.
 }
 
 void MyWebView::removeScriptChannelByName(gchar* channelName) {
@@ -439,6 +440,7 @@ void MyWebView::removeScriptChannelByName(gchar* channelName) {
     webkit_user_content_manager_unregister_script_message_handler(m_user_content_manager, channelName);
 
     webkit_user_content_manager_remove_script(m_user_content_manager, info->initScript);
+    webkit_user_script_unref(info->initScript);
 
     free(info->channel_name);
     free(info);
