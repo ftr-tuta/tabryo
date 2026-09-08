@@ -137,6 +137,7 @@ void main() {
   testWidgets(
     'native Monaco edits Unicode, preserves undo and safely saves across dialogs',
     (tester) async {
+      debugPrint('Native editor: preparing the filesystem fixture');
       final directory = await Directory.systemTemp.createTemp('tabryo-editor-');
       final root = await directory.resolveSymbolicLinks();
       final nested = await Directory(p.join(root, 'nested project')).create();
@@ -170,6 +171,9 @@ void main() {
       });
       editor.selectWorkspace(root);
       await editor.open(root, file.path);
+      debugPrint(
+        'Native editor: fixture ready; mounting the workbench surface',
+      );
       final visible = ValueNotifier(true);
       addTearDown(visible.dispose);
       await tester.pumpWidget(
@@ -184,6 +188,7 @@ void main() {
           ),
         ),
       );
+      debugPrint('Native editor: first Flutter frame rendered');
       await until(
         tester,
         () => find.byType(WinWebViewWidget).evaluate().isNotEmpty,

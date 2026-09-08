@@ -61,6 +61,10 @@ ship inside the application and are served on a private loopback endpoint;
 editing needs no CDN or internet connection. The embedded surface hides during
 Flutter dialogs and inactive activities. Language-server intelligence and
 format-on-save are separate integrations and remain pending.
+The native editor scenario passes on Windows 11. Ubuntu currently compiles and
+passes the existing workbench tests, but the embedded editor scenario times out
+before its surface becomes ready. Linux editor acceptance, IME and DPI checks
+remain open; this draft development branch is not a qualified release.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare

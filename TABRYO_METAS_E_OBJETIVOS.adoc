@@ -405,7 +405,11 @@ Monaco 0.56.0 está incorporado com assets e workers locais, transporte restrito
 modelos versionados, histórico por documento, diff e preservação do salvamento seguro.
 O teste desktop Windows cobre clipboard Unicode, alternância de atividades, diálogos,
 undo/redo, BOM/CRLF, conflito externo, reconexão sem perder o buffer e recusa de colagem
-acima do limite. A qualificação Ubuntu segue no workflow Desktop.
+acima do limite. No Ubuntu, análise, compilação, testes unitários, terminal e workbench
+passam; o teste do editor incorporado ainda excede cinco minutos antes de disponibilizar
+a superfície. As correções nativas de navegação e ownership do WebKit compilam, mas
+não encerram esse gate. A retomada deve localizar a espera na montagem/inicialização
+antes de avançar para as integrações de linguagem. IME e DPI também seguem pendentes.
 Recuperação após crash, serviços de linguagem, formatação ao salvar, DAP e DevTools
 continuam pendentes no mesmo PR; esta fundação não conclui a matriz Python/Dart/Flutter.
 
