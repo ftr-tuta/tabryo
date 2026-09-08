@@ -17,6 +17,8 @@ import '../features/mcp_studio/presentation/mcp_studio_view_model.dart';
 import '../features/files/infrastructure/local_workspace_files.dart';
 import '../features/git/infrastructure/local_git.dart';
 import '../features/preferences/infrastructure/local_preferences.dart';
+import '../features/projects/infrastructure/local_project_environment.dart';
+import '../features/projects/presentation/projects_view_model.dart';
 import '../features/terminals/infrastructure/native_terminal.dart';
 import '../features/terminals/infrastructure/local_text_clipboard.dart';
 import '../features/workspaces/presentation/workbench_view_model.dart';
@@ -31,6 +33,7 @@ WorkbenchViewModel createWorkbench() {
     cache: cache,
   );
   return WorkbenchViewModel(
+    projects: ProjectsViewModel(LocalProjectEnvironment()),
     collaboration: Platform.isWindows
         ? CollaborationViewModel(LocalCollaborationClient())
         : null,

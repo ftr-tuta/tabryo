@@ -13,6 +13,8 @@ import '../../mcp_studio/presentation/mcp_studio_view_model.dart';
 import '../../files/domain/workspace_files.dart';
 import '../../git/domain/git_ports.dart';
 import '../../preferences/domain/preferences.dart';
+import '../../projects/domain/project.dart';
+import '../../projects/presentation/projects_view_model.dart';
 import '../../mcp/presentation/mcp_hub_view_model.dart';
 import '../../terminals/domain/terminal_ports.dart';
 import '../../terminals/presentation/terminal_session.dart';
@@ -33,10 +35,12 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.studio,
     this.collaboration,
     this.clipboard,
+    this.projects,
   }) {
     editor?.addListener(_editorChanged);
   }
   final PtyHost host;
+  final ProjectsViewModel? projects;
   final TextClipboard? clipboard;
   Future<String?> readClipboard() async => clipboard?.readText();
   Future<void> writeClipboard(String text) async => clipboard?.writeText(text);
@@ -97,6 +101,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     final result = await preferencesStore.load();
     if (_shutdown) return;
     preferences = result.preferences;
+    projects?.selections.addAll(preferences.projectToolchains);
     await editor?.configureRecovery(preferences.recoverDocuments);
     editor?.dartFormatters = preferences.dartFormatters;
     editor?.monitorExternalChanges(preferences.watchFiles);
@@ -235,6 +240,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     }
     workspaces.remove(current);
     studio?.forgetWorkspace(current.root);
+    projects?.forgetWorkspace(current.root);
     activeWorkspace = activeWorkspace.clamp(
       0,
       workspaces.isEmpty ? 0 : workspaces.length - 1,
@@ -760,6 +766,32 @@ final class WorkbenchViewModel extends DartitectViewModel {
     notifyListeners();
   });
 
+  Future<void> applyProjectToolchains(
+    DevelopmentProject project,
+    ToolchainSelection value,
+  ) async {
+    final selected = await projects?.apply(project, value);
+    if (selected == null) return;
+    final formatters = {...preferences.dartFormatters};
+    if (project.kind != ProjectKind.python) {
+      final dart = selected[ProjectTool.dart];
+      if (dart == null) {
+        formatters.remove(project.directory);
+      } else {
+        formatters[project.directory] = dart;
+      }
+    }
+    await updatePreferences(
+      preferences.copyWith(
+        dartFormatters: formatters,
+        projectToolchains: {
+          ...preferences.projectToolchains,
+          project.id: selected,
+        },
+      ),
+    );
+  }
+
   Future<void> _configureWatcher() async {
     editor?.dartFormatters = preferences.dartFormatters;
     editor?.monitorExternalChanges(preferences.watchFiles);
@@ -829,6 +861,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     editor?.removeListener(_editorChanged);
     await editor?.disposeAsync();
     await studio?.disposeAsync();
+    await projects?.disposeAsync();
     await collaboration?.disposeAsync();
   }();
   @override

@@ -198,6 +198,21 @@ final class EditorViewModel extends DartitectViewModel {
 
   final DocumentFormatter? formatter;
   Map<String, String> dartFormatters = const {};
+  ({String root, String executable})? _formatterFor(EditorBuffer buffer) {
+    final roots =
+        dartFormatters.keys
+            .where(
+              (root) =>
+                  (p.equals(root, buffer.root) ||
+                      p.isWithin(buffer.root, root)) &&
+                  p.isWithin(root, buffer.path),
+            )
+            .toList()
+          ..sort((a, b) => b.length.compareTo(a.length));
+    if (roots.isEmpty) return null;
+    return (root: roots.first, executable: dartFormatters[roots.first]!);
+  }
+
   final EditorAssets? webAssets;
   Future<EditorPage> openWebEditor() => webAssets!.open();
   Future<void> Function(EditorBuffer)? synchronize;
@@ -390,16 +405,16 @@ final class EditorViewModel extends DartitectViewModel {
     buffer.formatFailed = false;
     notifyListeners();
     try {
-      final executable = dartFormatters[buffer.root];
+      final sdk = _formatterFor(buffer);
       if (!withoutFormatting &&
-          executable != null &&
+          sdk != null &&
           p.extension(buffer.path) == '.dart') {
         try {
           final version = buffer.version;
           final selection = buffer.controller.selection;
           final formatted = await formatter!.format(
-            executable: executable,
-            root: buffer.root,
+            executable: sdk.executable,
+            root: sdk.root,
             path: buffer.path,
             text: buffer.controller.text,
             start: selection.baseOffset.clamp(0, buffer.controller.text.length),
@@ -407,8 +422,7 @@ final class EditorViewModel extends DartitectViewModel {
           );
           if (_closed || !_buffers.contains(buffer)) return false;
           if (!await synchronizeBuffer(buffer)) return false;
-          if (buffer.version != version ||
-              dartFormatters[buffer.root] != executable) {
+          if (buffer.version != version || _formatterFor(buffer) != sdk) {
             throw const DocumentFailure(
               'The document or SDK selection changed during formatting. Retry with the current buffer.',
             );

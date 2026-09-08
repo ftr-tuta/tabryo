@@ -1,3 +1,5 @@
+import '../../projects/domain/project.dart';
+
 enum AppTheme { system, dark, light }
 
 final class Preferences {
@@ -11,6 +13,7 @@ final class Preferences {
     this.watchFiles = false,
     this.recoverDocuments = false,
     this.dartFormatters = const {},
+    this.projectToolchains = const {},
     this.roots = const [],
     this.layout = const [],
   });
@@ -23,6 +26,7 @@ final class Preferences {
   final bool watchFiles;
   final bool recoverDocuments;
   final Map<String, String> dartFormatters;
+  final Map<String, ToolchainSelection> projectToolchains;
   final List<String> roots;
   final List<Map<String, Object?>> layout;
 
@@ -36,6 +40,7 @@ final class Preferences {
     bool? watchFiles,
     bool? recoverDocuments,
     Map<String, String>? dartFormatters,
+    Map<String, ToolchainSelection>? projectToolchains,
     List<String>? roots,
     List<Map<String, Object?>>? layout,
   }) => Preferences(
@@ -48,6 +53,7 @@ final class Preferences {
     watchFiles: watchFiles ?? this.watchFiles,
     recoverDocuments: recoverDocuments ?? this.recoverDocuments,
     dartFormatters: dartFormatters ?? this.dartFormatters,
+    projectToolchains: projectToolchains ?? this.projectToolchains,
     roots: roots ?? this.roots,
     layout: layout ?? this.layout,
   );
@@ -64,6 +70,10 @@ final class Preferences {
       'fontSize': fontSize,
       'watchFiles': watchFiles,
       'dartFormatters': dartFormatters,
+      'projectToolchains': {
+        for (final entry in projectToolchains.entries)
+          entry.key: entry.value.toJson(),
+      },
     },
     if (rememberWorkspaces) 'roots': roots,
     if (restoreLayout) 'layout': layout,
@@ -93,6 +103,17 @@ final class Preferences {
       watchFiles: remember && json['watchFiles'] == true,
       dartFormatters: remember
           ? Map<String, String>.from(json['dartFormatters'] as Map? ?? {})
+          : const {},
+      projectToolchains: remember
+          ? {
+              for (final entry
+                  in (json['projectToolchains'] as Map? ?? {}).entries.take(
+                    128,
+                  ))
+                entry.key as String: ToolchainSelection.fromJson(
+                  entry.value as Map,
+                ),
+            }
           : const {},
       roots: json['rememberWorkspaces'] == true
           ? List<String>.from(json['roots'] as List? ?? []).take(30).toList()

@@ -14,6 +14,7 @@ import '../../editor/presentation/editor_pane.dart';
 import '../../editor/presentation/monaco_editor.dart';
 import '../../collaboration/presentation/collaboration_screen.dart';
 import '../../mcp_studio/presentation/mcp_studio_screen.dart';
+import '../../projects/presentation/projects_screen.dart';
 import '../../mcp_studio/domain/studio_project.dart';
 import '../../terminals/presentation/terminal_pane_view.dart';
 import '../../mcp/presentation/mcp_hub_screen.dart';
@@ -96,6 +97,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('Fetch', '', () => dialogs.remote('fetch')),
     ('Push', '', () => dialogs.remote('push')),
     ('Preferences', '', dialogs.preferences),
+    ('Projects and toolchains', '', _openProjects),
     ('Recover documents', '', dialogs.recoverDocuments),
   ];
 
@@ -114,6 +116,23 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     } finally {
       await hub.disconnect();
     }
+  }
+
+  Future<void> _openProjects() async {
+    final projects = model.projects;
+    final root = model.workspace?.root;
+    if (projects == null || root == null) return;
+    unawaited(projects.scan(root));
+    await showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      builder: (_) => Dialog.fullscreen(
+        child: ProjectsScreen(
+          model: projects,
+          onApply: model.applyProjectToolchains,
+        ),
+      ),
+    );
   }
 
   Future<void> _openCollaboration() async {
@@ -361,6 +380,14 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                           ? null
                           : _openMcpStudio,
                       icon: const Icon(Icons.construction_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Projects and toolchains',
+                      onPressed:
+                          model.workspace == null || model.projects == null
+                          ? null
+                          : _openProjects,
+                      icon: const Icon(Icons.inventory_2_outlined),
                     ),
                     IconButton(
                       tooltip: 'Command palette (Ctrl+Shift+P)',

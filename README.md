@@ -105,7 +105,8 @@ it never writes the source directly. The normal conflict checks still govern
 the final save. Syntax errors, unavailable SDKs, a 30-second timeout, or edits
 arriving during formatting keep the buffer. Retry with Ctrl+S or use
 **Document actions → Save without formatting** after a formatter failure.
-Automatic SDK discovery, LSP formatting and Flutter hot reload remain pending.
+Project SDK discovery is available from **Projects and toolchains**. LSP
+formatting and Flutter hot reload remain pending.
 
 Preferences, remembered directories, layout and file watching are opt-in.
 Disabling persistence clears the corresponding persisted data. Watching monitors
@@ -115,6 +116,30 @@ and offer a disk comparison. F5 also refreshes open documents with watching off.
 Input arriving while a replacement crosses the native bridge is retained and
 requires an explicit **Keep local edits** or reload choice before saving.
 Terminal output cannot silently access the clipboard, open links or download files.
+
+## Projects and toolchains
+
+Open **Projects and toolchains** from the toolbar or command palette to scan the
+workspace for Dart/Flutter pubspecs and Python manifests. Mixed and nested roots
+are listed separately. Scans exclude dependency/build directories and directory
+links and are bounded to six levels, 512 directories, 12,000 entries and 64
+projects. A notice identifies incomplete scans; open a narrower workspace when
+needed. Opening a workspace or scanning starts no language server or command.
+
+Select a project, choose a detected candidate or enter an absolute installed
+path, then **Apply toolchains**. Detection reads PATH, FVM's local SDK link and
+configured cache, Dart/Flutter SDK variables, project `.venv`, and installed
+pyenv versions (including a `.python-version` pin). It recognizes uv and Poetry
+manifests/locks. Cached Poetry environments can be supplied by interpreter path.
+Windows Store aliases and pyenv shims are excluded from interpreter suggestions.
+Discovery does not verify tool versions by executing them.
+
+Flutter uses the Dart SDK bundled with the selected Flutter directory. Dart
+format on save chooses the closest explicitly configured project inside the
+document's authorized workspace, keeping sibling projects and separately opened
+nested workspaces isolated. Selected paths remain local and persist only with
+**Remember appearance, editor and monitoring preferences**. Clearing a selection
+disables its formatter; detection never replaces an explicit choice.
 
 ## MCP Hub
 
