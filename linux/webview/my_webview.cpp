@@ -258,6 +258,11 @@ MyWebView::MyWebView(GtkWidget* container, MyWebViewCreateParams params, const g
 
 MyWebView::~MyWebView() {
     g_print("[webview_win_floating] ~MyWebView() deleted\n");
+    // WebKit may finish/cancel a load while GTK destroys the widget. No signal
+    // may retain this C++ owner after its lifetime ends on reconnect.
+    g_signal_handlers_disconnect_by_data(m_webview, this);
+    g_signal_handlers_disconnect_by_data(m_webview, &m_createParams);
+    webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(m_webview));
     while (!m_jsChannels.empty()) {
         std::string name = m_jsChannels.begin()->first;
         removeScriptChannelByName(const_cast<char*>(name.c_str()));
@@ -430,6 +435,7 @@ void MyWebView::removeScriptChannelByName(gchar* channelName) {
     if (!info) return; // not exists
     m_jsChannels.erase(channelName);
     g_signal_handler_disconnect(m_user_content_manager, info->signal_id);
+    webkit_user_content_manager_unregister_script_message_handler(m_user_content_manager, channelName);
 
     webkit_user_content_manager_remove_script(m_user_content_manager, info->initScript);
 
