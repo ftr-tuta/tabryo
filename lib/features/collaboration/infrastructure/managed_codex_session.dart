@@ -297,6 +297,7 @@ final class ManagedCodexSession implements CollaborationSession {
                 }
               } on FormatException {
                 /* Not a collaboration input. */
+                continue;
               }
             }
           }
@@ -304,6 +305,7 @@ final class ManagedCodexSession implements CollaborationSession {
       }
     } on CodexFailure {
       /* Keep uncertainty across disconnects. */
+      return false;
     }
     return false;
   }

@@ -288,7 +288,8 @@ final class _McpHubScreenState extends State<McpHubScreen> {
         ),
       ),
     );
-    if (arguments == null || !mounted) return;
+    if (!mounted) return;
+    if (arguments == null) return;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -390,6 +391,8 @@ final class _McpHubScreenState extends State<McpHubScreen> {
                   onPressed: () async {
                     final url = model.authorizationUrl;
                     if (url != null) {
+                      // Flutter clipboard is a user-initiated presentation service.
+                      // ignore: dartitect_dt3123, dartitect_dt3121
                       await Clipboard.setData(ClipboardData(text: url));
                       if (mounted) {
                         _error('Sign-in link copied. Open it in your browser.');

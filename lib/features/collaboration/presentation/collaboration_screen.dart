@@ -216,7 +216,8 @@ final class _CollaborationScreenState extends State<CollaborationScreen> {
         'request': approval['id'],
       });
     });
-    if (!fetched || !mounted) return;
+    if (!mounted) return;
+    if (!fetched) return;
     final detail = loaded!;
     final params = Map<String, Object?>.from(detail['parameters'] as Map);
     final questions = (params['questions'] as List? ?? []).cast<Map>();
@@ -498,14 +499,13 @@ final class _CollaborationScreenState extends State<CollaborationScreen> {
                     DropdownButton<String>(
                       value: model.group,
                       hint: const Text('Select a group'),
-                      items: model.groups
-                          .map(
-                            (g) => DropdownMenuItem(
-                              value: g['id'] as String,
-                              child: Text(g['name'] as String),
-                            ),
-                          )
-                          .toList(),
+                      items: [
+                        for (final g in model.groups)
+                          DropdownMenuItem(
+                            value: g['id'] as String,
+                            child: Text(g['name'] as String),
+                          ),
+                      ],
                       onChanged: model.busy ? null : model.select,
                     ),
                     OutlinedButton(

@@ -190,7 +190,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(model.preview, isNotNull);
       expect(Directory(p.join(root, 'greeting')).existsSync(), isFalse);
-      await tester.ensureVisible(find.text('Create reviewed project'));
+      await tester.scrollUntilVisible(
+        find.text('Create reviewed project'),
+        150,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('studio-content')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.text('Create reviewed project'));

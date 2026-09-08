@@ -63,6 +63,8 @@ final class LocalCodexConnection implements CodexConnection {
       closeTransport: () async {
         try {
           await process.stdin.close().timeout(const Duration(seconds: 2));
+          // Closing stdin can fail after child exit; exitCode below remains authoritative.
+          // ignore: dartitect_empty_catch
         } catch (_) {
           /* The process may already have closed its input. */
         }

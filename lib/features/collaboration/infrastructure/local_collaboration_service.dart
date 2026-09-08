@@ -141,6 +141,7 @@ final class LocalCollaborationService {
       await connectParticipant(id);
     } catch (_) {
       /* Shown in snapshot. */
+      return;
     }
   }
 
@@ -610,6 +611,8 @@ final class LocalCollaborationService {
     _timer?.cancel();
     try {
       await broker.close();
+      // All remaining cleanup must run even if one transport failed.
+      // ignore: dartitect_empty_catch
     } catch (_) {
       // The process exits after done; its Windows job closes any remaining
       // owned children even if an individual transport could not close cleanly.

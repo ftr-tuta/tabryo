@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dartitect_flutter/dartitect_flutter.dart';
 import 'package:path/path.dart' as p;
 
@@ -9,6 +11,7 @@ final class McpStudioViewModel extends DartitectViewModel {
   final McpStudio studio;
   String? workspace;
   StudioPlan? preview;
+  List<String> previewCommands = const [];
   StudioPlan? selected;
   final _projects = <StudioPlan>[];
   List<StudioPlan> get projects => List.unmodifiable(_projects);
@@ -50,6 +53,10 @@ final class McpStudioViewModel extends DartitectViewModel {
     _notify();
     try {
       preview = await studio.prepare(workspace!, name, language, runtime);
+      previewCommands = [
+        for (final command in studio.commands(preview!))
+          '${command.title}: ${command.spec.executable} ${jsonEncode(command.spec.arguments)}',
+      ];
       return true;
     } catch (error) {
       message = '$error';

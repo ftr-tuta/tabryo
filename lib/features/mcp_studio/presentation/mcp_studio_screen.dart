@@ -46,10 +46,9 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
     try {
       await operation();
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$error')));
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$error')));
     } finally {
       if (mounted) setState(() => _acting = false);
     }
@@ -254,6 +253,8 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
                       color: Theme.of(context).colorScheme.outlineVariant,
                     ),
                   ),
+                  // The source preview has a fixed 280px viewport and its own scroll extent.
+                  // ignore: dartitect_dt3145
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(12),
                     child: SelectableText(
@@ -266,10 +267,8 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                for (final command in model.studio.commands(plan))
-                  SelectableText(
-                    '${command.title}: ${command.spec.executable} ${jsonEncode(command.spec.arguments)}',
-                  ),
+                for (final command in model.previewCommands)
+                  SelectableText(command),
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerLeft,
