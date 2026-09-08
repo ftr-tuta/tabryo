@@ -141,6 +141,21 @@ final class EditorViewModel extends DartitectViewModel {
     return recoveryError == null;
   }
 
+  Future<void> refreshRecovery() async {
+    if (!recoveryEnabled || recovery == null || _closed || _recovering) return;
+    _recovering = true;
+    try {
+      recoveries = await recovery!.pending();
+      recoveryError = recovery!.warning;
+    } catch (error) {
+      recoveryError =
+          'Could not refresh recovery copies: $error. Existing copies were retained.';
+    } finally {
+      _recovering = false;
+      if (!_closed) notifyListeners();
+    }
+  }
+
   Future<bool> restoreDocument(RecoveredDocument document) async {
     if (_recovering || _closed || !recoveries.contains(document)) return false;
     _recovering = true;

@@ -84,7 +84,10 @@ It keeps flushed local copies of dirty buffers under
 contain sensitive source text. They are updated about 350 ms after an edit;
 input not yet received from the editor or flushed to storage can be lost in a crash.
 OS locks keep running windows' copies separate. After reopening, choose
-**Review copies** or **Recover documents** in the command palette. Preview can
+**Review copies** or **Recover documents** in the command palette. At most 12
+recovered documents are offered at a time; additional copies stay on disk.
+Restore or discard offered copies, then **Refresh copies** to load more.
+Each scan examines at most 128 sessions and reports a reached limit. Preview can
 copy text even when its original file is missing. Restore opens an unsaved tab
 and compares the current disk; changed files require **Keep local edits** or
 reload before saving. Restoring never writes the source. UTF-8 text, selection,

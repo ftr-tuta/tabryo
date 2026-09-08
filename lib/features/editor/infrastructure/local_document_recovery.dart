@@ -60,13 +60,25 @@ final class LocalDocumentRecovery implements DocumentRecovery {
       await _initialize();
       warning = null;
       var inspected = 0;
+      var offered = _pending.values.fold(
+        0,
+        (count, copies) => count + copies.length,
+      );
       await for (final entry in directory.list(followLinks: false)) {
-        if (++inspected > 128) break;
+        if (++inspected > 128) {
+          warning =
+              'Recovery scanning reached its session limit. Other copies were left untouched at ${directory.path}.';
+          break;
+        }
         if (entry is! Directory ||
             !p.basename(entry.path).startsWith('session-') ||
             _owned.contains(entry.path) ||
             _claims.containsKey(entry.path)) {
           continue;
+        }
+        if (offered == 12) {
+          warning = 'Review the offered copies, then refresh to look for more. Other recovery sessions were left untouched.';
+          break;
         }
         final lockPath = p.join(entry.path, 'owner.lock');
         if (await FileSystemEntity.type(lockPath, followLinks: false) !=
@@ -87,9 +99,15 @@ final class LocalDocumentRecovery implements DocumentRecovery {
             await lock.close();
             continue;
           }
+          if (offered + documents.length > 12) {
+            await lock.close();
+            warning = 'Review the offered copies, then refresh to load more. Additional recovery copies were retained.';
+            continue;
+          }
           _claims[entry.path] = lock;
           _owned.add(entry.path);
           _pending[entry.path] = documents;
+          offered += documents.length;
         } catch (_) {
           await lock.close();
           warning =
@@ -106,13 +124,26 @@ final class LocalDocumentRecovery implements DocumentRecovery {
     final file = File(p.join(session, 'documents.json'));
     final type = await FileSystemEntity.type(file.path, followLinks: false);
     if (type == FileSystemEntityType.notFound) return [];
-    if (type != FileSystemEntityType.file ||
-        await file.length() > _snapshotLimit) {
+    if (type != FileSystemEntityType.file) {
       throw const DocumentFailure(
         'Recovery snapshot is unavailable or too large.',
       );
     }
-    final data = jsonDecode(await file.readAsString()) as Map;
+    final handle = await file.open();
+    late final Map data;
+    try {
+      final length = await handle.length();
+      if (length > _snapshotLimit) {
+        throw const DocumentFailure('Recovery snapshot is too large.');
+      }
+      final bytes = await handle.read(length + 1);
+      if (bytes.length != length) {
+        throw const DocumentFailure('Recovery snapshot changed while reading.');
+      }
+      data = jsonDecode(utf8.decode(bytes)) as Map;
+    } finally {
+      await handle.close();
+    }
     if (data['version'] != 1 ||
         data['documents'] is! List ||
         (data['documents'] as List).length > 12) {

@@ -344,6 +344,8 @@ final class WorkbenchDialogs {
   Future<void> recoverDocuments() async {
     final editor = model.editor;
     if (editor == null) return;
+    await editor.refreshRecovery();
+    if (!context.mounted) return;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => ListenableBuilder(
@@ -423,6 +425,11 @@ final class WorkbenchDialogs {
             ),
           ),
           actions: [
+            if (editor.recoveryEnabled)
+              TextButton(
+                onPressed: editor.refreshRecovery,
+                child: const Text('Refresh copies'),
+              ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Close'),

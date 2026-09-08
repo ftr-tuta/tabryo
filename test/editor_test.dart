@@ -230,6 +230,55 @@ Future<void> main(List<String> args) async {
     expect(await storage.pending(), isEmpty);
   });
 
+  test(
+    'recovery bounds offered copies and refresh retains later sessions',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'editor-recovery-pages-',
+      );
+      final root = await directory.resolveSymbolicLinks();
+      final copies = Directory(p.join(root, 'copies'));
+      for (var index = 0; index < 13; index++) {
+        final previous = LocalDocumentRecovery(copies);
+        await previous.save([
+          RecoveredDocument(
+            id: '',
+            root: root,
+            path: p.join(root, 'source_$index.dart'),
+            text: 'edits $index',
+            diskText: 'original',
+            newline: '\n',
+            bom: false,
+            start: 0,
+            end: 0,
+          ),
+        ]);
+        await previous.close();
+      }
+      final model = EditorViewModel(
+        MemoryDocuments(),
+        recovery: LocalDocumentRecovery(copies),
+      );
+      addTearDown(() async {
+        await model.disposeAsync();
+        await directory.delete(recursive: true);
+      });
+      await model.configureRecovery(true);
+      expect(model.recoveries, hasLength(12));
+      expect(model.recoveryError, contains('refresh'));
+      final first = model.recoveries.map((copy) => copy.path).toSet();
+      await model.discardRecovery(model.recoveries.first);
+      await model.refreshRecovery();
+      expect(model.recoveries, hasLength(12));
+      expect(
+        model.recoveries.where((copy) => !first.contains(copy.path)),
+        hasLength(1),
+      );
+      await model.configureRecovery(false);
+      expect(model.recoveries, isEmpty);
+    },
+  );
+
   test('recovery compares disk, preserves selection and clears only after a durable transfer', () async {
     final directory = await Directory.systemTemp.createTemp(
       'editor-documents-',
