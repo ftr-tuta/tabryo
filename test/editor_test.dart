@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/features/editor/domain/document_files.dart';
+import 'package:tabryo/features/editor/domain/document_formatter.dart';
+import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart';
 import 'package:tabryo/features/editor/domain/editor_assets.dart';
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
@@ -58,6 +61,27 @@ final class PendingEditorAssets implements EditorAssets {
   Future<void> close() async {}
 }
 
+final class PendingFormatter implements DocumentFormatter {
+  Completer<FormattedDocument> result = Completer<FormattedDocument>();
+  final started = Completer<void>();
+  bool closed = false;
+  @override
+  Future<FormattedDocument> format({
+    required String executable,
+    required String root,
+    required String path,
+    required String text,
+    required int start,
+    required int end,
+  }) {
+    if (!started.isCompleted) started.complete();
+    return result.future;
+  }
+
+  @override
+  void close() => closed = true;
+}
+
 void main() {
   final root = Platform.isWindows ? r'C:\project' : '/project';
   late MemoryDocuments files;
@@ -66,6 +90,136 @@ void main() {
     files = MemoryDocuments();
     editor = EditorViewModel(files)..selectWorkspace(root);
   });
+
+  test(
+    'the selected Dart SDK formats stdin without writing the source file',
+    () async {
+      final config = File('.dart_tool/package_config.json').absolute;
+      final packages =
+          (jsonDecode(await config.readAsString()) as Map)['packages'] as List;
+      final flutter = packages.cast<Map>().firstWhere(
+        (v) => v['name'] == 'flutter',
+      );
+      final sdkRoot = p.dirname(
+        p.dirname(
+          config.uri.resolve(flutter['rootUri'] as String).toFilePath(),
+        ),
+      );
+      final executable = p.join(
+        sdkRoot,
+        'bin',
+        'cache',
+        'dart-sdk',
+        'bin',
+        Platform.isWindows ? 'dart.exe' : 'dart',
+      );
+      final directory = await Directory.systemTemp.createTemp('dart-format-');
+      final nested = await Directory(p.join(directory.path, 'nested project'))
+          .create();
+      final file = File(p.join(nested.path, 'ação example.dart'));
+      await file.writeAsString('disk must remain unchanged');
+      final formatter = LocalDartFormatter();
+      addTearDown(() async {
+        formatter.close();
+        await directory.delete(recursive: true);
+      });
+      const text = 'void main(){print("ação 🌱");}';
+      final selected = text.indexOf('ação');
+      final formatted = await formatter.format(
+        executable: executable,
+        root: directory.path,
+        path: file.path,
+        text: text,
+        start: selected,
+        end: selected + 4,
+      );
+      expect(formatted.text, contains('  print('));
+      expect(formatted.text, isNot(contains('\r')));
+      expect(formatted.text.substring(formatted.start, formatted.end), 'ação');
+      expect(await file.readAsString(), 'disk must remain unchanged');
+      await expectLater(
+        formatter.format(
+          executable: executable,
+          root: directory.path,
+          path: file.path,
+          text: 'void main( {',
+          start: 0,
+          end: 0,
+        ),
+        throwsA(isA<DocumentFailure>()),
+      );
+      expect(await file.readAsString(), 'disk must remain unchanged');
+    },
+  );
+
+  test(
+    'format on save rejects stale edits, can retry, and closes its formatter',
+    () async {
+      final formatter = PendingFormatter();
+      final model = EditorViewModel(files, formatter: formatter)
+        ..dartFormatters = {root: 'selected-sdk'}
+        ..selectWorkspace(root);
+      await model.open(root, p.join(root, 'main.dart'));
+      final buffer = model.active!;
+      buffer.controller.text = 'void main(){}';
+      final saving = model.save(buffer);
+      await formatter.started.future;
+      buffer.controller.text = 'void main(){/*new input*/}';
+      formatter.result.complete(
+        const FormattedDocument('void main() {}\n', 0, 0),
+      );
+      expect(await saving, isFalse);
+      expect(files.writes, 0);
+      expect(buffer.controller.text, contains('new input'));
+      expect(buffer.formatFailed, isTrue);
+      formatter.result = Completer<FormattedDocument>()
+        ..complete(
+          const FormattedDocument('void main() { /*new input*/ }\n', 5, 9),
+        );
+      expect(await model.save(buffer), isTrue);
+      expect(files.content[buffer.path], 'void main() { /*new input*/ }\n');
+      expect(
+        buffer.controller.selection,
+        const TextSelection(baseOffset: 5, extentOffset: 9),
+      );
+      expect(buffer.dirty, isFalse);
+      await model.disposeAsync();
+      expect(formatter.closed, isTrue);
+    },
+  );
+
+  testWidgets(
+    'format errors keep the buffer and offer an explicit unformatted save',
+    (tester) async {
+      final formatter = PendingFormatter();
+      final model = EditorViewModel(files, formatter: formatter)
+        ..dartFormatters = {root: 'selected-sdk'}
+        ..selectWorkspace(root);
+      await model.open(root, p.join(root, 'main.dart'));
+      final buffer = model.active!;
+      buffer.controller.text = 'invalid dart';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: EditorPane(model: model)),
+        ),
+      );
+      await tester.tap(find.byTooltip('Save document (Ctrl+S)'));
+      await tester.pump();
+      formatter.result.completeError(const DocumentFailure('Syntax error.'));
+      await tester.pumpAndSettle();
+      expect(files.writes, 0);
+      expect(buffer.dirty, isTrue);
+      expect(buffer.error, contains('Syntax error'));
+      await tester.tap(find.byTooltip('Document actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save without formatting'));
+      await tester.pumpAndSettle();
+      expect(files.content[buffer.path], 'invalid dart');
+      expect(buffer.dirty, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await model.disposeAsync();
+    },
+  );
 
   testWidgets(
     'stalled initialization preserves buffers and ignores late attempts',

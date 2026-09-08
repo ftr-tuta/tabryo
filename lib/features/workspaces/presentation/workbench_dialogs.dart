@@ -194,6 +194,7 @@ final class WorkbenchDialogs {
 
   Future<void> preferences() async {
     var value = model.preferences;
+    final root = model.workspace?.root;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -254,7 +255,7 @@ final class WorkbenchDialogs {
                           value = value.copyWith(rememberPreferences: enabled),
                     ),
                     title: const Text(
-                      'Remember appearance and monitoring preferences',
+                      'Remember appearance, editor and monitoring preferences',
                     ),
                   ),
                   CheckboxListTile(
@@ -284,6 +285,24 @@ final class WorkbenchDialogs {
                       'Refresh files changed outside Tabryo. Unsaved edits are kept for comparison. Disable to stop monitoring.',
                     ),
                   ),
+                  if (root != null)
+                    TextFormField(
+                      initialValue: value.dartFormatters[root] ?? '',
+                      decoration: const InputDecoration(
+                        labelText: 'Dart executable for format on save',
+                        helperText: 'This workspace only. Full path to dart.exe or dart. Leave empty to disable.',
+                        helperMaxLines: 3,
+                      ),
+                      onChanged: (path) {
+                        final formatters = {...value.dartFormatters};
+                        if (path.trim().isEmpty) {
+                          formatters.remove(root);
+                        } else {
+                          formatters[root] = path.trim();
+                        }
+                        value = value.copyWith(dartFormatters: formatters);
+                      },
+                    ),
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(

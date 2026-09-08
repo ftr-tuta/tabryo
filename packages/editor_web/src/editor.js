@@ -126,6 +126,7 @@ window.tabryoReceive = (packet) => {
           if (!doc) {
             const model = monaco.editor.createModel(input.text, input.language, monaco.Uri.parse(input.uri));
             doc = { id: input.id, model, acceptedText: input.text, generation: input.generation, readOnly: input.readOnly };
+            doc.pendingSelection = { start: input.start, end: input.end };
             doc.listener = model.onDidChangeContent(event => changed(doc, event));
             documents.set(input.id, doc);
           } else if (doc.generation !== input.generation) {
@@ -138,6 +139,7 @@ window.tabryoReceive = (packet) => {
               continue;
             }
             doc.acceptedText = input.text;
+            doc.pendingSelection = { start: input.start, end: input.end };
             if (doc.model.getValue() !== input.text) {
               doc.model.pushStackElement();
               doc.model.pushEditOperations([], [{ range: doc.model.getFullModelRange(), text: input.text }], () => null);
@@ -149,6 +151,12 @@ window.tabryoReceive = (packet) => {
           doc.bom = input.bom;
         }
         activate(documents.get(packet.active) ?? null);
+        if (active?.pendingSelection) {
+          const start = active.model.getPositionAt(active.pendingSelection.start);
+          const end = active.model.getPositionAt(active.pendingSelection.end);
+          editor.setSelection(new monaco.Selection(start.lineNumber, start.column, end.lineNumber, end.column));
+          active.pendingSelection = null;
+        }
         monaco.editor.setTheme(packet.dark ? 'vs-dark' : 'vs');
         editor.updateOptions({ readOnly: active?.repair ? true : (active?.readOnly ?? true) });
         if (active) emit(snapshot(active, { type: 'state' }));

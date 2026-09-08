@@ -9,6 +9,7 @@ final class Preferences {
     this.rememberWorkspaces = false,
     this.restoreLayout = false,
     this.watchFiles = false,
+    this.dartFormatters = const {},
     this.roots = const [],
     this.layout = const [],
   });
@@ -19,6 +20,7 @@ final class Preferences {
   final bool rememberWorkspaces;
   final bool restoreLayout;
   final bool watchFiles;
+  final Map<String, String> dartFormatters;
   final List<String> roots;
   final List<Map<String, Object?>> layout;
 
@@ -30,6 +32,7 @@ final class Preferences {
     bool? rememberWorkspaces,
     bool? restoreLayout,
     bool? watchFiles,
+    Map<String, String>? dartFormatters,
     List<String>? roots,
     List<Map<String, Object?>>? layout,
   }) => Preferences(
@@ -40,6 +43,7 @@ final class Preferences {
     rememberWorkspaces: rememberWorkspaces ?? this.rememberWorkspaces,
     restoreLayout: restoreLayout ?? this.restoreLayout,
     watchFiles: watchFiles ?? this.watchFiles,
+    dartFormatters: dartFormatters ?? this.dartFormatters,
     roots: roots ?? this.roots,
     layout: layout ?? this.layout,
   );
@@ -54,6 +58,7 @@ final class Preferences {
       'fontFamily': fontFamily,
       'fontSize': fontSize,
       'watchFiles': watchFiles,
+      'dartFormatters': dartFormatters,
     },
     if (rememberWorkspaces) 'roots': roots,
     if (restoreLayout) 'layout': layout,
@@ -80,6 +85,9 @@ final class Preferences {
           : 'monospace',
       fontSize: remember ? size.clamp(10, 24) : 14,
       watchFiles: remember && json['watchFiles'] == true,
+      dartFormatters: remember
+          ? Map<String, String>.from(json['dartFormatters'] as Map? ?? {})
+          : const {},
       roots: json['rememberWorkspaces'] == true
           ? List<String>.from(json['roots'] as List? ?? []).take(30).toList()
           : [],

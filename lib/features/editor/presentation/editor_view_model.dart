@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../domain/document_files.dart';
+import '../domain/document_formatter.dart';
 import '../domain/editor_assets.dart';
 
 final class EditorBuffer {
@@ -29,6 +30,7 @@ final class EditorBuffer {
   bool webCanRedo = false;
   bool saving = false;
   bool reviewRequired = false;
+  bool formatFailed = false;
   String? error;
   String? diskText;
   bool get dirty => controller.text != baseline.text;
@@ -41,8 +43,10 @@ final class EditorBuffer {
 }
 
 final class EditorViewModel extends DartitectViewModel {
-  EditorViewModel(this.files, {this.webAssets});
+  EditorViewModel(this.files, {this.webAssets, this.formatter});
   final DocumentFiles files;
+  final DocumentFormatter? formatter;
+  Map<String, String> dartFormatters = const {};
   final EditorAssets? webAssets;
   Future<EditorPage> openWebEditor() => webAssets!.open();
   Future<void> Function(EditorBuffer)? synchronize;
@@ -219,19 +223,79 @@ final class EditorViewModel extends DartitectViewModel {
     );
   }
 
-  Future<bool> save(EditorBuffer buffer) async {
+  Future<bool> save(
+    EditorBuffer buffer, {
+    bool withoutFormatting = false,
+  }) async {
     if (!_buffers.contains(buffer) || buffer.saving) return false;
     if (buffer.reviewRequired) return false;
     if (!await synchronizeBuffer(buffer)) return false;
     if (!_buffers.contains(buffer) || buffer.saving || buffer.reviewRequired) {
       return false;
     }
-    if (!buffer.dirty) return true;
     buffer.saving = true;
     buffer.error = null;
-    final text = buffer.controller.text;
+    buffer.formatFailed = false;
     notifyListeners();
     try {
+      final executable = dartFormatters[buffer.root];
+      if (!withoutFormatting &&
+          executable != null &&
+          p.extension(buffer.path) == '.dart') {
+        try {
+          final version = buffer.version;
+          final selection = buffer.controller.selection;
+          final formatted = await formatter!.format(
+            executable: executable,
+            root: buffer.root,
+            path: buffer.path,
+            text: buffer.controller.text,
+            start: selection.baseOffset.clamp(0, buffer.controller.text.length),
+            end: selection.extentOffset.clamp(0, buffer.controller.text.length),
+          );
+          if (_closed || !_buffers.contains(buffer)) return false;
+          if (!await synchronizeBuffer(buffer)) return false;
+          if (buffer.version != version ||
+              dartFormatters[buffer.root] != executable) {
+            throw const DocumentFailure(
+              'The document or SDK selection changed during formatting. Retry with the current buffer.',
+            );
+          }
+          final next = TextEditingValue(
+            text: formatted.text,
+            selection: TextSelection(
+              baseOffset: formatted.start,
+              extentOffset: formatted.end,
+            ),
+          );
+          if (inputFormatter(buffer)
+                  .formatEditUpdate(buffer.controller.value, next) !=
+              next) {
+            throw const DocumentFailure(
+              'Formatted text exceeds the document limit.',
+            );
+          }
+          buffer.controller.value = next;
+          notifyListeners();
+          if (!await synchronizeBuffer(buffer) || buffer.reviewRequired) {
+            return false;
+          }
+          if (buffer.controller.text != formatted.text) {
+            throw const DocumentFailure(
+              'New input arrived during formatting. Retry with the current buffer.',
+            );
+          }
+        } catch (error) {
+          if (!_closed) {
+            buffer.formatFailed = true;
+            buffer.error =
+                '$error Your buffer was kept. Retry saving or choose Save without formatting.';
+          }
+          return false;
+        }
+      }
+      if (!buffer.dirty) return true;
+      final text = buffer.controller.text;
       final saved = await files.save(buffer.baseline, text);
       if (_closed) return false;
       buffer.baseline = saved;
@@ -417,6 +481,7 @@ final class EditorViewModel extends DartitectViewModel {
   @override
   Future<void> disposeAsync() async {
     _closed = true;
+    formatter?.close();
     _monitorEpoch++;
     _monitor?.cancel();
     await webAssets?.close();

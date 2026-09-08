@@ -34,8 +34,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   bool _ready = false;
   bool _presented = false;
   bool _scheduled = false;
-  bool _sending = false;
-  bool _sendAgain = false;
+  Future<void>? _synchronizing;
   String? _comparison;
   EditorBuffer? _comparisonDocument;
   String? _error;
@@ -197,12 +196,20 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   }
 
   Future<void> _sync() async {
-    if (!_ready) return;
-    if (_sending) {
-      _sendAgain = true;
-      return;
+    while (_synchronizing != null) {
+      await _synchronizing;
     }
-    _sending = true;
+    if (!_ready) return;
+    final operation = _syncDocuments();
+    _synchronizing = operation;
+    try {
+      await operation;
+    } finally {
+      _synchronizing = null;
+    }
+  }
+
+  Future<void> _syncDocuments() async {
     try {
       _documents.removeWhere((buffer, _) => !model.buffers.contains(buffer));
       final documents = <Map<String, Object?>>[];
@@ -223,6 +230,14 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           if (doc.expectedSequence != null)
             'expectedSequence': doc.expectedSequence,
           'text': doc.text,
+          'start': buffer.controller.selection.baseOffset.clamp(
+            0,
+            doc.text.length,
+          ),
+          'end': buffer.controller.selection.extentOffset.clamp(
+            0,
+            doc.text.length,
+          ),
           // Nested workspaces may open the same file with different buffers.
           'uri': Uri.file(buffer.path)
               .replace(queryParameters: {'tabryo': doc.id})
@@ -266,12 +281,6 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       _presented = visible;
     } catch (_) {
       _fail();
-    } finally {
-      _sending = false;
-      if (_sendAgain) {
-        _sendAgain = false;
-        _schedule();
-      }
     }
   }
 
@@ -374,7 +383,9 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
 
   Future<void> _flush(EditorBuffer buffer) async {
     if (!_ready) throw const DocumentFailure('The code editor is not ready.');
-    if (!_documents.containsKey(buffer)) await _sync();
+    // A save must acknowledge pending host replacements before it reads back
+    // the browser, otherwise a queued format/reload can revert to old text.
+    await _sync();
     final doc = _documents[buffer];
     if (doc == null) {
       throw const DocumentFailure('The document is not connected.');
@@ -393,7 +404,8 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   void _command(String command) {
     if (_ready) {
       unawaited(
-        _send({'type': 'command', 'command': command})
+        _sync()
+            .then((_) => _send({'type': 'command', 'command': command}))
             .catchError((_) => _fail()),
       );
     }

@@ -7,6 +7,7 @@ import '../core/preview_cache.dart';
 import '../features/collaboration/infrastructure/local_collaboration_client.dart';
 import '../features/collaboration/presentation/collaboration_view_model.dart';
 import '../features/editor/infrastructure/local_document_files.dart';
+import '../features/editor/infrastructure/local_dart_formatter.dart';
 import '../features/editor/infrastructure/bundled_editor_assets.dart';
 import '../features/editor/presentation/editor_view_model.dart';
 import '../features/mcp_studio/application/mcp_studio.dart';
@@ -38,6 +39,7 @@ WorkbenchViewModel createWorkbench() {
     files: LocalWorkspaceFiles(cache),
     editor: EditorViewModel(
       LocalDocumentFiles(cache),
+      formatter: LocalDartFormatter(),
       webAssets: BundledEditorAssets(
         load: (name) async {
           final data = await rootBundle.load(name);

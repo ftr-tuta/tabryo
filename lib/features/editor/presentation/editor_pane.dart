@@ -161,9 +161,7 @@ final class EditorPane extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: 'Save document (Ctrl+S)',
-                    onPressed: active.saving || !active.dirty
-                        ? null
-                        : () => model.save(active),
+                    onPressed: active.saving ? null : () => model.save(active),
                     icon: const Icon(Icons.save_outlined),
                   ),
                   ValueListenableBuilder<UndoHistoryValue>(
@@ -203,9 +201,18 @@ final class EditorPane extends StatelessWidget {
                       'compare' => model.compare(active),
                       'closeDiff' => model.closeComparison(active),
                       'keep' => model.keepLocalEdits(active),
+                      'unformatted' => model.save(
+                        active,
+                        withoutFormatting: true,
+                      ),
                       _ => _reload(context, active),
                     },
                     itemBuilder: (_) => [
+                      if (active.formatFailed)
+                        const PopupMenuItem(
+                          value: 'unformatted',
+                          child: Text('Save without formatting'),
+                        ),
                       if (active.reviewRequired)
                         const PopupMenuItem(
                           value: 'keep',

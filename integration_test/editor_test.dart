@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:tabryo/core/preview_cache.dart';
 import 'package:tabryo/features/editor/infrastructure/bundled_editor_assets.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
+import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart';
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/editor/presentation/monaco_editor.dart';
@@ -155,6 +156,7 @@ void main() {
       ]);
       final editor = EditorViewModel(
         LocalDocumentFiles(PreviewCache()),
+        formatter: LocalDartFormatter(),
         webAssets: BundledEditorAssets(
           load: (name) async =>
               (await rootBundle.load(name)).buffer.asUint8List(),
@@ -420,6 +422,75 @@ void main() {
       );
       editor.keepLocalEdits(buffer);
       expect(buffer.reviewRequired, isFalse);
+      debugPrint('Native editor: checking Dart format on save and undo');
+      // Admit a BOM/CRLF baseline after the earlier external-conflict scenario.
+      await file.writeAsBytes([
+        0xef,
+        0xbb,
+        0xbf,
+        ...utf8.encode('void main() {}\r\n'),
+      ]);
+      expect(await editor.reload(buffer), isTrue);
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      final config = File('.dart_tool/package_config.json').absolute;
+      final packages =
+          (jsonDecode(await config.readAsString()) as Map)['packages'] as List;
+      final flutter = packages.cast<Map>().firstWhere(
+        (v) => v['name'] == 'flutter',
+      );
+      final sdkRoot = p.dirname(
+        p.dirname(
+          config.uri.resolve(flutter['rootUri'] as String).toFilePath(),
+        ),
+      );
+      editor.dartFormatters = {
+        root: p.join(
+          sdkRoot,
+          'bin',
+          'cache',
+          'dart-sdk',
+          'bin',
+          Platform.isWindows ? 'dart.exe' : 'dart',
+        ),
+      };
+      const unformatted = 'void main(){print("ação 🌱");}\n';
+      final selection = unformatted.indexOf('ação');
+      buffer.controller.value = TextEditingValue(
+        text: unformatted,
+        selection: TextSelection(
+          baseOffset: selection,
+          extentOffset: selection + 4,
+        ),
+      );
+      editor.select(buffer);
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      expect(await editor.save(buffer), isTrue, reason: buffer.error);
+      final formatted = buffer.controller.text;
+      expect(formatted, contains('  print('));
+      expect(
+        formatted.substring(
+          buffer.controller.selection.start,
+          buffer.controller.selection.end,
+        ),
+        'ação',
+      );
+      final bytes = await file.readAsBytes();
+      expect(bytes.take(3), [0xef, 0xbb, 0xbf]);
+      expect(
+        utf8.decode(bytes.skip(3).toList()),
+        formatted.replaceAll('\n', '\r\n'),
+      );
+      editor.undoBuffer(buffer);
+      await until(tester, () => buffer.controller.text == unformatted);
+      expect(buffer.dirty, isTrue);
+      editor.redoBuffer(buffer);
+      await until(tester, () => buffer.controller.text == formatted);
+      expect(buffer.dirty, isFalse);
+      if (Platform.isLinux) {
+        // Removing an absent channel must not add a tombstone that prevents
+        // the remaining channels from being disposed when the surface closes.
+        await reconnected.removeScriptChannelByName('AlreadyRemoved');
+      }
       await tester.pumpWidget(const SizedBox.shrink());
     },
     timeout: const Timeout(Duration(minutes: 3)),

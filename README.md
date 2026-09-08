@@ -59,12 +59,10 @@ Monaco **0.56.0** supplies syntax colors, multiple selections, folding, snippets
 Ctrl+F search, Ctrl+H replacement, and disk comparison. Its assets and workers
 ship inside the application and are served on a private loopback endpoint;
 editing needs no CDN or internet connection. The embedded surface hides during
-Flutter dialogs and inactive activities. Language-server intelligence and
-format-on-save are separate integrations and remain pending.
-The native editor scenario passes on Windows 11. Ubuntu currently compiles and
-passes the existing workbench tests, but the embedded editor scenario times out
-before its surface becomes ready. Linux editor acceptance, IME and DPI checks
-remain open; this draft development branch is not a qualified release.
+Flutter dialogs and inactive activities. Language-server intelligence remains pending.
+Ubuntu now initializes Monaco and exercises editing, saving, history and diff;
+its native reconnection gate remains open. IME and DPI acceptance also remain
+open; this draft development branch is not a qualified release.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare
@@ -76,9 +74,27 @@ Conflicts, unavailable paths, unpreserved file modes and write failures preserve
 optimistic concurrency; it does not lock out other applications during the final
 filesystem rename. Unsaved buffers live in memory; crash recovery remains planned.
 
+For **Dart format on save**, open a workspace and enter its Dart executable in
+**Preferences**. Use an absolute `dart.exe` path on Windows (for Flutter, this is
+`bin/cache/dart-sdk/bin/dart.exe`) or the Dart executable on Linux. Leave the field
+empty to disable formatting for that workspace. **Remember appearance, editor
+and monitoring preferences** also persists these explicit SDK selections.
+Saving a `.dart` file runs that SDK's formatter on the captured buffer through
+stdin, using the real filename for package language and formatting options.
+Formatting preserves the primary selection, BOM, line endings and undo history;
+it never writes the source directly. The normal conflict checks still govern
+the final save. Syntax errors, unavailable SDKs, a 30-second timeout, or edits
+arriving during formatting keep the buffer. Retry with Ctrl+S or use
+**Document actions → Save without formatting** after a formatter failure.
+Automatic SDK discovery, LSP formatting and Flutter hot reload remain pending.
+
 Preferences, remembered directories, layout and file watching are opt-in.
 Disabling persistence clears the corresponding persisted data. Watching monitors
-the selected root, not an unbounded recursive tree. Refresh after nested changes.
+the selected root and polls the bounded set of open documents, including nested
+files. Clean buffers reload external changes; dirty buffers retain local edits
+and offer a disk comparison. F5 also refreshes open documents with watching off.
+Input arriving while a replacement crosses the native bridge is retained and
+requires an explicit **Keep local edits** or reload choice before saving.
 Terminal output cannot silently access the clipboard, open links or download files.
 
 ## MCP Hub
