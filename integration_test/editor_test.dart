@@ -139,7 +139,8 @@ void main() {
     (tester) async {
       final directory = await Directory.systemTemp.createTemp('tabryo-editor-');
       final root = await directory.resolveSymbolicLinks();
-      final file = File(p.join(root, 'ação example.dart'));
+      final nested = await Directory(p.join(root, 'nested project')).create();
+      final file = File(p.join(nested.path, 'ação example.dart'));
       await file.writeAsBytes([
         0xef,
         0xbb,
@@ -302,6 +303,25 @@ void main() {
         "performance.getEntriesByType('resource').some(x => x.name.endsWith('/editor.worker.js'))",
         true,
       );
+      // One physical file can belong to two authorized, nested workspace roots.
+      final nestedRoot = await nested.resolveSymbolicLinks();
+      editor.selectWorkspace(nestedRoot);
+      await editor.open(nestedRoot, file.path);
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.view-lines').innerText.includes('External')",
+        true,
+      );
+      expect(editor.active, isNot(same(buffer)));
+      editor.selectWorkspace(root);
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.view-lines').innerText.includes('local')",
+        true,
+      );
+      expect(buffer.controller.text, contains('ação 🌱'));
       await browser.runJavaScript(
         "TabryoEditor.postMessage(JSON.stringify({token:'wrong',type:'failed'})); location.href='https://example.invalid/';",
       );

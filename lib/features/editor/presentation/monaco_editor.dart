@@ -201,7 +201,10 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           'id': doc.id,
           'generation': doc.generation,
           'text': doc.text,
-          'uri': Uri.file(buffer.path).toString(),
+          // Nested workspaces may open the same file with different buffers.
+          'uri': Uri.file(buffer.path)
+              .replace(queryParameters: {'tabryo': doc.id})
+              .toString(),
           'language': switch (p.extension(buffer.path).toLowerCase()) {
             '.dart' => 'dart',
             '.py' => 'python',
