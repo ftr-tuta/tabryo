@@ -279,9 +279,9 @@ final class WorkbenchDialogs {
                     onChanged: (enabled) => update(
                       () => value = value.copyWith(watchFiles: enabled),
                     ),
-                    title: const Text('Monitor the selected workspace folder'),
+                    title: const Text('Monitor workspace and open documents'),
                     subtitle: const Text(
-                      'Root folder changes trigger refresh. Disable to stop monitoring immediately.',
+                      'Refresh files changed outside Tabryo. Unsaved edits are kept for comparison. Disable to stop monitoring.',
                     ),
                   ),
                   const Padding(

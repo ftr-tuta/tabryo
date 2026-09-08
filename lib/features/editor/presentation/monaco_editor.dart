@@ -212,6 +212,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           () => _WebDocument('document-${++_request}', buffer.controller.text),
         );
         if (doc.text != buffer.controller.text) {
+          doc.expectedSequence ??= doc.sequence;
           doc.text = buffer.controller.text;
           doc.generation++;
           doc.sequence = 0;
@@ -219,6 +220,8 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         documents.add({
           'id': doc.id,
           'generation': doc.generation,
+          if (doc.expectedSequence != null)
+            'expectedSequence': doc.expectedSequence,
           'text': doc.text,
           // Nested workspaces may open the same file with different buffers.
           'uri': Uri.file(buffer.path)
@@ -315,7 +318,13 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         unawaited(model.save(buffer));
         return;
       }
-      if (!['change', 'selection', 'state', 'flushed'].contains(type) ||
+      if (![
+            'change',
+            'selection',
+            'state',
+            'flushed',
+            'superseded',
+          ].contains(type) ||
           value['generation'] != doc.generation ||
           value['sequence'] is! int ||
           (value['sequence'] as int) < doc.sequence ||
@@ -346,6 +355,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       }
       doc.text = text;
       doc.sequence = value['sequence'] as int;
+      doc.expectedSequence = null;
       model.applyWebEdit(
         buffer,
         text,
@@ -354,6 +364,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         value['canUndo'] == true,
         value['canRedo'] == true,
       );
+      if (type == 'superseded') model.replacementSuperseded(buffer);
       if (type == 'flushed') _pending.remove(value['request'])?.complete();
     } on FormatException {
       /* Untrusted malformed browser messages are ignored. */
@@ -435,4 +446,5 @@ final class _WebDocument {
   String text;
   int generation = 1;
   int sequence = 0;
+  int? expectedSequence;
 }

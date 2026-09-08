@@ -97,6 +97,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     final result = await preferencesStore.load();
     if (_shutdown) return;
     preferences = result.preferences;
+    editor?.monitorExternalChanges(preferences.watchFiles);
     message = result.warning;
     // Restore only root metadata. Opening a project or starting a process
     // still requires a gesture, including after a corrupt preferences file.
@@ -755,6 +756,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
   });
 
   Future<void> _configureWatcher() async {
+    editor?.monitorExternalChanges(preferences.watchFiles);
     await _watcher?.cancel();
     _watcher = null;
     _watchDebounce?.cancel();

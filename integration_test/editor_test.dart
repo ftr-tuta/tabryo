@@ -355,7 +355,9 @@ void main() {
         () => find.text('Reconnect editor').evaluate().isNotEmpty,
       );
       await tester.tap(find.text('Reconnect editor'));
+      debugPrint('Native editor: reconnect requested');
       await until(tester, () => state.surfaceVisible);
+      debugPrint('Native editor: reconnected surface ready');
       final reconnected = tester
           .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
           .controller;
@@ -371,6 +373,7 @@ void main() {
       await reconnected.requestFocus();
       await tester.pump(const Duration(milliseconds: 100));
       await Clipboard.setData(ClipboardData(text: 'x' * (512 * 1024 + 1)));
+      debugPrint('Native editor: testing oversized clipboard input');
       if (Platform.isWindows) {
         controlKey(0x56);
       } else {
@@ -386,6 +389,32 @@ void main() {
       expect(await editor.synchronizeBuffer(buffer), isTrue);
       expect(buffer.controller.text, retained);
       expect(tester.takeException(), isNull);
+      debugPrint(
+        'Native editor: oversized input rejected; testing concurrent replacement',
+      );
+      // Deliberately delay input notifications to exercise the native bridge's
+      // version boundary, while allowing the replacement response through.
+      await reconnected.runJavaScript("""
+        window.savedEditorPost = TabryoEditor.postMessage;
+        TabryoEditor.postMessage = function(raw) {
+          const type = JSON.parse(raw).type;
+          if (type !== 'change' && type !== 'selection') window.savedEditorPost.call(TabryoEditor, raw);
+        };
+        document.querySelector('textarea').focus();
+        document.execCommand('insertText', false, '// queued local input\\n');
+      """);
+      expect(buffer.controller.text, retained);
+      buffer.controller.text = 'replacement from disk';
+      editor.select(buffer);
+      await until(tester, () => buffer.reviewRequired);
+      expect(buffer.controller.text, contains('// queued local input'));
+      expect(buffer.controller.text, isNot('replacement from disk'));
+      expect(await editor.save(buffer), isFalse);
+      await reconnected.runJavaScript(
+        'TabryoEditor.postMessage = window.savedEditorPost; delete window.savedEditorPost;',
+      );
+      editor.keepLocalEdits(buffer);
+      expect(buffer.reviewRequired, isFalse);
       await tester.pumpWidget(const SizedBox.shrink());
     },
     timeout: const Timeout(Duration(minutes: 3)),

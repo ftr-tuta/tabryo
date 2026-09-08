@@ -152,6 +152,55 @@ void main() {
     },
   );
 
+  test(
+    'external changes refresh clean buffers and expose dirty conflicts',
+    () async {
+      final path = p.join(root, 'server.dart');
+      await editor.open(root, path);
+      final buffer = editor.active!;
+      files.content[path] = 'external clean replacement';
+      await editor.refreshOpenFiles();
+      expect(buffer.controller.text, files.content[path]);
+      expect(buffer.dirty, isFalse);
+      buffer.controller.text = 'unsaved input';
+      files.content[path] = 'another external replacement';
+      await editor.refreshOpenFiles();
+      expect(buffer.controller.text, 'unsaved input');
+      expect(buffer.baseline.text, 'external clean replacement');
+      expect(buffer.diskText, 'another external replacement');
+      expect(buffer.error, contains('changed on disk'));
+      expect(files.writes, 0);
+      await editor.disposeAsync();
+    },
+  );
+
+  test(
+    'monitoring rejects a disk read superseded by input or revocation',
+    () async {
+      final path = p.join(root, 'server.dart');
+      await editor.open(root, path);
+      final buffer = editor.active!;
+      files.content[path] = 'external';
+      files.reading = Completer<void>();
+      final refresh = editor.refreshOpenFiles();
+      await Future<void>.delayed(Duration.zero);
+      buffer.controller.text = 'new input';
+      files.reading!.complete();
+      await refresh;
+      expect(buffer.controller.text, 'new input');
+      expect(buffer.baseline.text, 'original');
+      buffer.controller.text = 'original';
+      files.reading = Completer<void>();
+      final revoked = editor.refreshOpenFiles();
+      await Future<void>.delayed(Duration.zero);
+      editor.monitorExternalChanges(false);
+      files.reading!.complete();
+      await revoked;
+      expect(buffer.controller.text, 'original');
+      await editor.disposeAsync();
+    },
+  );
+
   testWidgets(
     'tabs preserve undo across workspace and activity switches, and close can cancel',
     (tester) async {

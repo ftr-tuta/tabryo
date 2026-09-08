@@ -130,6 +130,13 @@ window.tabryoReceive = (packet) => {
             documents.set(input.id, doc);
           } else if (doc.generation !== input.generation) {
             doc.generation = input.generation;
+            // Input may arrive after Flutter's last snapshot but before this
+            // replacement crosses the native bridge. Keep that input and
+            // report it in the new generation instead of overwriting it.
+            if (input.expectedSequence != null && doc.model.getVersionId() !== input.expectedSequence) {
+              emit(snapshot(doc, { type: 'superseded' }));
+              continue;
+            }
             doc.acceptedText = input.text;
             if (doc.model.getValue() !== input.text) {
               doc.model.pushStackElement();

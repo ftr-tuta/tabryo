@@ -2,6 +2,7 @@
 // mistakes Flutter's services/ source directory for application infrastructure.
 // ignore_for_file: dartitect_dt3121
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dartitect_flutter/dartitect_flutter.dart';
@@ -27,6 +28,7 @@ final class EditorBuffer {
   bool webCanUndo = false;
   bool webCanRedo = false;
   bool saving = false;
+  bool reviewRequired = false;
   String? error;
   String? diskText;
   bool get dirty => controller.text != baseline.text;
@@ -54,12 +56,92 @@ final class EditorViewModel extends DartitectViewModel {
   int _opening = 0;
   bool get opening => _opening != 0;
   bool _closed = false;
+  Timer? _monitor;
+  int _monitorEpoch = 0;
+  bool _refreshing = false;
   String? workspace;
   String? message;
   EditorBuffer? get active => _selected[workspace];
   List<EditorBuffer> inWorkspace(String? root) =>
       _buffers.where((b) => root == null || p.equals(b.root, root)).toList();
   bool get hasDirty => _buffers.any((b) => b.dirty);
+
+  void monitorExternalChanges(bool enabled) {
+    _monitor?.cancel();
+    _monitor = null;
+    _monitorEpoch++;
+    if (enabled && !_closed) {
+      // Poll only the bounded set of already authorized open documents. This
+      // also detects atomic replacements and nested files on Linux, where a
+      // root directory watcher does not report descendant changes.
+      _monitor = Timer.periodic(const Duration(seconds: 2), (_) {
+        unawaited(refreshOpenFiles());
+      });
+    }
+  }
+
+  Future<void> refreshOpenFiles() async {
+    if (_closed || _refreshing || (webAssets != null && synchronize == null)) {
+      return;
+    }
+    _refreshing = true;
+    final epoch = _monitorEpoch;
+    try {
+      for (final buffer in List<EditorBuffer>.of(_buffers)) {
+        if (_closed || epoch != _monitorEpoch) return;
+        if (!_buffers.contains(buffer) || buffer.saving) continue;
+        if (!await synchronizeBuffer(buffer)) continue;
+        if (_closed || !_buffers.contains(buffer)) continue;
+        final version = buffer.version;
+        final baseline = buffer.baseline;
+        try {
+          final disk = await files.open(buffer.root, buffer.path);
+          if (_closed || epoch != _monitorEpoch) return;
+          if (!_buffers.contains(buffer) ||
+              buffer.saving ||
+              version != buffer.version ||
+              !identical(baseline, buffer.baseline)) {
+            continue;
+          }
+          final changed =
+              disk.text != baseline.text ||
+              disk.newline != baseline.newline ||
+              disk.bom != baseline.bom;
+          if (!changed) {
+            // Refresh the adapter's revision even if only metadata changed.
+            buffer.baseline = disk;
+            continue;
+          }
+          if (buffer.dirty) {
+            buffer.diskText = disk.text;
+            buffer.error = const DocumentConflict().message;
+          } else {
+            final selection = buffer.controller.selection;
+            buffer.baseline = disk;
+            buffer.controller.value = TextEditingValue(
+              text: disk.text,
+              selection: TextSelection(
+                baseOffset: selection.baseOffset.clamp(0, disk.text.length),
+                extentOffset: selection.extentOffset.clamp(0, disk.text.length),
+              ),
+            );
+            buffer.diskText = null;
+            buffer.error = null;
+          }
+          notifyListeners();
+        } catch (error) {
+          if (_closed || epoch != _monitorEpoch) return;
+          if (_buffers.contains(buffer)) {
+            buffer.error =
+                'Could not refresh this file. Your buffer is preserved. $error';
+            notifyListeners();
+          }
+        }
+      }
+    } finally {
+      _refreshing = false;
+    }
+  }
 
   void selectWorkspace(String? root) {
     workspace = root;
@@ -139,8 +221,11 @@ final class EditorViewModel extends DartitectViewModel {
 
   Future<bool> save(EditorBuffer buffer) async {
     if (!_buffers.contains(buffer) || buffer.saving) return false;
+    if (buffer.reviewRequired) return false;
     if (!await synchronizeBuffer(buffer)) return false;
-    if (!_buffers.contains(buffer) || buffer.saving) return false;
+    if (!_buffers.contains(buffer) || buffer.saving || buffer.reviewRequired) {
+      return false;
+    }
     if (!buffer.dirty) return true;
     buffer.saving = true;
     buffer.error = null;
@@ -162,6 +247,7 @@ final class EditorViewModel extends DartitectViewModel {
   }
 
   Future<bool> synchronizeBuffer(EditorBuffer buffer) async {
+    if (_closed || !_buffers.contains(buffer)) return false;
     if (webAssets == null) return true;
     try {
       if (synchronize == null) {
@@ -172,6 +258,7 @@ final class EditorViewModel extends DartitectViewModel {
       await synchronize!(buffer);
       return true;
     } catch (_) {
+      if (_closed || !_buffers.contains(buffer)) return false;
       buffer.error = 'The code editor did not synchronize. Your buffer is preserved; reconnect before saving or closing.';
       notifyListeners();
       return false;
@@ -235,6 +322,22 @@ final class EditorViewModel extends DartitectViewModel {
     notifyListeners();
   }
 
+  void replacementSuperseded(EditorBuffer buffer) {
+    if (!_buffers.contains(buffer)) return;
+    buffer.reviewRequired = true;
+    buffer.diskText ??= buffer.baseline.text;
+    buffer.error = 'New input arrived before the replacement. Your local edits were kept. Review the comparison and choose Keep local edits, or reload from disk.';
+    notifyListeners();
+  }
+
+  void keepLocalEdits(EditorBuffer buffer) {
+    if (!_buffers.contains(buffer) || buffer.saving) return;
+    buffer.reviewRequired = false;
+    buffer.error = null;
+    buffer.diskText = null;
+    notifyListeners();
+  }
+
   Future<void> compare(EditorBuffer buffer) async {
     try {
       final disk = await files.open(buffer.root, buffer.path);
@@ -268,6 +371,7 @@ final class EditorViewModel extends DartitectViewModel {
       buffer.controller.text = disk.text;
       buffer.diskText = null;
       buffer.error = null;
+      buffer.reviewRequired = false;
       notifyListeners();
       return true;
     } catch (error) {
@@ -313,6 +417,8 @@ final class EditorViewModel extends DartitectViewModel {
   @override
   Future<void> disposeAsync() async {
     _closed = true;
+    _monitorEpoch++;
+    _monitor?.cancel();
     await webAssets?.close();
     for (final buffer in _buffers) {
       buffer.dispose();

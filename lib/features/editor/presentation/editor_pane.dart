@@ -202,9 +202,15 @@ final class EditorPane extends StatelessWidget {
                     onSelected: (value) => switch (value) {
                       'compare' => model.compare(active),
                       'closeDiff' => model.closeComparison(active),
+                      'keep' => model.keepLocalEdits(active),
                       _ => _reload(context, active),
                     },
                     itemBuilder: (_) => [
+                      if (active.reviewRequired)
+                        const PopupMenuItem(
+                          value: 'keep',
+                          child: Text('Keep local edits'),
+                        ),
                       if (active.diskText != null)
                         const PopupMenuItem(
                           value: 'closeDiff',
