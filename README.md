@@ -60,9 +60,12 @@ Ctrl+F search, Ctrl+H replacement, and disk comparison. Its assets and workers
 ship inside the application and are served on a private loopback endpoint;
 editing needs no CDN or internet connection. The embedded surface hides during
 Flutter dialogs and inactive activities. Language-server intelligence remains pending.
-Ubuntu now initializes Monaco and exercises editing, saving, history and diff;
-its native reconnection gate remains open. IME and DPI acceptance also remain
-open; this draft development branch is not a qualified release.
+The native editor scenario passes in Debug and Release on Windows and Ubuntu
+24.04, including reconnection and Dart formatting. The
+[desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/runs/34247734251)
+also passes terminal/workbench integration, packaging and extracted-bundle startup
+and shutdown on both platforms. IME/DPI acceptance and the remaining IDE
+integrations are still open; the complete Python/Dart/Flutter matrix is unfinished.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare

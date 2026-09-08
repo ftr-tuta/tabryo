@@ -406,9 +406,13 @@ modelos versionados, histórico por documento, diff e preservação do salvament
 O teste desktop Windows cobre clipboard Unicode, alternância de atividades, diálogos,
 undo/redo, BOM/CRLF, conflito externo, reconexão sem perder o buffer e recusa de colagem
 acima do limite. No Ubuntu, a montagem foi corrigida para estabelecer a hierarquia GTK
-antes de realizar o compositor Flutter. Inicialização, edição, salvamento e diff passaram;
-a reconexão ainda apresenta falha nativa e seu gate permanece aberto. IME e DPI também
-seguem pendentes. Monitoramento opcional e F5 atualizam documentos abertos sem substituir
+antes de realizar o compositor Flutter, e o script injetado mantém sua referência até
+ser removido no descarte. Inicialização, edição, salvamento, diff, reconexão e formatação
+passaram em Debug e Release nos dois sistemas. A
+https://github.com/ftr-tuta/tabryo/actions/runs/34247734251[CI de qualificação desktop]
+também passou análise, Dartitect, testes unitários, terminal, workbench, empacotamento e
+inicialização/encerramento dos pacotes extraídos. IME e DPI seguem pendentes.
+Monitoramento opcional e F5 atualizam documentos abertos sem substituir
 edições locais; mudanças em trânsito exigem revisão explícita antes de salvar.
 Formatação Dart ao salvar usa o SDK escolhido explicitamente por workspace e stdin,
 preserva seleção principal, histórico e codificação, verifica versões e mantém os buffers
