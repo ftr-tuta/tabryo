@@ -776,28 +776,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
               ),
               IconButton(
                 tooltip: 'Close workspace',
-                onPressed: model.workspace == null
-                    ? null
-                    : () async {
-                        if (await dialogs.confirm(
-                          'Close workspace?',
-                          'Its terminal sessions will be closed. Project files and worktrees remain on disk.',
-                          'Close',
-                        )) {
-                          if (!context.mounted) return;
-                          final editor = model.editor;
-                          final root = model.workspace?.root;
-                          if (editor == null ||
-                              root == null ||
-                              (await confirmDocumentClose(
-                                context,
-                                editor,
-                                editor.inWorkspace(root),
-                              ))) {
-                            await model.closeWorkspace(discardEdits: true);
-                          }
-                        }
-                      },
+                onPressed: model.workspace == null ? null : _closeWorkspace,
                 icon: const Icon(Icons.close, size: 18),
               ),
             ],
@@ -844,6 +823,24 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
       ],
     ),
   );
+
+  Future<void> _closeWorkspace() async {
+    final root = model.workspace?.root;
+    if (root == null) return;
+    if (!await dialogs.confirm(
+      'Close workspace?',
+      'Its terminal sessions will be closed. Project files and worktrees remain on disk.',
+      'Close',
+    ))
+      return;
+    if (!mounted || model.workspace?.root != root) return;
+    final editor = model.editor;
+    if (editor != null &&
+        !await confirmDocumentClose(context, editor, editor.inWorkspace(root)))
+      return;
+    if (!mounted || model.workspace?.root != root) return;
+    await model.closeWorkspace(discardEdits: true);
+  }
 
   Widget _files() => Column(
     children: [
