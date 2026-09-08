@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -7,6 +10,8 @@ import 'package:tabryo/core/preview_cache.dart';
 import 'package:tabryo/features/editor/domain/document_files.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
 import 'package:tabryo/features/files/infrastructure/local_workspace_files.dart';
+import 'package:tabryo/features/files/domain/workspace_files.dart';
+import 'package:tabryo/features/files/presentation/workspace_search_panel.dart';
 
 void main() {
   late Directory temporary;
@@ -36,6 +41,144 @@ void main() {
     await file.writeAsString('olá');
     expect((await files.preview(root, file.path)).text, 'olá');
     expect(cache.bytes, greaterThan(0));
+  });
+
+  testWidgets(
+    'search UI cancels obsolete requests and opens the current result',
+    (tester) async {
+      final pending = <Completer<WorkspaceSearchResults>>[];
+      final tokens = <Cancellation>[];
+      WorkspaceMatch? opened;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                child: const Text('Open search'),
+                onPressed: () async {
+                  opened = await showDialog<WorkspaceMatch>(
+                    context: context,
+                    builder: (_) => WorkspaceSearchPanel(
+                      root: root,
+                      search: (query, cancellation) {
+                        expect(query.text, 'needle');
+                        tokens.add(cancellation);
+                        final result = Completer<WorkspaceSearchResults>();
+                        pending.add(result);
+                        return result.future;
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open search'));
+      await tester.pumpAndSettle();
+      expect(pending, isEmpty);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Search text'),
+        'needle',
+      );
+      await tester.tap(find.text('Search'));
+      await tester.pump();
+      await tester.tap(find.text('Search'));
+      await tester.pump();
+      expect(tokens.first.isCancelled, isTrue);
+      pending.first.complete(const WorkspaceSearchResults([]));
+      await tester.pump();
+      final match = WorkspaceMatch(
+        path: p.join(root, 'example.dart'),
+        line: 2,
+        column: 3,
+        text: 'needle',
+        preview: 'a needle',
+      );
+      pending.last.complete(WorkspaceSearchResults([match]));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1 matches'), findsOneWidget);
+      expect(find.text('Search cancelled.'), findsNothing);
+      await tester.tap(find.text('example.dart:2:3'));
+      await tester.pumpAndSettle();
+      expect(opened, same(match));
+      expect(tokens.last.isCancelled, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  test('workspace search handles literal Unicode and CRLF with exclusions and UTF-16 locations', () async {
+    final source = File(p.join(root, 'lib', 'ação.dart'));
+    await source.parent.create();
+    await source.writeAsString('\uFEFF😀 A.B\r\na.b and A.B\r\n');
+    for (final name in ['.git', 'build', '.venv', 'ignored']) {
+      final file = File(p.join(root, name, 'skip.dart'));
+      await file.parent.create();
+      await file.writeAsString('a.b');
+    }
+    await File(p.join(root, 'skip.py')).writeAsString('a.b');
+    final found = await files.search(
+      root,
+      const WorkspaceSearchQuery(
+        'a.b',
+        pathContains: '.dart',
+        excludedDirectories: ['ignored'],
+      ),
+      Cancellation(),
+    );
+    expect(found.matches.map((m) => (m.line, m.column)), [
+      (1, 4),
+      (2, 1),
+      (2, 9),
+    ]);
+    expect(found.matches.every((m) => m.path == source.path), isTrue);
+    expect(found.limited, isFalse);
+    final exact = await files.search(
+      root,
+      const WorkspaceSearchQuery(
+        'a.b',
+        caseSensitive: true,
+        pathContains: 'ação',
+      ),
+      Cancellation(),
+    );
+    expect(exact.matches.single.line, 2);
+    await expectLater(
+      files.search(
+        root,
+        const WorkspaceSearchQuery('a.b'),
+        Cancellation()..cancel(),
+      ),
+      throwsA(isA<Cancelled>()),
+    );
+  });
+
+  test('workspace search skips links unsupported bytes and oversized files and bounds results', () async {
+    final inner = await Directory(p.join(root, 'inner')).create();
+    final outside = await File(p.join(root, 'outside.txt'))
+        .writeAsString('needle');
+    await Link(p.join(inner.path, 'linked.txt')).create(outside.path);
+    await Link(p.join(inner.path, 'linked-directory')).create(root);
+    await File(p.join(inner.path, 'binary'))
+        .writeAsBytes([0, ...'needle'.codeUnits]);
+    await File(p.join(inner.path, 'invalid')).writeAsBytes([255]);
+    await File(p.join(inner.path, 'large')).writeAsString('needle' * 100000);
+    final safe = await files.search(
+      inner.path,
+      const WorkspaceSearchQuery('needle'),
+      Cancellation(),
+    );
+    expect(safe.matches, isEmpty);
+    expect(safe.skipped, 3);
+    await File(p.join(inner.path, 'many')).writeAsString('needle\n' * 600);
+    final limited = await files.search(
+      inner.path,
+      const WorkspaceSearchQuery('needle'),
+      Cancellation(),
+    );
+    expect(limited.matches, hasLength(500));
+    expect(limited.limited, isTrue);
   });
   test(
     'binary, invalid UTF-8, and large files are bounded explicitly',

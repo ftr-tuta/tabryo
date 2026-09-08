@@ -18,9 +18,11 @@ final class ProjectTasks {
     String buildTarget = '',
     List<String> arguments = const [],
     TaskReport? report,
+    TaskConfiguration? configuration,
   }) {
     final python = project.kind == ProjectKind.python;
     final flutter = project.kind == ProjectKind.flutter;
+    final coverage = report?.coveragePath != null;
     final executable = flutter
         ? (tools[ProjectTool.flutter] == null
               ? null
@@ -71,12 +73,28 @@ final class ProjectTasks {
                 'junit_family=xunit1',
                 '--junitxml',
                 report!.path,
+                if (coverage) ...[
+                  '--cov=.',
+                  '--cov-report=lcov:${report.coveragePath}',
+                ],
                 if (filter.isNotEmpty) ...['-k', filter],
                 ?target,
               ]
             : [
-                'test',
+                if (coverage && !flutter) ...[
+                  'run',
+                  'coverage:test_with_coverage',
+                  '--out',
+                  report!.directory,
+                  '--',
+                ] else
+                  'test',
                 if (flutter) '--no-pub',
+                if (coverage && flutter) ...[
+                  '--coverage',
+                  '--coverage-path',
+                  report!.coveragePath!,
+                ],
                 '--reporter=expanded',
                 '--file-reporter=json:${report!.path}',
                 if (filter.isNotEmpty) ...['--plain-name', filter],
@@ -107,6 +125,7 @@ final class ProjectTasks {
       kind: kind,
       target: target,
       report: report,
+      configuration: configuration,
       command: ProjectCommand(
         title: '${kind.name} · ${project.name}',
         description: kind == ProjectTaskKind.test
@@ -117,7 +136,12 @@ final class ProjectTasks {
           workingDirectory: project.directory,
           arguments: List.unmodifiable(args),
           environment: python
-              ? const {'PYTHONNOUSERSITE': '1', 'PYTHONUNBUFFERED': '1'}
+              ? {
+                  'PYTHONNOUSERSITE': '1',
+                  'PYTHONUNBUFFERED': '1',
+                  if (coverage)
+                    'COVERAGE_FILE': p.join(report!.directory, '.coverage'),
+                }
               : const {},
           unsetEnvironment: python
               ? const ['PYTHONHOME', 'PYTHONPATH']

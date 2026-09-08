@@ -511,6 +511,13 @@ final class WorkbenchViewModel extends DartitectViewModel {
         );
       }
       // Other projects may have started while path and buffer checks awaited.
+      await tasks!.validateConfiguration(task);
+      if (_shutdown ||
+          !workspaces.contains(owner) ||
+          tasks?.isPrepared(task) != true ||
+          !identical(chosen, projects!.selections[project.id])) {
+        throw const ProjectFailure('Task ownership changed. Review again.');
+      }
       // Admission and started() must share this synchronous boundary.
       if (tasks!.runs.where((t) => t.status == TaskStatus.running).length >=
           4) {
@@ -557,6 +564,32 @@ final class WorkbenchViewModel extends DartitectViewModel {
     selectTab(index);
     focusSession(task.sessionId!);
   }
+
+  Future<void> openSearchResult(String root, WorkspaceMatch match) =>
+      guarded(() async {
+        if (workspace?.root != root || !p.isWithin(root, match.path)) return;
+        await openFile(match.path);
+        if (workspace?.root != root) return;
+        final buffer = editor?.active;
+        if (buffer == null || buffer.path != match.path) return;
+        final lines = buffer.controller.text.split('\n');
+        final row = match.line - 1, column = match.column - 1;
+        if (row < 0 ||
+            row >= lines.length ||
+            column < 0 ||
+            column + match.text.length > lines[row].length ||
+            lines[row].substring(column, column + match.text.length) !=
+                match.text) {
+          message = 'This result changed since the search. Search again; local edits were preserved.';
+          notifyListeners();
+          return;
+        }
+        await editor!.navigateLanguage(
+          buffer,
+          Uri.file(match.path).toString(),
+          {'line': row, 'character': column},
+        );
+      });
 
   Future<void> openTestResult(ProjectTask task, TestCaseResult result) async {
     if (result.path == null || workspace?.root != task.project.workspace) {

@@ -56,6 +56,12 @@ final class ReservedCollaboration implements CollaborationClient {
 }
 
 final class MemoryFiles implements WorkspaceFiles {
+  @override
+  Future<WorkspaceSearchResults> search(
+    String root,
+    WorkspaceSearchQuery query,
+    Cancellation cancellation,
+  ) async => const WorkspaceSearchResults([]);
   int reads = 0, watchers = 0, cancellations = 0;
   @override
   Future<String> authorizeRoot(String path) async => path;

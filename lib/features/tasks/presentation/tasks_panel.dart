@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../../projects/domain/project.dart';
 import '../domain/project_task.dart';
+import '../application/shared_tasks.dart';
 import 'tasks_view_model.dart';
 
 final class TasksPanel extends StatefulWidget {
@@ -17,6 +18,7 @@ final class TasksPanel extends StatefulWidget {
     required this.onStop,
     required this.onTerminal,
     required this.onOpen,
+    this.onOpenConfiguration,
     super.key,
   });
   final TasksViewModel model;
@@ -27,6 +29,7 @@ final class TasksPanel extends StatefulWidget {
   final Future<void> Function(ProjectTask) onStop;
   final void Function(ProjectTask) onTerminal;
   final Future<void> Function(ProjectTask, TestCaseResult) onOpen;
+  final Future<void> Function()? onOpenConfiguration;
 
   @override
   State<TasksPanel> createState() => _TasksPanelState();
@@ -39,6 +42,8 @@ final class _TasksPanelState extends State<TasksPanel> {
   ProjectTaskKind kind = ProjectTaskKind.test;
   String buildTarget = 'web';
   bool busy = false;
+  bool coverage = false;
+  TaskConfiguration? configuration;
   String? error;
 
   @override
@@ -92,7 +97,31 @@ final class _TasksPanelState extends State<TasksPanel> {
       filter: filter.text,
       buildTarget: buildTarget,
       arguments: kind == ProjectTaskKind.run ? argv.cast<String>() : const [],
+      coverage: kind == ProjectTaskKind.test && coverage,
     );
+    await _approve(task);
+  });
+
+  Future<void> _reviewShared(SharedTask preset) => _act(() async {
+    final config = configuration;
+    if (config == null) return;
+    final task = await widget.model.prepare(
+      widget.project,
+      widget.selection,
+      preset.kind,
+      target: preset.target == null
+          ? null
+          : p.joinAll([widget.project.directory, ...preset.target!.split('/')]),
+      filter: preset.filter,
+      buildTarget: preset.buildTarget,
+      arguments: preset.arguments,
+      coverage: preset.coverage,
+      configuration: config,
+    );
+    await _approve(task);
+  });
+
+  Future<void> _approve(ProjectTask task) async {
     try {
       if (!mounted) return;
       final command = task.command;
@@ -124,7 +153,7 @@ final class _TasksPanelState extends State<TasksPanel> {
     } finally {
       await widget.model.discard(task);
     }
-  });
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -228,6 +257,20 @@ final class _TasksPanelState extends State<TasksPanel> {
                     'Optional; the native test runner applies this filter.',
               ),
             ),
+          if (kind == ProjectTaskKind.test)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Collect line coverage'),
+              value: coverage,
+              subtitle: Text(
+                widget.project.kind == ProjectKind.python
+                    ? 'Requires pytest-cov in the selected environment.'
+                    : widget.project.kind == ProjectKind.dart
+                    ? 'Requires package:coverage in this project. Uses its official test runner.'
+                    : 'Uses Flutter’s native LCOV report.',
+              ),
+              onChanged: busy ? null : (v) => setState(() => coverage = v!),
+            ),
           if (kind == ProjectTaskKind.run)
             TextField(
               controller: arguments,
@@ -252,6 +295,66 @@ final class _TasksPanelState extends State<TasksPanel> {
             onPressed: busy ? null : _review,
             child: const Text('Review task'),
           ),
+          const SizedBox(height: 16),
+          ExpansionTile(
+            title: const Text('Shared tasks · .tabryo/project.json'),
+            children: [
+              const Text(
+                'Load optional versioned tasks from this project. Opening this panel runs nothing. Executable paths stay in local tool selections; keep secrets out of shared arguments.',
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: busy
+                        ? null
+                        : () => _act(() async {
+                            // Clear stale tasks even when the refreshed file is invalid.
+                            setState(() => configuration = null);
+                            final loaded = await widget.model.files
+                                .readConfiguration(widget.project);
+                            if (mounted) setState(() => configuration = loaded);
+                          }),
+                    child: const Text('Load shared tasks'),
+                  ),
+                  TextButton(
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Shared task configuration'),
+                        content: SelectableText(
+                          'Create .tabryo/project.json inside the project and save this JSON. Targets use relative paths; loading and running are explicit.\n\n${SharedTasks.example(widget.project)}',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Close'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    child: const Text('Show example'),
+                  ),
+                  if (widget.onOpenConfiguration != null)
+                    TextButton(
+                      onPressed: busy
+                          ? null
+                          : () => _act(widget.onOpenConfiguration!),
+                      child: const Text('Open configuration'),
+                    ),
+                ],
+              ),
+              for (final preset in configuration?.tasks ?? <SharedTask>[])
+                ListTile(
+                  title: Text(preset.name),
+                  subtitle: Text(preset.kind.name),
+                  trailing: OutlinedButton(
+                    onPressed: busy ? null : () => _reviewShared(preset),
+                    child: const Text('Review shared task'),
+                  ),
+                ),
+            ],
+          ),
           for (final task in runs)
             ExpansionTile(
               key: ObjectKey(task),
@@ -266,6 +369,87 @@ final class _TasksPanelState extends State<TasksPanel> {
                     ),
               children: [
                 if (task.error != null) SelectableText(task.error!),
+                if (task.coverageError != null)
+                  SelectableText(task.coverageError!),
+                if (task.coverage case final report?) ...[
+                  Text(
+                    'Line coverage: ${report.covered}/${report.total}${report.total == 0 ? ' · no executable lines reported' : ' · ${(100 * report.covered / report.total).toStringAsFixed(1)}%'}',
+                  ),
+                  const Text(
+                    'Coverage describes this test run on saved files. Source edits can make locations stale.',
+                  ),
+                  if (report.excludedFiles > 0)
+                    Text(
+                      '${report.excludedFiles} source records outside this project excluded.',
+                    ),
+                  SizedBox(
+                    height: 220,
+                    child: ListView.builder(
+                      itemCount: report.files.length,
+                      itemBuilder: (context, index) {
+                        final file = report.files[index];
+                        final lines = file.lines.keys.toList()..sort();
+                        return ListTile(
+                          title: Text(
+                            p.relative(
+                              file.path,
+                              from: widget.project.directory,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '${file.covered}/${file.lines.length} lines covered',
+                          ),
+                          onTap: () => showDialog<void>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: Text(p.basename(file.path)),
+                              content: SizedBox(
+                                width: 520,
+                                height: 380,
+                                child: ListView.builder(
+                                  itemCount: lines.length,
+                                  itemBuilder: (context, index) {
+                                    final line = lines[index],
+                                        hits = file.lines[line]!;
+                                    return ListTile(
+                                      dense: true,
+                                      leading: Icon(
+                                        hits == 0
+                                            ? Icons.radio_button_unchecked
+                                            : Icons.check_circle_outline,
+                                      ),
+                                      title: Text('Line $line · $hits hits'),
+                                      onTap: () {
+                                        Navigator.pop(context);
+                                        _act(
+                                          () => widget.onOpen(
+                                            task,
+                                            TestCaseResult(
+                                              name: 'Line coverage',
+                                              outcome: TestOutcome.passed,
+                                              path: file.path,
+                                              line: line,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Close'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
                 Wrap(
                   spacing: 8,
                   children: [

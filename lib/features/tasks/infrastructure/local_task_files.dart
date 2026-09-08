@@ -6,6 +6,8 @@ import 'package:path/path.dart' as p;
 import '../../../core/cancellation.dart';
 import '../../projects/domain/project.dart';
 import '../domain/project_task.dart';
+import '../application/shared_tasks.dart';
+import 'native_coverage.dart';
 import 'native_test_results.dart';
 
 final class LocalTaskFiles implements TaskFiles {
@@ -116,13 +118,31 @@ final class LocalTaskFiles implements TaskFiles {
   }
 
   @override
-  Future<TaskReport> createReport({required bool python}) async {
+  Future<TaskConfiguration> readConfiguration(
+    DevelopmentProject project,
+  ) async {
+    final path = p.join(project.directory, '.tabryo', 'project.json');
+    await validateTarget(project, path);
+    return SharedTasks.parse(await _readFile(path, 64 * 1024));
+  }
+
+  @override
+  Future<TaskReport> createReport({
+    required bool python,
+    bool coverage = false,
+    bool dartCoverage = false,
+  }) async {
     final directory = await Directory.systemTemp.createTemp('tabryo-tests-');
     final canonical = await directory.resolveSymbolicLinks();
     final report = TaskReport(
       canonical,
       p.join(canonical, python ? 'results.xml' : 'results.jsonl'),
       python,
+      coveragePath: coverage ? p.join(canonical, 'lcov.info') : null,
+      auxiliaryPaths: [
+        if (coverage && python) p.join(canonical, '.coverage'),
+        if (coverage && dartCoverage) p.join(canonical, 'coverage.json'),
+      ],
     );
     _reports.add(report);
     return report;
@@ -147,28 +167,47 @@ final class LocalTaskFiles implements TaskFiles {
     DevelopmentProject project,
   ) async {
     await _validateReport(report);
-    if (await FileSystemEntity.type(report.path, followLinks: false) !=
+    return NativeTestResults.parse(
+      await _readFile(report.path, reportLimit),
+      project,
+      python: report.python,
+    );
+  }
+
+  @override
+  Future<CoverageResults> readCoverage(
+    TaskReport report,
+    DevelopmentProject project,
+  ) async {
+    await _validateReport(report);
+    if (report.coveragePath == null) {
+      throw const ProjectFailure('Coverage was not requested.');
+    }
+    return NativeCoverage.parse(
+      await _readFile(report.coveragePath!, reportLimit),
+      project,
+    );
+  }
+
+  Future<String> _readFile(String path, int limit) async {
+    if (await FileSystemEntity.type(path, followLinks: false) !=
         FileSystemEntityType.file) {
       throw const ProjectFailure(
         'The test runner produced no readable report. Inspect its terminal.',
       );
     }
-    final handle = await File(report.path).open();
+    final handle = await File(path).open();
     try {
-      if (await handle.length() > reportLimit) {
+      if (await handle.length() > limit) {
         throw const ProjectFailure(
-          'Test report exceeds 4 MiB. Run a smaller selection.',
+          'File exceeds its supported size. Narrow the selection.',
         );
       }
-      final bytes = await handle.read(reportLimit + 1);
-      if (bytes.length > reportLimit) {
+      final bytes = await handle.read(limit + 1);
+      if (bytes.length > limit) {
         throw const ProjectFailure('Test report grew beyond 4 MiB.');
       }
-      return NativeTestResults.parse(
-        utf8.decode(bytes),
-        project,
-        python: report.python,
-      );
+      return utf8.decode(bytes);
     } finally {
       await handle.close();
     }
@@ -178,15 +217,21 @@ final class LocalTaskFiles implements TaskFiles {
   Future<void> discardReport(TaskReport report) async {
     if (!_reports.contains(report)) return;
     await _validateReport(report);
-    final type = await FileSystemEntity.type(report.path, followLinks: false);
-    if (type == FileSystemEntityType.file) {
-      await File(report.path).delete();
-    } else if (type != FileSystemEntityType.notFound) {
-      throw const ProjectFailure(
-        'Unexpected test report type; temporary files were retained.',
-      );
+    for (final path in [
+      report.path,
+      ?report.coveragePath,
+      ...report.auxiliaryPaths,
+    ]) {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.file) {
+        await File(path).delete();
+      } else if (type != FileSystemEntityType.notFound) {
+        throw const ProjectFailure(
+          'Unexpected test report type; temporary files were retained.',
+        );
+      }
     }
-    // Only the one owned report is removed. Unexpected files are retained.
+    // Remove only known native outputs. Unexpected content is retained.
     await Directory(report.directory).delete();
     _reports.remove(report);
   }

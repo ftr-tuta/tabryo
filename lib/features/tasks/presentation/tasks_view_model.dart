@@ -65,6 +65,8 @@ final class TasksViewModel extends DartitectViewModel {
     String filter = '',
     String buildTarget = '',
     List<String> arguments = const [],
+    bool coverage = false,
+    TaskConfiguration? configuration,
   }) async {
     if (_closed || _prepared.length + _preparing >= 4) {
       throw const ProjectFailure('Close the previous task review first.');
@@ -72,9 +74,21 @@ final class TasksViewModel extends DartitectViewModel {
     _preparing++;
     TaskReport? report;
     try {
+      if (coverage && kind != ProjectTaskKind.test) {
+        throw const ProjectFailure('Coverage applies only to tests.');
+      }
+      if (configuration != null &&
+          (await files.readConfiguration(project)).source !=
+              configuration.source) {
+        throw const ProjectFailure(
+          'Shared task configuration changed. Load and review it again.',
+        );
+      }
       if (kind == ProjectTaskKind.test) {
         report = await files.createReport(
           python: project.kind == ProjectKind.python,
+          coverage: coverage,
+          dartCoverage: project.kind == ProjectKind.dart,
         );
       }
       if (_closed) throw const ProjectFailure('The task panel closed.');
@@ -89,6 +103,7 @@ final class TasksViewModel extends DartitectViewModel {
         buildTarget: buildTarget,
         arguments: arguments,
         report: report,
+        configuration: configuration,
       );
       _prepared.add(task);
       return task;
@@ -101,6 +116,17 @@ final class TasksViewModel extends DartitectViewModel {
   }
 
   bool isPrepared(ProjectTask task) => !_closed && _prepared.contains(task);
+
+  Future<void> validateConfiguration(ProjectTask task) async {
+    if (task.configuration case final config?) {
+      if ((await files.readConfiguration(task.project)).source !=
+          config.source) {
+        throw const ProjectFailure(
+          'Shared task configuration changed after review. Load and review again.',
+        );
+      }
+    }
+  }
 
   void started(ProjectTask task, int sessionId) {
     _prepared.remove(task);
@@ -145,6 +171,14 @@ final class TasksViewModel extends DartitectViewModel {
         if (!task.stopRequested) status = TaskStatus.failed;
         task.error = '$error';
       } finally {
+        if (report.coveragePath != null && !task.stopRequested) {
+          try {
+            task.coverage = await files.readCoverage(report, task.project);
+          } catch (error) {
+            task.coverageError = 'Coverage unavailable: $error';
+            status = TaskStatus.failed;
+          }
+        }
         try {
           await files.discardReport(report);
         } catch (error) {

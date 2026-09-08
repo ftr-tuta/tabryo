@@ -11,6 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../editor/presentation/editor_pane.dart';
+import '../../files/domain/workspace_files.dart';
+import '../../files/presentation/workspace_search_panel.dart';
 import '../../editor/presentation/monaco_editor.dart';
 import '../../collaboration/presentation/collaboration_screen.dart';
 import '../../mcp_studio/presentation/mcp_studio_screen.dart';
@@ -90,6 +92,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('Next pane', 'Ctrl+Shift+J', model.cyclePane),
     ('Refresh', 'F5', model.refresh),
     ('Files', '', () => model.selectSidebar(SidebarPage.files)),
+    ('Search workspace', '', _openSearch),
     ('Changes', '', () => model.selectSidebar(SidebarPage.changes)),
     ('History', '', () => model.selectSidebar(SidebarPage.history)),
     ('Worktrees', '', () => model.selectSidebar(SidebarPage.worktrees)),
@@ -101,6 +104,20 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('Projects and toolchains', '', _openProjects),
     ('Recover documents', '', dialogs.recoverDocuments),
   ];
+
+  Future<void> _openSearch() async {
+    final root = model.workspace?.root;
+    if (root == null) return;
+    final match = await showDialog<WorkspaceMatch>(
+      context: context,
+      builder: (_) => WorkspaceSearchPanel(
+        root: root,
+        search: (query, cancellation) =>
+            model.files.search(root, query, cancellation),
+      ),
+    );
+    if (match != null && mounted) await model.openSearchResult(root, match);
+  }
 
   Future<void> _openMcpHub() async {
     final hub = model.mcpHub;
@@ -141,6 +158,12 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                   projects: projects.discovery.projects,
                   selection: selection,
                   onRun: model.runTask,
+                  onOpenConfiguration: () async {
+                    await model.openFile(
+                      p.join(project.directory, '.tabryo', 'project.json'),
+                    );
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  },
                   onStop: model.stopTask,
                   onTerminal: (task) {
                     model.showTaskTerminal(task);
@@ -854,6 +877,11 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
+            IconButton(
+              tooltip: 'Search workspace',
+              onPressed: model.workspace == null ? null : _openSearch,
+              icon: const Icon(Icons.search, size: 21),
+            ),
             for (final (page, icon, label) in [
               (SidebarPage.files, Icons.folder_outlined, 'Files'),
               (SidebarPage.changes, Icons.difference_outlined, 'Changes'),

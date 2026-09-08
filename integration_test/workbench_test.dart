@@ -17,6 +17,8 @@ import 'package:tabryo/features/mcp_studio/application/mcp_studio.dart';
 import 'package:tabryo/features/mcp_studio/infrastructure/local_studio_storage.dart';
 import 'package:tabryo/features/mcp_studio/presentation/mcp_studio_view_model.dart';
 import 'package:tabryo/features/files/infrastructure/local_workspace_files.dart';
+import 'package:tabryo/features/files/domain/workspace_files.dart';
+import 'package:tabryo/core/cancellation.dart';
 import 'package:tabryo/features/git/infrastructure/local_git.dart';
 import 'package:tabryo/features/preferences/infrastructure/local_preferences.dart';
 import 'package:tabryo/features/projects/infrastructure/local_project_environment.dart';
@@ -147,8 +149,11 @@ void main() {
       final testFile = File(p.join(root, 'test', 'example_test.dart'));
       await testFile.parent.create();
       await testFile.writeAsString(
-        "import 'package:flutter_test/flutter_test.dart';\nvoid main() { test('ação passes', () { expect(1, 1); }); test('failure is visible', () { expect(1, 2); }); }\n",
+        "import 'package:flutter_test/flutter_test.dart';\nimport 'package:native_tests/example.dart';\nvoid main() { test('ação passes', () { expect(answer(), 42); }); test('failure is visible', () { expect(1, 2); }); }\n",
       );
+      final sourceFile = File(p.join(root, 'lib', 'example.dart'));
+      await sourceFile.parent.create();
+      await sourceFile.writeAsString('int answer() => 42;\n');
       final environment = LocalProjectEnvironment();
       final project = DevelopmentProject(
         workspace: root,
@@ -228,6 +233,7 @@ void main() {
       await until(tester, () => !tasks.scanning);
       expect(tasks.discoveries[project.id]!.paths, [testFile.path]);
       expect(host.starts, 0);
+      await tester.ensureVisible(find.text('Review task'));
       await tester.tap(find.text('Review task'));
       await until(
         tester,
@@ -260,6 +266,7 @@ void main() {
         ProjectTaskKind.test,
         target: testFile.path,
         filter: 'ação passes',
+        coverage: true,
       );
       await model.runTask(selected);
       await until(
@@ -275,8 +282,28 @@ void main() {
             '${selected.error}\n${terminalText(model.sessions[selected.sessionId]!)}',
       );
       expect(selected.results!.cases.single.name, 'ação passes');
+      expect(selected.coverageError, isNull);
+      expect(selected.coverage!.files.single.path, sourceFile.path);
+      expect(selected.coverage!.covered, greaterThan(0));
       await model.openTestResult(selected, selected.results!.cases.single);
       expect(editor.active!.path, testFile.path);
+      final matches = await model.files.search(
+        root,
+        const WorkspaceSearchQuery('answer()'),
+        Cancellation(),
+      );
+      final match = matches.matches.firstWhere(
+        (m) => m.path == sourceFile.path,
+      );
+      await model.openSearchResult(root, match);
+      expect(editor.active!.path, sourceFile.path);
+      expect(editor.active!.controller.selection.start, 4);
+      editor.active!.controller.text =
+          '// local unsaved edit\nint answer() => 43;\n';
+      await model.openSearchResult(root, match);
+      expect(model.message, contains('changed since the search'));
+      expect(editor.active!.controller.text, contains('local unsaved edit'));
+      await editor.save(editor.active!);
       expect(await Directory(selected.report!.directory).exists(), isFalse);
       final dartProject = DevelopmentProject(
         workspace: root,

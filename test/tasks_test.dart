@@ -11,9 +11,11 @@ import 'package:tabryo/features/projects/domain/project.dart';
 import 'package:tabryo/features/projects/infrastructure/local_project_environment.dart';
 import 'package:tabryo/features/projects/presentation/projects_view_model.dart';
 import 'package:tabryo/features/tasks/application/project_tasks.dart';
+import 'package:tabryo/features/tasks/application/shared_tasks.dart';
 import 'package:tabryo/features/tasks/domain/project_task.dart';
 import 'package:tabryo/features/tasks/infrastructure/local_task_files.dart';
 import 'package:tabryo/features/tasks/infrastructure/native_test_results.dart';
+import 'package:tabryo/features/tasks/infrastructure/native_coverage.dart';
 import 'package:tabryo/features/tasks/presentation/tasks_panel.dart';
 import 'package:tabryo/features/tasks/presentation/tasks_view_model.dart';
 import 'package:tabryo/features/workspaces/presentation/workbench_view_model.dart';
@@ -25,10 +27,29 @@ import 'workbench_test.dart'
 
 final class MemoryTaskFiles implements TaskFiles {
   int discarded = 0;
+  int configurationReads = 0;
+  TaskConfiguration configuration = const TaskConfiguration('', []);
   Completer<void>? validation;
   Completer<TestResults>? reading;
   @override
-  Future<TaskReport> createReport({required bool python}) async => TaskReport(
+  Future<TaskConfiguration> readConfiguration(
+    DevelopmentProject project,
+  ) async {
+    configurationReads++;
+    return configuration;
+  }
+
+  @override
+  Future<CoverageResults> readCoverage(
+    TaskReport report,
+    DevelopmentProject project,
+  ) async => const CoverageResults([]);
+  @override
+  Future<TaskReport> createReport({
+    required bool python,
+    bool coverage = false,
+    bool dartCoverage = false,
+  }) async => TaskReport(
     Directory.systemTemp.path,
     p.join(Directory.systemTemp.path, 'results.xml'),
     python,
@@ -179,6 +200,183 @@ void main() {
       ).complete,
       isFalse,
     );
+  });
+
+  test(
+    'shared tasks validate portable paths names fields and bounded arguments',
+    () {
+      final source = jsonEncode({
+        'version': 1,
+        'tasks': [
+          {
+            'name': 'Selective tests',
+            'kind': 'test',
+            'target': 'test/test_ação.py',
+            'filter': 'happy',
+            'coverage': true,
+          },
+          {
+            'name': 'Script',
+            'kind': 'run',
+            'target': 'main.py',
+            'arguments': ['a & b', r'$HOME'],
+          },
+        ],
+      });
+      final parsed = SharedTasks.parse(source);
+      expect(parsed.source, source);
+      expect(parsed.tasks.first.coverage, isTrue);
+      expect(parsed.tasks.last.arguments, ['a & b', r'$HOME']);
+      for (final task in [
+        {'name': 'x', 'kind': 'test', 'target': '../outside.py'},
+        {'name': 'x', 'kind': 'test', 'target': r'C:\outside.py'},
+        {'name': 'x', 'kind': 'test', 'target': '/outside.py'},
+        {'name': 'x', 'kind': 'run', 'coverage': true},
+        {'name': 'x', 'kind': 'test', 'command': 'whoami'},
+        {
+          'name': 'x',
+          'kind': 'run',
+          'environment': {'TOKEN': 'secret'},
+        },
+        {
+          'name': 'x',
+          'kind': 'test',
+          'arguments': ['--junitxml=escape'],
+        },
+      ]) {
+        expect(
+          () => SharedTasks.parse(
+            jsonEncode({
+              'version': 1,
+              'tasks': [task],
+            }),
+          ),
+          throwsFormatException,
+        );
+      }
+      expect(
+        () => SharedTasks.parse(
+          jsonEncode({
+            'version': 1,
+            'tasks': [
+              {'name': 'duplicate', 'kind': 'test'},
+              {'name': 'duplicate', 'kind': 'test'},
+            ],
+          }),
+        ),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'shared configuration changed after review prevents execution',
+    () async {
+      final file = File(p.join(root, '.tabryo', 'project.json'));
+      await file.parent.create();
+      await file.writeAsString(SharedTasks.example(project));
+      final taskFiles = LocalTaskFiles();
+      final tasks = TasksViewModel(taskFiles, windows: Platform.isWindows);
+      final tools = ToolchainSelection({
+        ProjectTool.python: Platform.resolvedExecutable,
+      });
+      final projects = ProjectsViewModel(LocalProjectEnvironment())
+        ..selections[project.id] = tools;
+      final host = MemoryHost(), git = NoGit();
+      final model = WorkbenchViewModel(
+        host: host,
+        launcher: MemoryLauncher(),
+        files: MemoryFiles(),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: MemoryPreferences(),
+        projects: projects,
+        tasks: tasks,
+      );
+      addTearDown(model.disposeAsync);
+      await model.openWorkspace(root);
+      final config = await taskFiles.readConfiguration(project);
+      final task = await tasks.prepare(
+        project,
+        tools,
+        ProjectTaskKind.analyze,
+        configuration: config,
+      );
+      await file.writeAsString('${config.source}\n');
+      await expectLater(model.runTask(task), throwsA(isA<ProjectFailure>()));
+      expect(host.specs, isEmpty);
+      await tasks.discard(task);
+      await expectLater(
+        tasks.prepare(
+          project,
+          tools,
+          ProjectTaskKind.test,
+          configuration: config,
+        ),
+        throwsA(isA<ProjectFailure>()),
+      );
+      final fresh = await taskFiles.readConfiguration(project);
+      final allowed = await tasks.prepare(
+        project,
+        tools,
+        ProjectTaskKind.analyze,
+        configuration: fresh,
+      );
+      await model.runTask(allowed);
+      expect(host.specs, hasLength(1));
+      await model.stopTask(allowed);
+    },
+  );
+
+  test('coverage merges native line hits and rejects inconsistent incomplete or escaping reports', () {
+    final report = NativeCoverage.parse(
+      'SF:lib/example.dart\nDA:1,2\nDA:2,0\nLF:2\nLH:1\nend_of_record\n'
+      'SF:lib/example.dart\nDA:2,3\nend_of_record\n'
+      'SF:../outside.dart\nDA:1,1\nend_of_record\n',
+      project,
+    );
+    expect(report.total, 2);
+    expect(report.covered, 2);
+    expect(report.excludedFiles, 1);
+    expect(report.files.single.lines, {1: 2, 2: 3});
+    for (final source in [
+      '',
+      'SF:lib/a.dart\nDA:1,1\n',
+      'SF:lib/a.dart\nDA:1,1\nLF:2\nend_of_record\n',
+      'SF:lib/a.dart\nDA:1,-1\nend_of_record\n',
+      'SF:lib/a.dart\nDA:1,0\nDA:1,1\nend_of_record\n',
+    ]) {
+      expect(
+        () => NativeCoverage.parse(source, project),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('requested coverage failure is visible and removes only owned native outputs', () async {
+    final files = LocalTaskFiles();
+    final tasks = TasksViewModel(files, windows: Platform.isWindows);
+    addTearDown(tasks.disposeAsync);
+    final tools = ToolchainSelection({
+      ProjectTool.python: Platform.resolvedExecutable,
+    });
+    final task = await tasks.prepare(
+      project,
+      tools,
+      ProjectTaskKind.test,
+      coverage: true,
+    );
+    await File(
+      task.report!.path,
+    ).writeAsString('<testsuite tests="1"><testcase name="pass"/></testsuite>');
+    await File(task.report!.auxiliaryPaths.single)
+        .writeAsString('native coverage data');
+    tasks.started(task, 1);
+    await tasks.finished(task, 0);
+    expect(task.results!.cases.single.outcome, TestOutcome.passed);
+    expect(task.status, TaskStatus.failed);
+    expect(task.coverageError, contains('Coverage unavailable'));
+    expect(await Directory(task.report!.directory).exists(), isFalse);
   });
 
   test(
@@ -484,6 +682,7 @@ void main() {
           ),
         ),
       );
+      await tester.ensureVisible(find.text('Review task'));
       await tester.tap(find.text('Review task'));
       await tester.runAsync(() async {
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -499,6 +698,82 @@ void main() {
       expect(starts, 0);
       expect(tasks.runs, isEmpty);
       expect(files.discarded, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tasks.disposeAsync();
+    },
+  );
+
+  testWidgets(
+    'shared task loading is explicit and coverage rows navigate to source',
+    (tester) async {
+      final files = MemoryTaskFiles()
+        ..configuration = SharedTasks.parse(
+          '{"version":1,"tasks":[{"name":"Team tests","kind":"test"}]}',
+        );
+      final tasks = TasksViewModel(files, windows: Platform.isWindows);
+      final tools = ToolchainSelection({
+        ProjectTool.python: Platform.resolvedExecutable,
+      });
+      var starts = 0;
+      TestCaseResult? opened;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TasksPanel(
+                model: tasks,
+                project: project,
+                projects: [project],
+                selection: tools,
+                onRun: (_) async {
+                  starts++;
+                },
+                onStop: (_) async {},
+                onTerminal: (_) {},
+                onOpen: (_, result) async {
+                  opened = result;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(files.configurationReads, 0);
+      expect(starts, 0);
+      await tester.ensureVisible(
+        find.text('Shared tasks · .tabryo/project.json'),
+      );
+      await tester.tap(find.text('Shared tasks · .tabryo/project.json'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Load shared tasks'));
+      await tester.tap(find.text('Load shared tasks'));
+      await tester.pumpAndSettle();
+      expect(find.text('Team tests'), findsOneWidget);
+      expect(starts, 0);
+      await tester.ensureVisible(find.text('Review shared task'));
+      await tester.tap(find.text('Review shared task'));
+      await tester.pumpAndSettle();
+      expect(find.text('Review project task'), findsOneWidget);
+      expect(starts, 0);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      final task = await tasks.prepare(project, tools, ProjectTaskKind.analyze);
+      task.coverage = CoverageResults([
+        CoverageFileResult(p.join(root, 'example.py'), {2: 1, 3: 0}),
+      ]);
+      tasks.started(task, 1);
+      await tasks.finished(task, 0);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.textContaining('Line coverage: 1/2'));
+      expect(find.textContaining('50.0%'), findsOneWidget);
+      await tester.ensureVisible(find.text('example.py'));
+      await tester.tap(find.text('example.py'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Line 3 · 0 hits'));
+      await tester.pumpAndSettle();
+      expect(opened!.line, 3);
+      expect(opened!.path, p.join(root, 'example.py'));
+      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tasks.disposeAsync();
     },
@@ -553,15 +828,91 @@ void main() {
       ProjectTaskKind.test,
       target: p.join(root, 'test_example.py'),
       filter: 'test_pass',
+      coverage: true,
     );
     final passed = await Process.run(
       selected.command.spec.executable,
       selected.command.spec.arguments,
       workingDirectory: root,
+      environment: selected.command.spec.environment,
     );
     model.started(selected, 2);
     await model.finished(selected, passed.exitCode);
     expect(selected.status, TaskStatus.passed);
     expect(selected.results!.cases.single.name, 'test_pass');
+    expect(selected.coverage!.total, greaterThan(0));
+    expect(selected.coverage!.covered, greaterThan(0));
+    expect(await File(p.join(root, '.coverage')).exists(), isFalse);
+    expect(await Directory(selected.report!.directory).exists(), isFalse);
   }, skip: Platform.environment['TABRYO_TEST_TASKS'] != '1');
+
+  test(
+    'installed Dart coverage runs selective native tests and produces navigable line hits',
+    () async {
+      final tools = await installedProjectTools(root);
+      await File(p.join(root, 'pubspec.yaml')).writeAsString(
+        'name: coverage_example\nenvironment:\n  sdk: ^3.13.2\ndev_dependencies:\n  test: ^1.25.0\n  coverage: 1.15.1\n',
+      );
+      final source = File(p.join(root, 'lib', 'example.dart'));
+      await source.parent.create();
+      await source.writeAsString('int answer() => 42;\n');
+      final file = File(p.join(root, 'test', 'example_test.dart'));
+      await file.parent.create();
+      await file.writeAsString(
+        "import 'package:test/test.dart';\nimport 'package:coverage_example/example.dart';\nvoid main() { test('selected', () => expect(answer(), 42)); test('not selected', () => fail('should not run')); }\n",
+      );
+      final setup = await Process.run(tools[ProjectTool.dart]!, [
+        'pub',
+        'get',
+      ], workingDirectory: root).timeout(const Duration(seconds: 60));
+      expect(setup.exitCode, 0, reason: '${setup.stdout}\n${setup.stderr}');
+      final dartProject = DevelopmentProject(
+        workspace: root,
+        directory: root,
+        name: 'coverage_example',
+        kind: ProjectKind.dart,
+      );
+      final model = TasksViewModel(
+        LocalTaskFiles(),
+        windows: Platform.isWindows,
+      );
+      addTearDown(model.disposeAsync);
+      final task = await model.prepare(
+        dartProject,
+        tools,
+        ProjectTaskKind.test,
+        target: file.path,
+        filter: 'selected',
+        coverage: true,
+      );
+      // The filter is literal substring matching; give the unwanted case a distinct name.
+      await file.writeAsString(
+        (await file.readAsString()).replaceFirst(
+          "'not selected'",
+          "'unwanted'",
+        ),
+      );
+      final spec = task.command.spec;
+      final result = await Process.run(
+        spec.executable,
+        spec.arguments,
+        workingDirectory: root,
+        environment: spec.environment,
+      ).timeout(const Duration(seconds: 60));
+      model.started(task, 1);
+      await model.finished(task, result.exitCode);
+      expect(
+        task.status,
+        TaskStatus.passed,
+        reason:
+            '${task.error}\n${task.coverageError}\n${result.stdout}\n${result.stderr}',
+      );
+      expect(task.results!.cases.single.name, 'selected');
+      expect(task.coverage!.files.single.path, source.path);
+      expect(task.coverage!.covered, greaterThan(0));
+      expect(await Directory(task.report!.directory).exists(), isFalse);
+    },
+    skip: Platform.environment['TABRYO_TEST_TASKS'] != '1',
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
 }

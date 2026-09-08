@@ -427,12 +427,65 @@ is retained with its location. Reports are limited to 4 MiB and 2,000 test entri
 with 16 KiB of failure details per case. Missing, malformed or incomplete reports
 cannot turn a test run green. Up to 20 task runs remain in memory for this session.
 Results describe the files at execution time and are not refreshed after edits.
-Shared task configuration, coverage UI and workspace text search remain pending.
+**Collect line coverage** adds the native runner's coverage options to the
+reviewed test command. Flutter emits LCOV directly; Dart uses the official
+`coverage:test_with_coverage` runner (install `coverage` as a project development
+dependency); Python uses `pytest-cov` in the selected environment. These tools
+are not installed automatically. The panel shows covered/total executable lines
+and per-file hit counts, including uncovered lines, with source navigation.
+Counts describe that run's saved sources; later edits can make locations stale.
+Missing or invalid requested coverage leaves test results visible and marks the
+task failed with a separate coverage error. Cancellation discards partial
+coverage. Only sources inside the project appear. Reports are bounded to 4 MiB,
+2,000 records and 100,000 line entries. Known native coverage outputs are removed
+with the temporary test report; unexpected files are retained.
 
-Native tests exercise Black **26.5.1** and pytest **9.0.2** with
+Expand **Shared tasks** and choose **Load shared tasks** to read optional
+`.tabryo/project.json` inside the selected project. No task runs on loading.
+**Review shared task** uses the same selected toolchain, command review,
+document checks, process ownership and cancellation as the manual form.
+Changes to the configuration after loading or review require loading it again.
+Use **Open configuration** to edit an existing file with protected saves.
+Create the optional file yourself; **Show example** provides its initial JSON:
+
+```json
+{
+  "version": 1,
+  "tasks": [
+    {"name": "Analyze", "kind": "analyze"},
+    {"name": "Tests", "kind": "test", "coverage": true}
+  ]
+}
+```
+
+Tasks accept `name`, `kind` (`analyze`, `test`, `run`, `build`), optional `target`,
+`filter`, `buildTarget`, `arguments` and `coverage`. Targets use project-relative
+paths with forward slashes. Application arguments are a JSON string list for
+Run; coverage applies to Test. Existing language-specific command restrictions
+still apply. The file is limited to 64 KiB and 32 uniquely named tasks. Unknown
+fields, traversal and absolute targets are refused. Executable paths remain in
+local toolchain selections; keep secrets and machine-specific values out of this
+shared file. Generic shell commands and environment overrides are not part of
+this task format.
+
+Choose **Search workspace** from the sidebar or command palette for literal,
+single-line text search in saved UTF-8 files. Case sensitivity, a file-path
+substring and comma-separated excluded directory names narrow the search.
+Known dependency/build directories and links are skipped; Git ignore rules are
+not applied. Unsaved buffers are not searched. Results show file, line, UTF-16
+column and a bounded text preview. Opening a changed result preserves the buffer
+and asks for a fresh search when its location no longer matches.
+Search starts only on request, can be cancelled or replaced, and discards stale
+responses. Limits are 500 matches, six directory levels, 512 directories,
+12,000 entries, 512 KiB per file and 32 MiB read per search. Reached limits and
+skipped unreadable/binary/oversized files are visible.
+
+Native tests exercise Black **26.5.1**, pytest **9.0.2**, pytest-cov **7.1.0**
+and Dart coverage **1.15.1** with
 `TABRYO_TEST_TASKS=1`; optional `TABRYO_TEST_BLACK` and `TABRYO_TEST_PYTHON`
 override tool discovery. The desktop workbench test also runs real Flutter tests
-through an owned terminal and checks source navigation and task cancellation.
+through an owned terminal and checks coverage, source navigation, stale search
+results and task cancellation.
 
 ## Build and test
 

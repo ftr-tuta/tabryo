@@ -448,8 +448,13 @@ análise, scripts Dart/Python, builds Dart/Flutter e testes seletivos com result
 JSON/JUnit dos runners nativos. O terminal é proprietário dos processos; tarefas,
 setup e Studio recusam execução sobreposta no mesmo projeto. Cancelamento,
 falhas, relatórios incompletos e navegação de resultados permanecem explícitos.
-Busca global, configuração compartilhável de tarefas e interface de cobertura
-continuam abertas. DAP, execução Flutter,
+Busca global literal em arquivos salvos oferece filtros, exclusões, cancelamento,
+limites explícitos e navegação que preserva buffers alterados. Tarefas opcionais
+em `.tabryo/project.json` usam revisão, SDKs locais e conferência da configuração
+antes da execução. Cobertura de linhas usa LCOV dos runners Flutter,
+`coverage:test_with_coverage` e pytest-cov, com totais, hits e navegação por arquivo;
+relatórios ausentes/inválidos não produzem sucesso. Os testes nativos existentes
+cobrem esses contratos, sem infraestrutura de evidência paralela. DAP, execução Flutter,
 DevTools, perfis Django/FastAPI e contexto IDE/Codex continuam pendentes no mesmo PR;
 esta entrega não conclui a matriz Python/Dart/Flutter nem os aceites IME/DPI.
 
