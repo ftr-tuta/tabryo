@@ -28,6 +28,12 @@ final class DebugService {
   DebugConfiguration? configuration;
   DebugStatus status = DebugStatus.idle;
   String? error;
+  bool _pauseFailure = false;
+  void _clearPauseFailure() {
+    if (_pauseFailure) error = null;
+    _pauseFailure = false;
+  }
+
   String output = '';
   int? threadId;
   int? frameId;
@@ -98,6 +104,7 @@ final class DebugService {
     configuration = config;
     status = DebugStatus.starting;
     error = null;
+    _pauseFailure = false;
     output = '';
     exitCode = null;
     vmService = null;
@@ -207,6 +214,7 @@ final class DebugService {
           }
         }
       case 'stopped':
+        _clearPauseFailure();
         status = DebugStatus.paused;
         stopCount++;
         frames = [];
@@ -215,6 +223,7 @@ final class DebugService {
         threadId = body['threadId'] is int ? body['threadId'] as int : null;
         unawaited(_loadPause(generation));
       case 'continued':
+        _clearPauseFailure();
         status = DebugStatus.running;
         _pauseGeneration++;
         frames = [];
@@ -222,6 +231,8 @@ final class DebugService {
         variables = [];
         frameId = null;
       case 'exited':
+        _pauseGeneration++;
+        _clearPauseFailure();
         exitCode = body['exitCode'] is int ? body['exitCode'] as int : null;
       case 'breakpoint':
         final breakpoint = body['breakpoint'];
@@ -239,6 +250,7 @@ final class DebugService {
           }
         }
       case 'terminated':
+        _clearPauseFailure();
         status = DebugStatus.terminated;
         _pauseGeneration++;
         vmService = null;
@@ -294,8 +306,12 @@ final class DebugService {
       if (frames.isNotEmpty) await selectFrame(frames.first['id'] as int);
       _changed();
     } catch (failure) {
-      if (generation == _generation && pause == _pauseGeneration) {
+      if (generation == _generation &&
+          pause == _pauseGeneration &&
+          status == DebugStatus.paused &&
+          exitCode == null) {
         error = '$failure';
+        _pauseFailure = true;
         _changed();
       }
     }

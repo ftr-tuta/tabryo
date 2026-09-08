@@ -42,6 +42,11 @@ void main() {
         0,
         reason: '${created.stdout}\n${created.stderr}',
       );
+      // The exercised app only imports Flutter; unrelated template packages
+      // must not turn an offline debugger check into a network dependency.
+      await File(p.join(root, 'pubspec.yaml')).writeAsString(
+        'name: debug_app\nenvironment:\n  sdk: ^3.13.2\ndependencies:\n  flutter:\n    sdk: flutter\nflutter:\n  uses-material-design: true\n',
+      );
       final source = File(p.join(root, 'lib', 'main.dart'));
       String code(String message) =>
           "import 'package:flutter/material.dart';\n"
@@ -232,6 +237,26 @@ void main() {
       expect(adapters.connection.closed, isTrue);
       expect(adapters.connection.commands, isEmpty);
       expect(service.active, isFalse);
+    },
+  );
+
+  test(
+    'normal exit retires an inspection failure from the preceding pause',
+    () async {
+      final adapters = MemoryAdapters();
+      adapters.connection.stackError = const DebugFailure(
+        'getStack: Service connection disposed',
+      );
+      final service = DebugService(adapters);
+      addTearDown(service.dispose);
+      await service.start(memoryConfiguration());
+      adapters.connection.emit('stopped', {'threadId': 7});
+      await _until(() => service.error != null);
+      adapters.connection.emit('exited', {'exitCode': 0});
+      adapters.connection.emit('terminated');
+      await _until(() => !service.active);
+      expect(service.error, isNull);
+      expect(service.exitCode, 0);
     },
   );
 
@@ -543,6 +568,7 @@ final class MemoryAdapters implements DebugAdapters {
 }
 
 final class MemoryDebugConnection implements DebugConnection {
+  Object? stackError;
   final controller = StreamController<Map<String, dynamic>>.broadcast();
   final variables = Completer<Map<String, dynamic>>();
   final commands = <String>[];
@@ -557,6 +583,7 @@ final class MemoryDebugConnection implements DebugConnection {
     Map<String, Object?> arguments = const {},
   ]) async {
     commands.add(command);
+    if (command == 'stackTrace' && stackError != null) throw stackError!;
     if (command == 'initialize') {
       return {'supportsConfigurationDoneRequest': true};
     }
