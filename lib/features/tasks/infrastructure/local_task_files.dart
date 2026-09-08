@@ -139,10 +139,10 @@ final class LocalTaskFiles implements TaskFiles {
       p.join(canonical, python ? 'results.xml' : 'results.jsonl'),
       python,
       coveragePath: coverage ? p.join(canonical, 'lcov.info') : null,
-      auxiliaryPaths: [
+      auxiliaryPaths: List.unmodifiable([
         if (coverage && python) p.join(canonical, '.coverage'),
         if (coverage && dartCoverage) p.join(canonical, 'coverage.json'),
-      ],
+      ]),
     );
     _reports.add(report);
     return report;

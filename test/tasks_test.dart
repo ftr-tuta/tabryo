@@ -31,6 +31,7 @@ final class MemoryTaskFiles implements TaskFiles {
   TaskConfiguration configuration = const TaskConfiguration('', []);
   Completer<void>? validation;
   Completer<TestResults>? reading;
+  Completer<CoverageResults>? coverageReading;
   @override
   Future<TaskConfiguration> readConfiguration(
     DevelopmentProject project,
@@ -43,7 +44,7 @@ final class MemoryTaskFiles implements TaskFiles {
   Future<CoverageResults> readCoverage(
     TaskReport report,
     DevelopmentProject project,
-  ) async => const CoverageResults([]);
+  ) async => await coverageReading?.future ?? const CoverageResults([]);
   @override
   Future<TaskReport> createReport({
     required bool python,
@@ -53,6 +54,9 @@ final class MemoryTaskFiles implements TaskFiles {
     Directory.systemTemp.path,
     p.join(Directory.systemTemp.path, 'results.xml'),
     python,
+    coveragePath: coverage
+        ? p.join(Directory.systemTemp.path, 'lcov.info')
+        : null,
   );
   @override
   Future<void> discardReport(TaskReport report) async {
@@ -623,6 +627,34 @@ void main() {
       expect(files.discarded, 1);
     },
   );
+
+  test('cancelling while coverage is read discards late coverage and keeps cancellation', () async {
+    final files = MemoryTaskFiles()
+      ..coverageReading = Completer<CoverageResults>();
+    final model = TasksViewModel(files, windows: Platform.isWindows);
+    addTearDown(model.disposeAsync);
+    final task = await model.prepare(
+      project,
+      ToolchainSelection({ProjectTool.python: Platform.resolvedExecutable}),
+      ProjectTaskKind.test,
+      coverage: true,
+    );
+    model.started(task, 1);
+    final finishing = model.finished(task, 0);
+    await Future<void>.delayed(Duration.zero);
+    expect(task.status, TaskStatus.running);
+    model.stopping(task);
+    files.coverageReading!.complete(
+      CoverageResults([
+        CoverageFileResult(p.join(root, 'example.py'), {1: 1}),
+      ]),
+    );
+    await finishing;
+    expect(task.status, TaskStatus.cancelled);
+    expect(task.coverage, isNull);
+    expect(task.coverageError, isNull);
+    expect(files.discarded, 1);
+  });
 
   test('closing during task preparation discards in-flight reports and caps concurrent reviews', () async {
     final files = MemoryTaskFiles()..validation = Completer<void>();

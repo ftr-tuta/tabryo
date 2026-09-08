@@ -173,10 +173,13 @@ final class TasksViewModel extends DartitectViewModel {
       } finally {
         if (report.coveragePath != null && !task.stopRequested) {
           try {
-            task.coverage = await files.readCoverage(report, task.project);
+            final coverage = await files.readCoverage(report, task.project);
+            if (!task.stopRequested) task.coverage = coverage;
           } catch (error) {
-            task.coverageError = 'Coverage unavailable: $error';
-            status = TaskStatus.failed;
+            if (!task.stopRequested) {
+              task.coverageError = 'Coverage unavailable: $error';
+              status = TaskStatus.failed;
+            }
           }
         }
         try {
@@ -188,6 +191,7 @@ final class TasksViewModel extends DartitectViewModel {
       }
     }
     task.status = task.stopRequested ? TaskStatus.cancelled : status;
+    if (task.stopRequested) task.coverage = null;
     if (!_closed) notifyListeners();
   }
 
