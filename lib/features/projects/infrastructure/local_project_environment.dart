@@ -68,6 +68,14 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
     final projects = <DevelopmentProject>[];
     final warnings = <String>[];
     var limited = false;
+    void addProject(DevelopmentProject project) {
+      if (projects.length == 64) {
+        limited = true;
+      } else {
+        projects.add(project);
+      }
+    }
+
     var entries = 0;
     var visited = 0;
     while (queue.isNotEmpty) {
@@ -98,7 +106,7 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
               (devDependencies is Map &&
                   devDependencies.containsKey('flutter_test')) ||
               yaml.containsKey('flutter');
-          projects.add(
+          addProject(
             DevelopmentProject(
               workspace: root,
               directory: current.directory,
@@ -113,6 +121,11 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
             ),
           );
         }
+      } catch (error) {
+        warnings.add('${current.directory}: $error');
+      }
+      // A broken Dart manifest must not hide Python in the same directory.
+      try {
         final manifests = <String>[];
         String? pyproject;
         for (final name in [
@@ -155,7 +168,7 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
               '${current.directory}: both uv and Poetry are configured; select the intended manager before setup.',
             );
           }
-          projects.add(
+          addProject(
             DevelopmentProject(
               workspace: root,
               directory: current.directory,
@@ -255,7 +268,8 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
     final fvm = await _text(root, '.fvmrc');
     if (fvm != null) {
       try {
-        final version = (jsonDecode(fvm) as Map)['flutter'];
+        final configuration = jsonDecode(fvm);
+        final version = configuration is Map ? configuration['flutter'] : null;
         final cache = environment['FVM_CACHE_PATH'];
         if (version is String &&
             RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(version) &&

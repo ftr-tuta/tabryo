@@ -396,13 +396,18 @@ void main() {
       'raise RuntimeError("must never execute during discovery")',
     );
     await file('broken/pubspec.yaml', '[broken');
+    await file('broken/requirements.txt', '');
     await file('node_modules/hidden/pubspec.yaml', 'name: ignored');
     await file('.venv/site-packages/pyproject.toml');
     final environment = LocalProjectEnvironment(environment: {});
     final result = await environment.discover(root, Cancellation());
-    expect(result.projects, hasLength(5));
+    expect(result.projects, hasLength(6));
     expect(result.projects.where((v) => v.directory == root), hasLength(2));
-    expect(result.projects.map((v) => v.id).toSet(), hasLength(5));
+    expect(result.projects.map((v) => v.id).toSet(), hasLength(6));
+    expect(
+      result.projects.singleWhere((v) => v.directory.endsWith('broken')).kind,
+      ProjectKind.python,
+    );
     expect(
       result.projects.singleWhere((v) => v.name == 'mobile').kind,
       ProjectKind.flutter,
@@ -432,10 +437,23 @@ void main() {
     );
   });
 
+  test('mixed project pairs cannot exceed the discovery limit', () async {
+    await file('pubspec.yaml', 'name: root_project\n');
+    for (var index = 0; index < 32; index++) {
+      await file('project_$index/pubspec.yaml', 'name: project_$index\n');
+      await file('project_$index/requirements.txt');
+    }
+    final result = await LocalProjectEnvironment(environment: {})
+        .discover(root, Cancellation());
+    expect(result.projects, hasLength(64));
+    expect(result.limited, isTrue);
+  });
+
   test(
     'toolchain hints retain venv identity, FVM and pinned pyenv versions',
     () async {
       await file('pubspec.yaml', 'name: app\nflutter:\n');
+      await file('.fvmrc', '[]');
       final flutter = p.join(root, '.fvm', 'flutter_sdk');
       await executable(
         p.join(
