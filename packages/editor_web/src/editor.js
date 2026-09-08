@@ -25,9 +25,37 @@ const editor = monaco.editor.create(container, {
 });
 
 function emit(packet) {
+  if (!packet) return;
   TabryoEditor.postMessage(JSON.stringify({ token, ...packet }));
 }
+function validText(doc, text) {
+  return text.length <= 512 * 1024 && text.isWellFormed() && !text.includes('\0') &&
+    new TextEncoder().encode(text.replaceAll('\n', doc.newline)).length + (doc.bom ? 3 : 0) <= 512 * 1024;
+}
+function permitsInsert(text) {
+  if (!active) return false;
+  let candidate = active.model.getValue();
+  const ranges = editor.getSelections().map(selection => [
+    active.model.getOffsetAt(selection.getStartPosition()),
+    active.model.getOffsetAt(selection.getEndPosition()),
+  ]).sort((a, b) => b[0] - a[0]);
+  for (const [start, end] of ranges) candidate = candidate.slice(0, start) + text.replaceAll('\r\n', '\n') + candidate.slice(end);
+  return validText(active, candidate);
+}
+function rejectInsert(event, text) {
+  if (!event.cancelable || permitsInsert(text)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  emit({ type: 'rejected', id: active.id });
+}
+container.addEventListener('paste', event => {
+  if (active && event.clipboardData) rejectInsert(event, event.clipboardData.getData('text/plain'));
+}, true);
+container.addEventListener('beforeinput', event => {
+  if (active && event.inputType?.startsWith('insert') && typeof event.data === 'string') rejectInsert(event, event.data);
+}, true);
 function snapshot(doc, extra = {}) {
+  if (doc.repair || !validText(doc, doc.model.getValue())) return null;
   const selection = active === doc ? editor.getSelection() : null;
   return {
     type: 'change', id: doc.id, generation: doc.generation,
@@ -38,16 +66,27 @@ function snapshot(doc, extra = {}) {
   };
 }
 function changed(doc, event) {
-  if (changing) return;
+  if (changing || doc.repair) return;
   const text = doc.model.getValue();
-  if (!text.isWellFormed() || text.includes('\0') ||
-      new TextEncoder().encode(text.replaceAll('\n', doc.newline)).length + (doc.bom ? 3 : 0) > 512 * 1024) {
-    changing = true;
-    try { event.isUndoing ? doc.model.redo() : doc.model.undo(); }
-    finally { changing = false; }
-    emit({ type: 'rejected', id: doc.id });
+  if (!validText(doc, text)) {
+    if (active === doc) editor.updateOptions({ readOnly: true });
+    // Wait until Monaco finishes the input transaction before touching its undo
+    // stack. Never send an invalid intermediate model over the native channel.
+    doc.repair = Promise.resolve().then(async () => {
+      await (event.isUndoing ? doc.model.redo() : doc.model.undo());
+      if (doc.model.getValue() !== doc.acceptedText) {
+        doc.model.pushStackElement();
+        doc.model.pushEditOperations([], [{ range: doc.model.getFullModelRange(), text: doc.acceptedText }], () => null);
+        doc.model.pushStackElement();
+      }
+      doc.repair = null;
+      if (active === doc) editor.updateOptions({ readOnly: doc.readOnly });
+      emit(snapshot(doc));
+      emit({ type: 'rejected', id: doc.id });
+    }).catch(() => emit({ type: 'failed' }));
     return;
   }
+  doc.acceptedText = text;
   emit(snapshot(doc));
 }
 function closeDiff() {
@@ -86,11 +125,12 @@ window.tabryoReceive = (packet) => {
           let doc = documents.get(input.id);
           if (!doc) {
             const model = monaco.editor.createModel(input.text, input.language, monaco.Uri.parse(input.uri));
-            doc = { id: input.id, model, generation: input.generation, readOnly: input.readOnly };
+            doc = { id: input.id, model, acceptedText: input.text, generation: input.generation, readOnly: input.readOnly };
             doc.listener = model.onDidChangeContent(event => changed(doc, event));
             documents.set(input.id, doc);
           } else if (doc.generation !== input.generation) {
             doc.generation = input.generation;
+            doc.acceptedText = input.text;
             if (doc.model.getValue() !== input.text) {
               doc.model.pushStackElement();
               doc.model.pushEditOperations([], [{ range: doc.model.getFullModelRange(), text: input.text }], () => null);
@@ -103,13 +143,16 @@ window.tabryoReceive = (packet) => {
         }
         activate(documents.get(packet.active) ?? null);
         monaco.editor.setTheme(packet.dark ? 'vs-dark' : 'vs');
-        editor.updateOptions({ readOnly: active?.readOnly ?? true });
+        editor.updateOptions({ readOnly: active?.repair ? true : (active?.readOnly ?? true) });
         if (active) emit(snapshot(active, { type: 'state' }));
         break;
       }
       case 'flush': {
         const doc = documents.get(packet.id);
-        if (doc) emit(snapshot(doc, { type: 'flushed', request: packet.request }));
+        if (doc) {
+          if (doc.repair) doc.repair.then(() => emit(snapshot(doc, { type: 'flushed', request: packet.request })));
+          else emit(snapshot(doc, { type: 'flushed', request: packet.request }));
+        }
         break;
       }
       case 'command': {

@@ -334,6 +334,10 @@ void main() {
       );
       await until(tester, () => !state.ready);
       expect(buffer.controller.text, retained);
+      await until(
+        tester,
+        () => find.text('Reconnect editor').evaluate().isNotEmpty,
+      );
       await tester.tap(find.text('Reconnect editor'));
       await until(tester, () => state.surfaceVisible);
       final reconnected = tester
@@ -345,6 +349,24 @@ void main() {
         "document.querySelector('.view-lines').innerText.includes('local')",
         true,
       );
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      expect(buffer.controller.text, retained);
+      if (Platform.isWindows) focusTestWindow();
+      await reconnected.requestFocus();
+      await tester.pump(const Duration(milliseconds: 100));
+      await Clipboard.setData(ClipboardData(text: 'x' * (512 * 1024 + 1)));
+      if (Platform.isWindows) {
+        controlKey(0x56);
+      } else {
+        final focus = await Process.run('xdotool', [
+          'getwindowfocus',
+          'getwindowpid',
+        ]);
+        expect('${focus.stdout}'.trim(), '$pid');
+        expect((await Process.run('xdotool', ['key', 'ctrl+v'])).exitCode, 0);
+      }
+      await until(tester, () => buffer.error?.contains('512 KiB') == true);
+      expect(state.ready, isTrue);
       expect(await editor.synchronizeBuffer(buffer), isTrue);
       expect(buffer.controller.text, retained);
       expect(tester.takeException(), isNull);
