@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/features/codex/domain/codex_connection.dart';
 import 'package:tabryo/features/codex/infrastructure/local_codex_connection.dart';
+import 'package:tabryo/features/editor_context/application/editor_context_service.dart';
+import 'package:tabryo/features/editor_context/domain/editor_context.dart';
+import 'package:tabryo/features/editor_context/infrastructure/local_editor_context.dart';
 import 'package:tabryo/features/mcp/application/mcp_hub.dart';
 import 'package:tabryo/features/mcp/domain/mcp_server.dart';
 
@@ -94,12 +97,12 @@ void main() {
     );
     // Windows can briefly retain a sharing lock after process exit. Bound the
     // cleanup wait; a persistent lock still fails the test.
-    for (var attempt = 0; attempt < 20; attempt++) {
+    for (var attempt = 0; attempt < 100; attempt++) {
       try {
         if (await temporary.exists()) await temporary.delete(recursive: true);
         break;
       } on FileSystemException catch (error) {
-        if (attempt == 19 || ![5, 32].contains(error.osError?.errorCode)) {
+        if (attempt == 99 || ![5, 32].contains(error.osError?.errorCode)) {
           rethrow;
         }
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -204,6 +207,76 @@ Future<void> main() async {
       }
     },
     skip: enabled ? false : 'Set TABRYO_TEST_CODEX and TABRYO_TEST_DART for isolated protocol tests.',
+  );
+
+  test(
+    'installed Codex reads a scoped editor share and queues a reviewed replacement',
+    () async {
+      final context = EditorContextService(LocalEditorContext());
+      addTearDown(context.dispose);
+      await context.publish(
+        EditorContextSnapshot(
+          id: 'editor-selection',
+          workspace: workspace.path,
+          path: p.join(workspace.path, 'main.dart'),
+          version: 3,
+          start: 10,
+          end: 14,
+          text: 'ação',
+          dirty: true,
+          capturedAt: DateTime.now(),
+        ),
+        'Codex',
+      );
+      final endpoint = context.connection!;
+      await config.writeAsString(
+        '\n[mcp_servers.editor]\nurl = ${jsonEncode('${endpoint.endpoint}')}\n'
+        'http_headers = { Authorization = ${jsonEncode('Bearer ${endpoint.token}')} }\n',
+        mode: FileMode.append,
+      );
+      await hub.connect(workspace.path);
+      final selected = hub.servers.singleWhere((s) => s.name == 'editor');
+      expect(
+        selected.tools.keys,
+        containsAll([
+          'editor_context',
+          'propose_replacement',
+          'proposal_status',
+        ]),
+      );
+      expect(
+        await hub.readResource(selected, 'tabryo://editor/context'),
+        contains('ação'),
+      );
+      expect(
+        await hub.callTool(selected, 'editor_context', {}),
+        contains('editor-selection'),
+      );
+      expect(
+        await hub.callTool(selected, 'propose_replacement', {
+          'client_id': 'codex-review',
+          'snapshot_id': 'editor-selection',
+          'text': 'revisão',
+        }),
+        contains('pending'),
+      );
+      final proposal = context.proposals.values.single;
+      expect(proposal.text, 'revisão');
+      context.decided(proposal, applied: false);
+      expect(
+        await hub.callTool(selected, 'proposal_status', {
+          'client_id': 'codex-review',
+        }),
+        contains('rejected'),
+      );
+      await context.revoke();
+      await expectLater(
+        hub.callTool(selected, 'editor_context', {}),
+        throwsA(isA<CodexFailure>()),
+      );
+    },
+    skip: enabled ? false : 'Set TABRYO_TEST_CODEX and TABRYO_TEST_DART for isolated Codex protocol tests.',
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 
   test(

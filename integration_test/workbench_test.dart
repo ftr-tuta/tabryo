@@ -341,6 +341,10 @@ void main() {
       final debugSource = await File(p.join(root, 'main.dart')).writeAsString(
         'void main() {\n  var answer = 41;\n  print(answer + 1);\n}\n',
       );
+      // Release bindings do not install the keyboard test transport by default.
+      // Register before the field attaches so enterText reaches its connection.
+      tester.testTextInput.register();
+      addTearDown(tester.testTextInput.unregister);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -365,6 +369,18 @@ void main() {
         ),
         '3',
       );
+      expect(
+        tester
+            .widget<TextField>(
+              find.widgetWithText(
+                TextField,
+                'Breakpoint lines in this file (for example 5, 12)',
+              ),
+            )
+            .controller!
+            .text,
+        '3',
+      );
       await tester.ensureVisible(find.text('Review run / debug'));
       await tester.tap(find.text('Review run / debug'));
       await tester.pumpAndSettle();
@@ -375,11 +391,11 @@ void main() {
       await tester.tap(find.text('Review run / debug'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Start reviewed session'));
-      await until(
-        tester,
-        () =>
-            debugger.status == DebugStatus.paused && debugger.scopes.isNotEmpty,
-      );
+      await until(tester, () {
+        if (debugger.error != null) fail(debugger.error!);
+        return debugger.status == DebugStatus.paused &&
+            debugger.scopes.isNotEmpty;
+      });
       // A paused debugger retains the same project command reservation.
       final conflicting = await tasks.prepare(
         dartProject,
@@ -401,6 +417,7 @@ void main() {
       await tester.tap(find.text('Stop debugger'));
       await until(tester, () => !debugger.active);
       expect(debugger.status, DebugStatus.terminated);
+      tester.testTextInput.unregister();
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

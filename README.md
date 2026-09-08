@@ -208,7 +208,8 @@ after configuration changes. Disabling/removing a definition does not revoke
 credentials at its provider. Server-initiated approvals and elicitation forms are
 explicitly refused in this initial inspector; use the Codex terminal for those
 flows. Authenticated remote providers and Linux interaction remain unqualified.
-The Tabryo MCP server and graphical Codex conversations remain planned;
+The editor can now publish a reviewed excerpt through its local MCP endpoint;
+graphical Codex conversations remain planned.
 see [metas e objetivos](TABRYO_METAS_E_OBJETIVOS.adoc).
 
 The native `test/mcp_codex_test.dart` checks the real App Server with disposable
@@ -392,6 +393,29 @@ a pinned development dependency for these tests; language servers are not
 bundled into the application. Desktop CI requires the Python language tests
 with `TABRYO_TEST_LANGUAGE_PYTHON=1` and installed Node/Python/Ruff. Optional
 `TABRYO_TEST_NODE`, `TABRYO_TEST_PYTHON` and `TABRYO_TEST_RUFF` paths override PATH.
+
+## Editor context for Codex and MCP
+
+Open **Document actions → Editor context for Codex / MCP**. Select an excerpt
+first, or choose the whole document, then review the captured text, path, version
+and saved/unsaved state. Publishing creates a temporary loopback Streamable HTTP
+endpoint with a unique bearer credential. **Copy MCP connection** copies its URL
+and Authorization header; **Copy context for Codex** copies the reviewed snapshot
+for explicit pasting. Later typing is not transmitted automatically.
+
+MCP clients can read `tabryo://editor/context` or call `editor_context`, submit
+`propose_replacement` with the snapshot ID and a retry-safe client ID, and inspect
+`proposal_status`. Each proposal replaces exactly the shared excerpt. Native
+before/after review is required to apply it to the unsaved buffer; saving remains
+explicit. Changed buffers, disk contents, document versions or grants invalidate
+the proposal. Up to eight proposals are retained per share.
+
+**Revoke editor context**, closing the source document, changing workspace and
+closing Tabryo revoke the endpoint. Clients cannot browse arbitrary files or
+apply edits through MCP. The endpoint is local and temporary; remote exposure,
+diagnostic sharing and graphical agent conversations remain outside this slice.
+Native tests cover authentication, revocation, stale edits, real Codex MCP calls
+and Monaco review/undo without invoking a model.
 
 ## Run and debug
 

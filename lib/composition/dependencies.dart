@@ -12,6 +12,8 @@ import '../features/editor/infrastructure/local_dart_formatter.dart';
 import '../features/editor/infrastructure/local_black_formatter.dart';
 import '../features/editor/infrastructure/bundled_editor_assets.dart';
 import '../features/editor/presentation/editor_view_model.dart';
+import '../features/editor_context/application/editor_context_service.dart';
+import '../features/editor_context/infrastructure/local_editor_context.dart';
 import '../features/mcp_studio/application/mcp_studio.dart';
 import '../features/mcp_studio/infrastructure/local_studio_storage.dart';
 import '../features/mcp_studio/presentation/mcp_studio_view_model.dart';
@@ -53,6 +55,7 @@ WorkbenchViewModel createWorkbench() {
     files: LocalWorkspaceFiles(cache),
     editor: EditorViewModel(
       LocalDocumentFiles(cache),
+      contextSharing: EditorContextService(LocalEditorContext()),
       recovery: LocalDocumentRecovery.forUser(),
       formatter: LocalDartFormatter(),
       blackFormatter: LocalBlackFormatter(),

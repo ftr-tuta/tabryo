@@ -466,7 +466,13 @@ o interpretador escolhido. Testes nativos Windows passaram para esses fluxos,
 incluindo requisições HTTP reais pausadas em breakpoints e encerramento de filhos.
 O workflow Desktop inclui os mesmos adaptadores e frameworks nos dois sistemas;
 a qualificação da revisão atual no Ubuntu ainda precisa da CI.
-Refatorações avançadas, contexto IDE/Codex e aceites IME/DPI continuam pendentes;
+Contexto do editor oferece publicação revisada de seleção/documento, versão e
+estado salvo/modificado por MCP HTTP local autenticado, além de cópia explícita
+para Codex. Propostas têm base identificada, revisão antes/depois, aplicação
+somente no buffer e rejeição por alteração de documento/disco ou revogação.
+Fechar o documento, trocar workspace e encerrar o Tabryo revogam o acesso.
+Testes nativos incluem o Codex instalado sem turno de modelo e revisão no Monaco.
+Refatorações avançadas, exposição de diagnósticos, conversas gráficas Codex e aceites IME/DPI continuam pendentes;
 esta entrega não conclui a matriz Python/Dart/Flutter.
 
 * *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.

@@ -16,6 +16,8 @@ import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart'
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/editor/presentation/monaco_editor.dart';
+import 'package:tabryo/features/editor_context/application/editor_context_service.dart';
+import 'package:tabryo/features/editor_context/infrastructure/local_editor_context.dart';
 import 'package:tabryo/features/language/application/language_service.dart';
 import 'package:tabryo/features/language/domain/language_server.dart';
 import 'package:tabryo/features/language/infrastructure/lsp_connection.dart';
@@ -166,6 +168,7 @@ void main() {
       final editor = EditorViewModel(
         LocalDocumentFiles(PreviewCache()),
         formatter: LocalDartFormatter(),
+        contextSharing: EditorContextService(LocalEditorContext()),
         language: LanguageService(LocalLanguageServers()),
         languageSources: LocalLanguageSources(
           LocalDocumentFiles(PreviewCache()),
@@ -309,6 +312,81 @@ void main() {
       editor.undoBuffer(buffer);
       await until(tester, () => buffer.controller.text != edited);
       editor.redoBuffer(buffer);
+      await until(tester, () => buffer.controller.text == edited);
+      debugPrint('Native editor: reviewing an MCP excerpt and replacement');
+      await tester.tap(find.byTooltip('Document actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Editor context for Codex / MCP'));
+      await tester.pumpAndSettle();
+      expect(state.surfaceVisible, isFalse);
+      await tester.tap(find.text('Share the whole document'));
+      await tester.tap(find.text('Review editor context'));
+      await until(
+        tester,
+        () => find.text('Publish reviewed context').evaluate().isNotEmpty,
+      );
+      expect(editor.contextSharing!.connection, isNull);
+      await tester.tap(find.text('Publish reviewed context'));
+      await until(tester, () => editor.contextSharing!.connection != null);
+      final grant = editor.contextSharing!.connection!;
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      try {
+        final request = await client.postUrl(grant.endpoint);
+        request.headers.contentType = ContentType.json;
+        request.headers.set('Authorization', 'Bearer ${grant.token}');
+        request.write(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': 1,
+            'method': 'tools/call',
+            'params': {
+              'name': 'propose_replacement',
+              'arguments': {
+                'client_id': 'native-review',
+                'snapshot_id': editor.contextSharing!.snapshot!.id,
+                'text': '// MCP proposal\n$edited',
+              },
+            },
+          }),
+        );
+        final response = await request.close();
+        expect(response.statusCode, 200);
+        expect(
+          await response.transform(utf8.decoder).join(),
+          contains('pending'),
+        );
+      } finally {
+        client.close(force: true);
+      }
+      await until(
+        tester,
+        () => find.text('Review replacement').evaluate().isNotEmpty,
+      );
+      await tester.ensureVisible(find.text('Review replacement'));
+      await tester.tap(find.text('Review replacement'));
+      await until(
+        tester,
+        () => find.text('Apply unsaved replacement').evaluate().isNotEmpty,
+      );
+      expect(buffer.controller.text, edited);
+      await tester.tap(find.text('Apply unsaved replacement'));
+      await until(
+        tester,
+        () => buffer.controller.text.startsWith('// MCP proposal'),
+      );
+      expect(await file.readAsBytes(), saved);
+      await tester.ensureVisible(find.text('Revoke editor context'));
+      await tester.tap(find.text('Revoke editor context'));
+      await until(tester, () => editor.contextSharing!.connection == null);
+      await tester.tap(find.text('Close'));
+      await until(tester, () => state.surfaceVisible);
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.view-lines')?.textContent.replaceAll('\\u00a0', ' ').includes('MCP proposal') ?? false",
+        true,
+      );
+      editor.undoBuffer(buffer);
       await until(tester, () => buffer.controller.text == edited);
       visible.value = false;
       await until(tester, () => !state.surfaceVisible);

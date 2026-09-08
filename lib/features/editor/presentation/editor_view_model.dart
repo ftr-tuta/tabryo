@@ -16,6 +16,8 @@ import '../domain/document_recovery.dart';
 import '../domain/editor_assets.dart';
 import '../../language/application/language_service.dart';
 import '../../language/domain/language_server.dart';
+import '../../editor_context/application/editor_context_service.dart';
+import '../../editor_context/domain/editor_context.dart';
 import '../../../core/cancellation.dart';
 
 final class LanguageBufferEdit {
@@ -65,11 +67,145 @@ final class EditorViewModel extends DartitectViewModel {
     this.recovery,
     this.language,
     this.languageSources,
+    this.contextSharing,
   }) {
     _languageEvents = language?.changes.listen((_) {
       if (!_closed) notifyListeners();
     });
+    _contextEvents = contextSharing?.changes.listen((_) {
+      if (!_closed) notifyListeners();
+    });
   }
+  final EditorContextService? contextSharing;
+  StreamSubscription<void>? _contextEvents;
+  int _nextContext = 0;
+  ({EditorContextSnapshot snapshot, EditorBuffer buffer, String before})?
+  _contextCapture;
+
+  Future<EditorContextSnapshot> prepareContext({
+    required bool wholeDocument,
+  }) async {
+    final buffer = active;
+    if (_closed ||
+        buffer == null ||
+        contextSharing == null ||
+        !await synchronizeBuffer(buffer)) {
+      throw const EditorContextFailure(
+        'Open and synchronize an editor document first.',
+      );
+    }
+    if (!identical(buffer, active) || buffer.root != workspace) {
+      throw const Cancelled();
+    }
+    final text = buffer.controller.text;
+    final selection = buffer.controller.selection;
+    final start = wholeDocument ? 0 : selection.start;
+    final end = wholeDocument ? text.length : selection.end;
+    if (start < 0 || end > text.length || (!wholeDocument && start == end)) {
+      throw const EditorContextFailure(
+        'Select text, or choose to share the whole document.',
+      );
+    }
+    final snapshot = EditorContextSnapshot(
+      id: '${DateTime.now().microsecondsSinceEpoch}-${++_nextContext}',
+      workspace: buffer.root,
+      path: buffer.path,
+      version: buffer.version,
+      start: start,
+      end: end,
+      text: text.substring(start, end),
+      dirty: buffer.dirty,
+      capturedAt: DateTime.now(),
+    );
+    _contextCapture = (snapshot: snapshot, buffer: buffer, before: text);
+    return snapshot;
+  }
+
+  Future<void> publishContext(
+    EditorContextSnapshot snapshot,
+    String client,
+  ) async {
+    final capture = _contextCapture;
+    if (capture == null ||
+        !identical(capture.snapshot, snapshot) ||
+        !await synchronizeBuffer(capture.buffer) ||
+        _closed ||
+        !_buffers.contains(capture.buffer) ||
+        workspace != snapshot.workspace ||
+        capture.buffer.version != snapshot.version ||
+        capture.buffer.controller.text != capture.before) {
+      throw const EditorContextFailure(
+        'The document changed during review. Capture and review again.',
+      );
+    }
+    await contextSharing!.publish(snapshot, client);
+  }
+
+  Future<void> applyContextProposal(EditorProposal proposal) async {
+    final capture = _contextCapture;
+    final service = contextSharing;
+    if (capture == null ||
+        service == null ||
+        !identical(service.proposals[proposal.id], proposal) ||
+        !identical(service.snapshot, proposal.snapshot) ||
+        !identical(capture.snapshot, proposal.snapshot) ||
+        proposal.status != 'pending' ||
+        capture.buffer.readOnly ||
+        workspace != proposal.snapshot.workspace) {
+      throw const EditorContextFailure(
+        'The shared document or proposal is no longer available.',
+      );
+    }
+    final buffer = capture.buffer;
+    if (!await synchronizeBuffer(buffer)) throw const Cancelled();
+    final after = capture.before.replaceRange(
+      proposal.snapshot.start,
+      proposal.snapshot.end,
+      proposal.text,
+    );
+    if (inputFormatter(buffer)
+            .formatEditUpdate(
+              buffer.controller.value,
+              TextEditingValue(text: after),
+            )
+            .text !=
+        after) {
+      throw const EditorContextFailure(
+        'The proposal exceeds the editable document limit.',
+      );
+    }
+    final disk = await files.open(buffer.root, buffer.path);
+    if (_closed ||
+        !_buffers.contains(buffer) ||
+        buffer.saving ||
+        buffer.reviewRequired ||
+        workspace != proposal.snapshot.workspace ||
+        !identical(service.snapshot, proposal.snapshot) ||
+        proposal.status != 'pending' ||
+        buffer.version != proposal.snapshot.version ||
+        buffer.controller.text != capture.before ||
+        disk.text != buffer.baseline.text ||
+        disk.newline != buffer.baseline.newline ||
+        disk.bom != buffer.baseline.bom) {
+      throw const EditorContextFailure(
+        'The document or grant changed. No edits were applied. Publish a fresh context.',
+      );
+    }
+    buffer.controller.value = TextEditingValue(
+      text: after,
+      selection: TextSelection.collapsed(
+        offset: proposal.snapshot.start + proposal.text.length,
+      ),
+    );
+    service.decided(proposal, applied: true);
+    select(buffer);
+  }
+
+  Future<void> revokeContext() async {
+    _contextCapture = null;
+    await contextSharing?.revoke();
+  }
+
   final LanguageService? language;
   final LanguageSources? languageSources;
   int languageRevision = 0;
@@ -701,6 +837,7 @@ final class EditorViewModel extends DartitectViewModel {
   }
 
   void selectWorkspace(String? root) {
+    if (root != workspace) unawaited(revokeContext());
     workspace = root;
     notifyListeners();
   }
@@ -1030,6 +1167,7 @@ final class EditorViewModel extends DartitectViewModel {
   bool close(EditorBuffer buffer, {bool discard = false}) {
     if (!_buffers.contains(buffer)) return true;
     if (buffer.saving || (buffer.dirty && !discard)) return false;
+    if (identical(_contextCapture?.buffer, buffer)) unawaited(revokeContext());
     _buffers.remove(buffer);
     languageRevision++;
     synchronizeLanguage();
@@ -1061,6 +1199,8 @@ final class EditorViewModel extends DartitectViewModel {
 
   @override
   Future<void> disposeAsync() async {
+    await _contextEvents?.cancel();
+    await contextSharing?.dispose();
     await flushRecovery();
     _recoveryTimer?.cancel();
     _closed = true;

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import 'editor_view_model.dart';
+import 'editor_context_dialog.dart';
 import 'monaco_editor.dart';
 
 /// The caller closes only after this returns true; Cancel never drops a buffer.
@@ -218,6 +219,10 @@ final class EditorPane extends StatelessWidget {
                       'references' ||
                       'fixes' => model.webCommand?.call(value),
                       'compare' => model.compare(active),
+                      'context' => showDialog<void>(
+                        context: context,
+                        builder: (_) => EditorContextDialog(model: model),
+                      ),
                       'closeDiff' => model.closeComparison(active),
                       'keep' => model.keepLocalEdits(active),
                       'unformatted' => model.save(
@@ -227,6 +232,13 @@ final class EditorPane extends StatelessWidget {
                       _ => _reload(context, active),
                     },
                     itemBuilder: (_) => [
+                      if (model.contextSharing != null)
+                        PopupMenuItem(
+                          value: 'context',
+                          child: Text(
+                            'Editor context for Codex / MCP (${model.contextSharing!.proposals.values.where((p) => p.status == 'pending').length} proposals)',
+                          ),
+                        ),
                       if (model.language?.sessions.values.any(
                             (s) =>
                                 s.ready && s.contains(active.root, active.path),
