@@ -28,6 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  ffi: ^2.1.4
   flutter:
     sdk: flutter
   dartitect:
@@ -54,7 +55,6 @@ dependencies:
   xml: 6.6.1
 
 dev_dependencies:
-  ffi: ^2.1.4
   dartitect_lints:
     git:
       url: https://github.com/ftr-tuta/dartitect.git

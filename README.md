@@ -168,7 +168,7 @@ Dart and Flutter use `--no-pub`; Python uses uv without modifying a parent
 workspace or initializing Git. Install dependencies as a separate reviewed step.
 Language servers are started separately through Language intelligence.
 **Tasks and tests** discovers test files and runs reviewed commands, as described
-below. DAP, Flutter device execution and DevTools remain pending.
+below. Run/debug sessions, Flutter devices and DevTools are described below.
 
 The native project tests exercise Dart/Flutter generation, Python environment
 creation, uv **0.8.22**, Poetry **2.2.1**, and pip with Python **3.12.10**.
@@ -348,18 +348,22 @@ Monaco provides completion, hover documentation, signature help, definition,
 document symbols, rename and quick fixes when the selected server supports them.
 **Document actions** also exposes completion, rename, symbols, references and
 quick fixes. Ctrl+Space requests completion, F12 goes to definition, Ctrl+Shift+O
-lists symbols and Shift+F12 opens the bounded project-reference list. Locations
-outside the authorized workspace are refused; SDK/dependency source browsing
-outside it is not included. Diagnostics appear as editor markers and in
+lists symbols and Shift+F12 opens the bounded project-reference list. Definitions
+in the selected Dart SDK, declared package libraries, selected Python environment
+or Pyright type stubs open in read-only tabs. Unrelated external files and links
+escaping these roots are refused. Diagnostics appear as editor markers and in
 **Problems**, with source, severity and code. Build/test/runtime output is not
 included in this static-analysis panel.
 
-Rename and quick fixes require native review and apply only to unsaved buffers.
+Rename, quick fixes and available text refactorings require native review and apply only to unsaved buffers.
 All affected files must already be open and synchronized with that language
 session; open any reported missing file and retry. Every affected buffer is
 checked again after review. Normal protected saves write to disk separately.
 File creation/deletion/renaming and commands returned by servers are refused.
-Full refactoring support and completion auto-imports remain open.
+Completion resolves additional imports in the current document, preserving undo
+and unsaved text. A late response is accepted only for the exact suggestion
+insertion; further typing invalidates it. Cross-file completion commands and
+refactorings requiring resource operations remain open.
 An active Ruff server enables Python format on save. To use Black instead, select
 its installed executable in the project's toolchain form and apply the choice.
 Black works without a language server; Ruff may remain active for lint and fixes.
@@ -389,6 +393,40 @@ bundled into the application. Desktop CI requires the Python language tests
 with `TABRYO_TEST_LANGUAGE_PYTHON=1` and installed Node/Python/Ruff. Optional
 `TABRYO_TEST_NODE`, `TABRYO_TEST_PYTHON` and `TABRYO_TEST_RUFF` paths override PATH.
 
+## Run and debug
+
+After applying project tools, open **Projects and toolchains → Run and debug**.
+Enter a saved entrypoint, arguments and optional breakpoint line numbers, then
+review the session before starting. Dart uses its SDK debug adapter; Flutter
+uses its SDK adapter and an explicitly discovered/selected device. Python uses
+`debugpy` installed in the chosen interpreter. No adapter or device scan starts
+when the panel opens. Running without debugging is an explicit checkbox.
+
+The panel shows verified/pending breakpoints, stack frames, scopes, variables,
+console output and continue/pause/step controls. Stack source links use the
+editor's project and read-only dependency boundaries. Evaluation is an explicit
+action that can execute application code. Stop, workspace close and application
+shutdown close the owned adapter process tree, including Python descendants.
+The project stays reserved while startup or shutdown is pending.
+
+Flutter provides hot reload/restart after application startup, requiring saved
+project buffers. **Open DevTools in browser** starts the selected SDK's DevTools
+on loopback and opens it for this local VM service; Stop closes that server too.
+Debugger output and variables remain in memory, with bounded retained output.
+Adapters and SDKs are not bundled.
+
+Python profiles include Django (`manage.py runserver --noreload`) and FastAPI
+(`python -m uvicorn package.module:app`). Both default to 127.0.0.1:8000 and
+allow a chosen port and reviewed extra arguments. Install the framework in the
+selected environment. Django check, migration plan, make migrations and migrate
+are also available as separately reviewed tasks using the project's manage.py.
+
+Native tests exercise Dart 3.13.2, Flutter 3.47.2, debugpy 1.8.21, Django 6.1.1,
+FastAPI 0.140.6 and uvicorn 0.52.4. `TABRYO_TEST_DEBUG_PYTHON=1` enables the Python
+adapter/framework cases; `TABRYO_TEST_FLUTTER_DEBUG=1` enables the desktop Flutter
+run/reload/restart case, which requires the platform build tools and a graphical
+session. Desktop CI runs both on Windows and Ubuntu.
+
 ## Tasks and tests
 
 Open **Projects and toolchains → Tasks and tests** after applying the selected
@@ -411,10 +449,10 @@ be available. Flutter commands use `--no-pub` so dependency setup remains explic
 Tasks also offer Dart/Flutter analysis, Python Ruff analysis (`python -m ruff`),
 Dart/Python script execution with a JSON argument list, Dart executable builds,
 and Flutter builds for this desktop host, web or Android APK. Builds require
-the corresponding installed platform toolchain. Flutter app execution with
-devices and debugging remains a separate pending capability.
+the corresponding installed platform toolchain. **Run and debug** provides
+Flutter app execution with an explicitly selected device.
 
-Overlapping project commands, including environment setup and Studio commands,
+Overlapping project commands, including debugging, environment setup and Studio commands,
 are refused. Up to four tasks in separate projects can run. **Show terminal**
 opens the task's output; **Stop task**, closing its terminal, workspace or Tabryo
 stops its owned process tree. Stopped tasks are marked cancelled. Results retain

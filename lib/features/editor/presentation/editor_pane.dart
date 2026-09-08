@@ -173,7 +173,9 @@ final class EditorPane extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: 'Save document (Ctrl+S)',
-                    onPressed: active.saving ? null : () => model.save(active),
+                    onPressed: active.saving || active.readOnly
+                        ? null
+                        : () => model.save(active),
                     icon: const Icon(Icons.save_outlined),
                   ),
                   ValueListenableBuilder<UndoHistoryValue>(
@@ -248,7 +250,7 @@ final class EditorPane extends StatelessWidget {
                         ),
                         const PopupMenuItem(
                           value: 'fixes',
-                          child: Text('Quick fixes'),
+                          child: Text('Quick fixes and refactorings'),
                         ),
                       ],
                       if (active.formatFailed)
@@ -291,7 +293,11 @@ final class EditorPane extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(6),
               child: Text(
-                'UTF-8${active.baseline.bom ? ' BOM' : ''} · ${active.baseline.newline == '\r\n' ? 'CRLF' : 'LF'} · ${active.dirty ? 'Unsaved' : 'Saved'}',
+                'UTF-8${active.baseline.bom ? ' BOM' : ''} · ${active.baseline.newline == '\r\n' ? 'CRLF' : 'LF'} · ${active.readOnly
+                    ? 'Dependency source · Read only'
+                    : active.dirty
+                    ? 'Unsaved'
+                    : 'Saved'}',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ),
@@ -408,7 +414,7 @@ final class EditorPane extends StatelessWidget {
               key: ObjectKey(active),
               controller: active.controller,
               undoController: active.undo,
-              readOnly: active.saving,
+              readOnly: active.saving || active.readOnly,
               autofocus: true,
               expands: true,
               maxLines: null,

@@ -17,6 +17,9 @@ import '../../projects/domain/project.dart';
 import '../../projects/presentation/projects_view_model.dart';
 import '../../tasks/domain/project_task.dart';
 import '../../tasks/presentation/tasks_view_model.dart';
+import '../../debugger/application/debug_service.dart';
+import '../../debugger/domain/debug_session.dart';
+import '../../language/domain/language_server.dart';
 import '../../mcp/presentation/mcp_hub_view_model.dart';
 import '../../terminals/domain/terminal_ports.dart';
 import '../../terminals/presentation/terminal_session.dart';
@@ -39,12 +42,26 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.clipboard,
     this.projects,
     this.tasks,
+    this.debugger,
   }) {
     editor?.addListener(_editorChanged);
+    _debugChanges = debugger?.changes.listen((_) {
+      if (!_startingDebugger &&
+          debugger?.active != true &&
+          _debugProject != null) {
+        _projectRuns.remove(_debugProject);
+        _debugProject = null;
+      }
+      if (!_shutdown) notifyListeners();
+    });
   }
   final PtyHost host;
   final ProjectsViewModel? projects;
   final TasksViewModel? tasks;
+  final DebugService? debugger;
+  StreamSubscription<void>? _debugChanges;
+  String? _debugProject;
+  bool _startingDebugger = false;
   final TextClipboard? clipboard;
   Future<String?> readClipboard() async => clipboard?.readText();
   Future<void> writeClipboard(String text) async => clipboard?.writeText(text);
@@ -241,6 +258,9 @@ final class WorkbenchViewModel extends DartitectViewModel {
       notifyListeners();
       return;
     }
+    if (debugger?.configuration?.project.workspace == current.root) {
+      await debugger?.stop();
+    }
     for (final id in current.tabs.expand((t) => t.panes.sessions).toList()) {
       await closeSession(id);
     }
@@ -388,7 +408,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
           p.isWithin(directory, path),
     )) {
       throw const ProjectFailure(
-        'A setup command is already running here. Finish it or close its terminal.',
+        'A project command or debugger is already running here. Stop it before starting another.',
       );
     }
     _projectRuns[directory] = -1;
@@ -553,6 +573,110 @@ final class WorkbenchViewModel extends DartitectViewModel {
     await sessions[task.sessionId]?.close();
   }
 
+  Future<void> startDebugger(DebugConfiguration config) async {
+    final owner = workspace;
+    final service = debugger;
+    if (_shutdown ||
+        service == null ||
+        service.active ||
+        _startingDebugger ||
+        owner == null ||
+        owner.root != config.project.workspace ||
+        projects == null) {
+      throw const DebugFailure(
+        'Open the project and stop the active debugger before starting.',
+      );
+    }
+    final chosen = projects!.selections[config.project.id];
+    if (!identical(chosen, config.tools)) {
+      throw const DebugFailure(
+        'Apply and review the selected toolchain first.',
+      );
+    }
+    _reserveProjectCommand(config.project.directory);
+    _startingDebugger = true;
+    _debugProject = config.project.directory;
+    try {
+      await projects!.environment.validateProject(config.project);
+      await projects!.environment.validateSelection(config.tools);
+      await _checkProjectDocuments(config.project.directory);
+      if (_shutdown ||
+          !workspaces.contains(owner) ||
+          !identical(chosen, projects!.selections[config.project.id])) {
+        throw const DebugFailure(
+          'Project ownership or tools changed. Review the debug session again.',
+        );
+      }
+      await service.start(config);
+    } finally {
+      _startingDebugger = false;
+      if (!service.active) {
+        _projectRuns.remove(config.project.directory);
+        _debugProject = null;
+      }
+      if (!_shutdown) notifyListeners();
+    }
+  }
+
+  Future<void> controlDebugger(String command) async {
+    final service = debugger;
+    if (service == null) return;
+    if (command == 'hotReload' || command == 'hotRestart') {
+      await _checkProjectDocuments(service.configuration!.project.directory);
+    }
+    await service.control(command);
+  }
+
+  Future<void> openDebugSource(String path, int line, int column) async {
+    final config = debugger?.configuration;
+    if (config == null ||
+        workspace?.root != config.project.workspace ||
+        editor == null) {
+      return;
+    }
+    await _checkProjectDocuments(config.project.directory);
+    final root = config.project.workspace;
+    final python = config.project.kind == ProjectKind.python;
+    if (p.isWithin(root, path)) {
+      await openFile(path);
+    } else {
+      final executable =
+          config.tools[python ? ProjectTool.python : ProjectTool.dart];
+      if (executable == null) {
+        throw const DebugFailure(
+          'Select the SDK before opening dependency source.',
+        );
+      }
+      await editor!.open(
+        root,
+        path,
+        sourceSpec: LanguageServerSpec(
+          kind: python ? LanguageServerKind.pyright : LanguageServerKind.dart,
+          workspace: root,
+          root: config.project.directory,
+          executable: executable,
+          python: python ? executable : null,
+        ),
+      );
+    }
+    final buffer = editor!.active;
+    if (buffer == null) return;
+    final offset = languageOffset(buffer.controller.text, {
+      'line': line - 1,
+      'character': column - 1,
+    });
+    editor!.applyWebEdit(
+      buffer,
+      buffer.controller.text,
+      offset,
+      offset,
+      buffer.webCanUndo,
+      buffer.webCanRedo,
+    );
+    editor!.webCommand?.call('reveal');
+    showEditor(true);
+  }
+
   void showTaskTerminal(ProjectTask task) {
     final owner = workspace;
     if (owner == null || !p.equals(owner.root, task.project.workspace)) return;
@@ -674,8 +798,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     LaunchSpec spec,
     String title,
   ) async {
-    await studio!.studio.storage.validateProject(project);
-    checkStudioBuffers(project);
+    if (_shutdown) throw const StudioFailure('The application is closing.');
     if ([..._studioRuns.keys, ..._projectRuns.keys].any(
       (path) =>
           p.equals(path, project.path) ||
@@ -688,6 +811,14 @@ final class WorkbenchViewModel extends DartitectViewModel {
     }
     _studioRuns[project.path] = -1;
     try {
+      // Reserve before filesystem awaits so a later gesture cannot overtake the
+      // first command while its project is being validated.
+      await studio!.studio.storage.validateProject(project);
+      try {
+        await _checkProjectDocuments(project.path);
+      } on ProjectFailure catch (failure) {
+        throw StudioFailure(failure.message);
+      }
       await openWorkspace(project.path);
       if (_shutdown) throw const StudioFailure('The application is closing.');
       checkStudioBuffers(project);
@@ -1045,6 +1176,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
       }
       final repo = await selectedRepository();
       await gitMutator.removeWorktree(repo, tree, [
+        ?_debugProject,
         ...(await collaboration?.reservations() ?? const <Json>[]).map(
           (row) => row['root'] as String,
         ),
@@ -1165,6 +1297,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
   Future<void>? _shutdownFuture;
   Future<void> shutdown() => _shutdownFuture ??= () async {
     _shutdown = true;
+    await debugger?.dispose();
+    await _debugChanges?.cancel();
     _selection?.cancel();
     _preview?.cancel();
     _watchDebounce?.cancel();

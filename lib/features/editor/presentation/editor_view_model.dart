@@ -27,7 +27,7 @@ final class LanguageBufferEdit {
 }
 
 final class EditorBuffer {
-  EditorBuffer(this.baseline)
+  EditorBuffer(this.baseline, {this.sourceSpec})
     : controller = TextEditingController.fromValue(
         TextEditingValue(
           text: baseline.text,
@@ -35,6 +35,8 @@ final class EditorBuffer {
         ),
       );
   DocumentSnapshot baseline;
+  final LanguageServerSpec? sourceSpec;
+  bool get readOnly => sourceSpec != null;
   final TextEditingController controller;
   final undo = UndoHistoryController();
   int version = 0;
@@ -62,12 +64,14 @@ final class EditorViewModel extends DartitectViewModel {
     this.blackFormatter,
     this.recovery,
     this.language,
+    this.languageSources,
   }) {
     _languageEvents = language?.changes.listen((_) {
       if (!_closed) notifyListeners();
     });
   }
   final LanguageService? language;
+  final LanguageSources? languageSources;
   int languageRevision = 0;
   StreamSubscription<void>? _languageEvents;
   LanguageDocument languageDocument(EditorBuffer buffer) => LanguageDocument(
@@ -76,8 +80,9 @@ final class EditorViewModel extends DartitectViewModel {
     buffer.controller.text,
     buffer.version,
   );
-  void synchronizeLanguage() =>
-      language?.synchronize(_buffers.map(languageDocument).toList());
+  void synchronizeLanguage() => language?.synchronize(
+    _buffers.where((b) => !b.readOnly).map(languageDocument).toList(),
+  );
 
   Future<FormattedDocument> _formatLanguageBuffer(
     EditorBuffer buffer,
@@ -182,7 +187,7 @@ final class EditorViewModel extends DartitectViewModel {
     Cancellation? cancellation,
     bool lint = false,
   }) async {
-    if (!_buffers.contains(buffer) || _closed) return null;
+    if (!_buffers.contains(buffer) || buffer.readOnly || _closed) return null;
     synchronizeLanguage();
     final version = buffer.version;
     final result = await language?.request(
@@ -192,7 +197,9 @@ final class EditorViewModel extends DartitectViewModel {
       cancellation: cancellation,
       lint: lint,
     );
-    if (_closed || !_buffers.contains(buffer) || version != buffer.version) {
+    if (_closed ||
+        !_buffers.contains(buffer) ||
+        (method != 'completionItem/resolve' && version != buffer.version)) {
       throw const Cancelled();
     }
     return result;
@@ -204,14 +211,25 @@ final class EditorViewModel extends DartitectViewModel {
     Map position,
   ) async {
     final uri = Uri.parse(uriValue);
-    if (uri.scheme != 'file' || uri.hasQuery || uri.hasFragment) {
+    if (uri.scheme != 'file' ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        (uri.host.isNotEmpty && uri.host != 'localhost')) {
       throw const LanguageFailure('Only project files can be opened.');
     }
     final path = p.normalize(uri.toFilePath());
-    if (!p.isWithin(origin.root, path)) {
-      throw const LanguageFailure('This location is outside the workspace.');
+    final session = language?.sessionFor(languageDocument(origin));
+    if (!p.isWithin(origin.root, path) || origin.readOnly) {
+      final spec = origin.sourceSpec ?? session?.spec;
+      if (spec == null || languageSources == null) {
+        throw const LanguageFailure(
+          'Start language intelligence to browse its dependency sources.',
+        );
+      }
+      if (!await open(origin.root, path, sourceSpec: spec)) return;
+    } else if (!await open(origin.root, path)) {
+      return;
     }
-    if (!await open(origin.root, path)) return;
     final target = _buffers
         .where((b) => p.equals(b.root, origin.root) && p.equals(b.path, path))
         .firstOrNull;
@@ -292,7 +310,8 @@ final class EditorViewModel extends DartitectViewModel {
           'Open $path in the editor, then request this change again so its buffer version can be checked.',
         );
       }
-      if (!await synchronizeBuffer(buffer) ||
+      if (buffer.readOnly ||
+          !await synchronizeBuffer(buffer) ||
           buffer.saving ||
           buffer.reviewRequired ||
           disk.text != buffer.baseline.text ||
@@ -625,7 +644,9 @@ final class EditorViewModel extends DartitectViewModel {
     try {
       for (final buffer in List<EditorBuffer>.of(_buffers)) {
         if (_closed || epoch != _monitorEpoch) return;
-        if (!_buffers.contains(buffer) || buffer.saving) continue;
+        if (!_buffers.contains(buffer) || buffer.saving || buffer.readOnly) {
+          continue;
+        }
         if (!await synchronizeBuffer(buffer)) continue;
         if (_closed || !_buffers.contains(buffer)) continue;
         final version = buffer.version;
@@ -694,7 +715,11 @@ final class EditorViewModel extends DartitectViewModel {
     notifyListeners();
   }
 
-  Future<bool> open(String root, String path) async {
+  Future<bool> open(
+    String root,
+    String path, {
+    LanguageServerSpec? sourceSpec,
+  }) async {
     final epoch = _epochs[root] ?? 0;
     final existing = _buffers
         .where((b) => p.equals(b.path, path) && p.equals(b.root, root))
@@ -710,7 +735,9 @@ final class EditorViewModel extends DartitectViewModel {
     }
     _opening++;
     try {
-      final snapshot = await files.open(root, path);
+      final snapshot = sourceSpec == null
+          ? await files.open(root, path)
+          : await languageSources!.open(sourceSpec, path);
       if (_closed || epoch != (_epochs[root] ?? 0)) return true;
       var buffer = _buffers
           .where(
@@ -718,7 +745,7 @@ final class EditorViewModel extends DartitectViewModel {
           )
           .firstOrNull;
       if (buffer == null) {
-        buffer = EditorBuffer(snapshot);
+        buffer = EditorBuffer(snapshot, sourceSpec: sourceSpec);
         final owned = buffer;
         var wasDirty = false;
         var lastText = owned.controller.text;
@@ -765,7 +792,9 @@ final class EditorViewModel extends DartitectViewModel {
     EditorBuffer buffer, {
     bool withoutFormatting = false,
   }) async {
-    if (!_buffers.contains(buffer) || buffer.saving) return false;
+    if (!_buffers.contains(buffer) || buffer.saving || buffer.readOnly) {
+      return false;
+    }
     if (buffer.reviewRequired) return false;
     if (!await synchronizeBuffer(buffer)) return false;
     if (!_buffers.contains(buffer) || buffer.saving || buffer.reviewRequired) {
@@ -902,6 +931,7 @@ final class EditorViewModel extends DartitectViewModel {
     bool canRedo,
   ) {
     if (!_buffers.contains(buffer)) return;
+    if (buffer.readOnly && text != buffer.controller.text) return;
     buffer.controller.value = TextEditingValue(
       text: text,
       selection: TextSelection(baseOffset: start, extentOffset: end),
@@ -911,6 +941,7 @@ final class EditorViewModel extends DartitectViewModel {
 
   TextInputFormatter inputFormatter(EditorBuffer buffer) =>
       TextInputFormatter.withFunction((previous, next) {
+        if (buffer.readOnly && next.text != previous.text) return previous;
         if (utf8
                     .encode(next.text.replaceAll('\n', buffer.baseline.newline))
                     .length +
@@ -945,7 +976,7 @@ final class EditorViewModel extends DartitectViewModel {
 
   Future<void> compare(EditorBuffer buffer) async {
     try {
-      final disk = await files.open(buffer.root, buffer.path);
+      final disk = await _readBuffer(buffer);
       if (_closed || !_buffers.contains(buffer)) return;
       buffer.diskText = disk.text;
     } catch (error) {
@@ -966,7 +997,7 @@ final class EditorViewModel extends DartitectViewModel {
     buffer.saving = true;
     notifyListeners();
     try {
-      final disk = await files.open(buffer.root, buffer.path);
+      final disk = await _readBuffer(buffer);
       if (_closed || !_buffers.contains(buffer)) return false;
       if (buffer.version != version) {
         buffer.error = 'The document changed while reloading. Your edits are preserved; review the disk version before trying again.';
@@ -990,6 +1021,11 @@ final class EditorViewModel extends DartitectViewModel {
       if (!_closed) notifyListeners();
     }
   }
+
+  Future<DocumentSnapshot> _readBuffer(EditorBuffer buffer) =>
+      buffer.sourceSpec == null
+      ? files.open(buffer.root, buffer.path)
+      : languageSources!.open(buffer.sourceSpec!, buffer.path);
 
   bool close(EditorBuffer buffer, {bool discard = false}) {
     if (!_buffers.contains(buffer)) return true;

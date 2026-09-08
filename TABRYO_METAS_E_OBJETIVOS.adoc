@@ -439,8 +439,11 @@ definição, símbolos, referências e propostas de renomeação/correção. As 
 exigem arquivos abertos, revisão e conferência de versões antes de alterar buffers;
 o salvamento permanece separado. Ruff oferece formatação Python ao salvar.
 Os testes nativos de linguagem exercitam servidores reais e ambiente Python próprio.
-Refatorações que criam/removem/renomeiam arquivos, auto-imports de completion,
-e fontes de dependências fora do workspace permanecem abertas.
+Completion resolve imports adicionais no documento atual e recusa respostas
+após digitação incompatível. Definições em SDKs, bibliotecas declaradas e ambiente
+Python selecionado abrem fontes externas em abas somente leitura. Refatorações
+textuais anunciadas pelo servidor passam pela revisão nativa; operações que
+criam/removem/renomeiam arquivos e comandos de completion entre arquivos seguem abertas.
 Black possui seleção explícita por projeto e formatação protegida via stdin,
 com seleção, Unicode, BOM/CRLF e recusa de resultados após troca do formatador.
 Tarefas oferecem descoberta de arquivos de teste sem execução, revisão de comandos,
@@ -454,9 +457,17 @@ em `.tabryo/project.json` usam revisão, SDKs locais e conferência da configura
 antes da execução. Cobertura de linhas usa LCOV dos runners Flutter,
 `coverage:test_with_coverage` e pytest-cov, com totais, hits e navegação por arquivo;
 relatórios ausentes/inválidos não produzem sucesso. Os testes nativos existentes
-cobrem esses contratos, sem infraestrutura de evidência paralela. DAP, execução Flutter,
-DevTools, perfis Django/FastAPI e contexto IDE/Codex continuam pendentes no mesmo PR;
-esta entrega não conclui a matriz Python/Dart/Flutter nem os aceites IME/DPI.
+cobrem esses contratos, sem infraestrutura de evidência paralela. DAP oferece
+início revisado, breakpoints confirmados, pilha, variáveis, avaliação e controles
+com ownership da árvore de processos e exclusão de comandos sobrepostos.
+Flutter oferece seleção de dispositivo, execução, hot reload/restart e DevTools
+local vinculado à sessão. Perfis Django/FastAPI e tarefas de gestão Django usam
+o interpretador escolhido. Testes nativos Windows passaram para esses fluxos,
+incluindo requisições HTTP reais pausadas em breakpoints e encerramento de filhos.
+O workflow Desktop inclui os mesmos adaptadores e frameworks nos dois sistemas;
+a qualificação da revisão atual no Ubuntu ainda precisa da CI.
+Refatorações avançadas, contexto IDE/Codex e aceites IME/DPI continuam pendentes;
+esta entrega não conclui a matriz Python/Dart/Flutter.
 
 * *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.
 * *Resultado esperado:* editor com abas, destaque de sintaxe, busca/substituição, desfazer/refazer, seleção múltipla, salvamento confiável e recuperação de alterações.

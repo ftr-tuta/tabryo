@@ -67,7 +67,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           int version,
           int revision,
           int authority,
-          Map edit,
+          Map action,
         })
       >{};
   int _nextAction = 0;
@@ -325,7 +325,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
                   p.equals(problem.path, buffer.path))
                 problem.diagnostic,
           ],
-          'readOnly': buffer.saving,
+          'readOnly': buffer.saving || buffer.readOnly,
           'newline': buffer.baseline.newline,
           'bom': buffer.baseline.bom,
         });
@@ -435,10 +435,10 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         final action = _languageActions.remove(value['action']);
         if (action != null && identical(action.buffer, buffer)) {
           unawaited(
-            _reviewLanguageEdit(
+            _resolveLanguageAction(
               buffer,
               action.version,
-              action.edit,
+              action.action,
               action.revision,
               action.authority,
             ),
@@ -486,6 +486,12 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         return;
       }
       final text = value['text'] as String;
+      if (buffer.readOnly && text != buffer.controller.text) {
+        doc.generation++;
+        doc.sequence = 0;
+        _schedule();
+        return;
+      }
       if (utf8.encode(text.replaceAll('\n', buffer.baseline.newline)).length +
                   (buffer.baseline.bom ? 3 : 0) >
               DocumentFiles.byteLimit ||
@@ -661,6 +667,46 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
     }
   }
 
+  Future<void> _resolveLanguageAction(
+    EditorBuffer buffer,
+    int version,
+    Map action,
+    int revision,
+    int authority,
+  ) async {
+    try {
+      if (buffer.version != version ||
+          revision != model.languageRevision ||
+          authority != model.language?.generation) {
+        throw const Cancelled();
+      }
+      final resolved = action['edit'] is Map
+          ? action
+          : await model.languageRequest(
+              buffer,
+              'codeAction/resolve',
+              Map<String, Object?>.from(action),
+              lint: true,
+            );
+      if (resolved is! Map ||
+          resolved['edit'] is! Map ||
+          resolved['command'] != null) {
+        throw const LanguageFailure(
+          'This action needs a server command that is not supported by the editor review.',
+        );
+      }
+      await _reviewLanguageEdit(
+        buffer,
+        version,
+        resolved['edit'] as Map,
+        revision,
+        authority,
+      );
+    } catch (error) {
+      _languageError(error);
+    }
+  }
+
   Future<void> _languageRequest(
     EditorBuffer buffer,
     int request,
@@ -689,7 +735,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
                   !problem.server.startsWith('pyright:'))
                 problem.diagnostic,
           ],
-          'only': ['quickfix', 'source.organizeImports'],
+          'only': ['quickfix', 'refactor', 'source.organizeImports'],
         };
       }
       result = await model.languageRequest(
@@ -708,7 +754,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         final actions = <Map<String, Object?>>[];
         for (final item in (result is List ? result : []).take(20)) {
           if (item is! Map ||
-              item['edit'] is! Map ||
+              (item['edit'] is! Map && item['data'] == null) ||
               item['title'] is! String ||
               item['disabled'] != null) {
             continue;
@@ -722,7 +768,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
             version: version,
             revision: revision,
             authority: authority,
-            edit: item['edit'] as Map,
+            action: item,
           );
           actions.add({'id': id, 'title': item['title'], 'kind': item['kind']});
         }

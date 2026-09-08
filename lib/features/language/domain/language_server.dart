@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import '../../../core/cancellation.dart';
+import '../../editor/domain/document_files.dart';
 
 enum LanguageServerKind { dart, pyright, ruff }
 
@@ -48,6 +51,10 @@ abstract interface class LanguageConnection {
 
 abstract interface class LanguageServers {
   Future<LanguageConnection> start(LanguageServerSpec spec);
+}
+
+abstract interface class LanguageSources {
+  Future<DocumentSnapshot> open(LanguageServerSpec spec, String path);
 }
 
 final class LanguageProblem {
@@ -150,3 +157,61 @@ String applyLanguageEdits(String text, List edits) {
   }
   return text;
 }
+
+/// Completion edits are confined to the captured buffer. Never forward a server
+/// command to Monaco's client command registry.
+Map<String, Object?> checkedCompletion(String text, Map<String, Object?> item) {
+  if (item['command'] != null) {
+    throw const LanguageFailure(
+      'This completion requires a separate server command. Use a reviewed import quick fix.',
+    );
+  }
+  final primary = item['textEdit'];
+  final additional = item['additionalTextEdits'];
+  if (additional != null && additional is! List) {
+    throw const LanguageFailure('Invalid completion imports.');
+  }
+  final edits = <Object?>[
+    if (primary is Map)
+      {
+        'range': primary['range'] ?? primary['replace'],
+        'newText': primary['newText'],
+      },
+    if (additional is List) ...additional,
+  ];
+  final after = applyLanguageEdits(text, edits);
+  if (utf8.encode(after).length > 512 * 1024 ||
+      utf8.decode(utf8.encode(after)) != after ||
+      after.contains('\u0000') ||
+      after.contains('\r')) {
+    throw const LanguageFailure(
+      'Completion exceeds the supported document limits.',
+    );
+  }
+  return {...item}..remove('command');
+}
+
+/// A fast acceptance can insert the primary completion before its imports arrive.
+/// Admit exactly that edit, never unrelated typing or snippet transformations.
+String? acceptedCompletionText(String text, Map<String, Object?> item) {
+  final edit = item['textEdit'];
+  if (edit is! Map ||
+      edit['newText'] is! String ||
+      (item['insertTextFormat'] == 2 &&
+          (edit['newText'] as String).contains(r'$'))) {
+    return null;
+  }
+  return applyLanguageEdits(text, [
+    {'range': edit['range'] ?? edit['replace'], 'newText': edit['newText']},
+  ]);
+}
+
+bool completionVersionMatches(
+  LanguageDocument before,
+  LanguageDocument? current,
+  Map<String, Object?> item,
+) =>
+    current != null &&
+    ((current.version == before.version && current.text == before.text) ||
+        (current.version == before.version + 1 &&
+            current.text == acceptedCompletionText(before.text, item)));

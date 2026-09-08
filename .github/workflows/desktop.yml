@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: '3.12.10'
       - name: Install native project tools
-        run: python -m pip install uv==0.8.22 poetry==2.2.1 ruff==0.16.6 black==26.5.1 pytest==9.0.2 pytest-cov==7.1.0
+        run: python -m pip install uv==0.8.22 poetry==2.2.1 ruff==0.16.6 black==26.5.1 pytest==9.0.2 pytest-cov==7.1.0 debugpy==1.8.21 Django==6.1.1 fastapi==0.140.6 uvicorn==0.52.4
       - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
       - run: dart run dartitect_cli:dartitect scan
@@ -57,6 +57,17 @@ jobs:
           TABRYO_TEST_PROJECT_SETUP: '1'
           TABRYO_TEST_LANGUAGE_PYTHON: '1'
           TABRYO_TEST_TASKS: '1'
+          TABRYO_TEST_DEBUG_PYTHON: '1'
+      - name: Windows Flutter debugger integration
+        if: runner.os == 'Windows'
+        run: flutter test test/debugger_test.dart --plain-name "Flutter discovers" --concurrency=1
+        env:
+          TABRYO_TEST_FLUTTER_DEBUG: '1'
+      - name: Linux Flutter debugger integration
+        if: runner.os == 'Linux'
+        run: xvfb-run -a flutter test test/debugger_test.dart --plain-name "Flutter discovers" --concurrency=1
+        env:
+          TABRYO_TEST_FLUTTER_DEBUG: '1'
       - name: Windows native terminal tests
         if: runner.os == 'Windows'
         run: flutter test integration_test/terminal_host_test.dart -d windows

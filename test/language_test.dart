@@ -11,6 +11,7 @@ import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/language/application/language_service.dart';
 import 'package:tabryo/features/language/domain/language_server.dart';
 import 'package:tabryo/features/language/infrastructure/lsp_connection.dart';
+import 'package:tabryo/features/language/infrastructure/local_language_sources.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -89,7 +90,7 @@ void main() {
         }),
       );
       await Future<void>.delayed(Duration.zero);
-      expect(sent.single['error']['code'], -32601);
+      expect(sent.single['result']['applied'], isFalse);
       final pending = connection.request('textDocument/hover', {});
       final failed = expectLater(pending, throwsA(isA<LanguageFailure>()));
       await input.close();
@@ -149,6 +150,106 @@ void main() {
     },
   );
 
+  test('Dependency browsing admits declared libraries and rejects unrelated files and escaping links', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'tabryo_dependencies_',
+    );
+    final base = await directory.resolveSymbolicLinks();
+    final project = await Directory(p.join(base, 'app')).create();
+    final library = await Directory(p.join(base, 'package', 'lib'))
+        .create(recursive: true);
+    final source = await File(p.join(library.path, 'value.dart'))
+        .writeAsString('class Value {}\n');
+    final outside = await File(p.join(base, 'unrelated.dart'))
+        .writeAsString('private\n');
+    await Directory(p.join(project.path, '.dart_tool')).create();
+    await File(p.join(project.path, '.dart_tool', 'package_config.json'))
+        .writeAsString(
+          jsonEncode({
+            'configVersion': 2,
+            'packages': [
+              {
+                'name': 'dependency',
+                'rootUri': '../../package/',
+                'packageUri': 'lib/',
+              },
+            ],
+          }),
+        );
+    final sources = LocalLanguageSources(LocalDocumentFiles(PreviewCache()));
+    final spec = LanguageServerSpec(
+      kind: LanguageServerKind.dart,
+      workspace: project.path,
+      root: project.path,
+      executable: _dart(),
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    expect((await sources.open(spec, source.path)).text, 'class Value {}\n');
+    await expectLater(
+      sources.open(spec, outside.path),
+      throwsA(isA<LanguageFailure>()),
+    );
+    final link = Link(p.join(library.path, 'escape.dart'));
+    try {
+      await link.create(outside.path);
+    } on FileSystemException {
+      return;
+    }
+    await expectLater(
+      sources.open(spec, link.path),
+      throwsA(isA<LanguageFailure>()),
+    );
+  });
+
+  test('Completion imports reject overlapping edits and server commands', () {
+    final edit = {
+      'range': {
+        'start': {'line': 0, 'character': 0},
+        'end': {'line': 0, 'character': 3},
+      },
+      'newText': 'Random',
+    };
+    expect(
+      () => checkedCompletion('Ran', {
+        'textEdit': edit,
+        'additionalTextEdits': [edit],
+      }),
+      throwsA(isA<LanguageFailure>()),
+    );
+    expect(
+      () => checkedCompletion('Ran', {
+        'command': {'command': 'execute'},
+      }),
+      throwsA(isA<LanguageFailure>()),
+    );
+    final item = <String, Object?>{'textEdit': edit};
+    final before = LanguageDocument('root', 'main.dart', 'Ran', 8);
+    expect(
+      completionVersionMatches(
+        before,
+        LanguageDocument('root', 'main.dart', 'Random', 9),
+        item,
+      ),
+      isTrue,
+    );
+    expect(
+      completionVersionMatches(
+        before,
+        LanguageDocument('root', 'main.dart', 'Random', 10),
+        item,
+      ),
+      isFalse,
+    );
+    expect(
+      completionVersionMatches(
+        before,
+        LanguageDocument('root', 'main.dart', 'Random typing', 9),
+        item,
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'Dart server analyzes unsaved buffers, navigates, renames and formats',
     () async {
@@ -163,6 +264,9 @@ void main() {
       final editor = EditorViewModel(
         LocalDocumentFiles(PreviewCache()),
         language: service,
+        languageSources: LocalLanguageSources(
+          LocalDocumentFiles(PreviewCache()),
+        ),
       );
       addTearDown(() async {
         await editor.disposeAsync();
@@ -243,6 +347,64 @@ void main() {
       expect(
         items.any((item) => '${item['label']}'.startsWith('toString')),
         isTrue,
+      );
+      const importSource = 'void main() { Ran; }\n';
+      buffer.controller.text = importSource;
+      final imports = await editor.languageRequest(
+        buffer,
+        'textDocument/completion',
+        {
+          'position': languagePosition(
+            importSource,
+            importSource.indexOf('Ran') + 3,
+          ),
+        },
+      ) as Map;
+      final random = (imports['items'] as List).cast<Map>().firstWhere(
+        (item) => item['label'] == 'Random',
+      );
+      final resolved = await editor.languageRequest(
+        buffer,
+        'completionItem/resolve',
+        {'ticket': random['ticket']},
+      ) as Map;
+      expect(resolved['additionalTextEdits'], isNotEmpty);
+      expect(resolved.containsKey('command'), isFalse);
+      final imported = applyLanguageEdits(importSource, [
+        resolved['textEdit'],
+        ...resolved['additionalTextEdits'] as List,
+      ]);
+      expect(imported, contains("import 'dart:math';"));
+      expect(imported, contains('Random'));
+      final sdkSource = p.join(
+        p.dirname(p.dirname(dart)),
+        'lib',
+        'math',
+        'random.dart',
+      );
+      await editor.navigateLanguage(buffer, Uri.file(sdkSource).toString(), {
+        'line': 0,
+        'character': 0,
+      });
+      final source = editor.active!;
+      expect(source.readOnly, isTrue);
+      expect(source.controller.text, contains('Random'));
+      expect(
+        service.sessions.values.single.documents.containsKey(source.path),
+        isFalse,
+      );
+      editor.applyWebEdit(source, 'overwrite', 0, 0, false, false);
+      expect(source.controller.text, isNot('overwrite'));
+      expect(await editor.save(source), isFalse);
+      expect(await editor.reload(source), isTrue);
+      editor.select(buffer);
+      expect(await file.readAsString(), 'void main() {}\n');
+      buffer.controller.text = 'new typing\n';
+      await expectLater(
+        editor.languageRequest(buffer, 'completionItem/resolve', {
+          'ticket': random['ticket'],
+        }),
+        throwsA(isA<Cancelled>()),
       );
       buffer.controller.text = 'int count=1; void main(){print(count);}\n';
       expect(await editor.save(buffer), isTrue, reason: buffer.error);

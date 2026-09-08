@@ -254,7 +254,13 @@ final class LspConnection implements LanguageConnection {
         // open URLs or apply edits without the application's review flow.
         _send({
           'id': value['id'],
-          'error': {'code': -32601, 'message': 'Unsupported client request'},
+          if (value['method'] == 'workspace/applyEdit')
+            'result': {
+              'applied': false,
+              'failureReason': 'Request a reviewed editor proposal. Unsolicited edits are refused.',
+            }
+          else
+            'error': {'code': -32601, 'message': 'Unsupported client request'},
         });
       } else {
         _events.add(value);

@@ -11,6 +11,10 @@ import 'package:ffi/ffi.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/preview_cache.dart';
+import 'package:tabryo/features/debugger/application/debug_service.dart';
+import 'package:tabryo/features/debugger/domain/debug_session.dart';
+import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
+import 'package:tabryo/features/debugger/presentation/debug_panel.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/mcp_studio/application/mcp_studio.dart';
@@ -193,6 +197,7 @@ void main() {
       );
       final host = CountingHost();
       final editor = EditorViewModel(LocalDocumentFiles(cache));
+      final debugger = DebugService(LocalDebugAdapters());
       final model = WorkbenchViewModel(
         host: host,
         launcher: InteractiveLauncher(),
@@ -205,6 +210,7 @@ void main() {
         projects: projects,
         tasks: tasks,
         editor: editor,
+        debugger: debugger,
       );
       addTearDown(() async {
         await model.disposeAsync();
@@ -332,6 +338,69 @@ void main() {
       await model.stopTask(running);
       expect(running.status, TaskStatus.cancelled);
       expect(model.sessions[running.sessionId]!.status, SessionStatus.exited);
+      final debugSource = await File(p.join(root, 'main.dart')).writeAsString(
+        'void main() {\n  var answer = 41;\n  print(answer + 1);\n}\n',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: DebugPanel(
+                service: debugger,
+                project: dartProject,
+                tools: tools,
+                onStart: model.startDebugger,
+                onStop: debugger.stop,
+                onControl: model.controlDebugger,
+                onSource: model.openDebugSource,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.enterText(
+        find.widgetWithText(
+          TextField,
+          'Breakpoint lines in this file (for example 5, 12)',
+        ),
+        '3',
+      );
+      await tester.ensureVisible(find.text('Review run / debug'));
+      await tester.tap(find.text('Review run / debug'));
+      await tester.pumpAndSettle();
+      expect(debugger.active, isFalse);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(debugger.active, isFalse);
+      await tester.tap(find.text('Review run / debug'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start reviewed session'));
+      await until(
+        tester,
+        () =>
+            debugger.status == DebugStatus.paused && debugger.scopes.isNotEmpty,
+      );
+      // A paused debugger retains the same project command reservation.
+      final conflicting = await tasks.prepare(
+        dartProject,
+        tools,
+        ProjectTaskKind.run,
+        target: entry.path,
+      );
+      await expectLater(
+        model.runTask(conflicting),
+        throwsA(isA<ProjectFailure>()),
+      );
+      await tester.pump();
+      expect(find.text('main.dart: 3 verified'), findsOneWidget);
+      await tester.ensureVisible(find.byTooltip('Open stack source').first);
+      await tester.tap(find.byTooltip('Open stack source').first);
+      await until(tester, () => editor.active?.path == debugSource.path);
+      expect(editor.active!.controller.selection.start, greaterThan(0));
+      await tester.ensureVisible(find.text('Stop debugger'));
+      await tester.tap(find.text('Stop debugger'));
+      await until(tester, () => !debugger.active);
+      expect(debugger.status, DebugStatus.terminated);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

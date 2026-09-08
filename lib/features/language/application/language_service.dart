@@ -45,6 +45,16 @@ final class LanguageService {
   bool starting = false;
   int generation = 0;
   String? message;
+  int _nextCompletion = 0;
+  final _completions =
+      <
+        int,
+        ({
+          LanguageSession session,
+          LanguageDocument doc,
+          Map<String, Object?> item,
+        })
+      >{};
 
   void _removeProblem(String key) {
     _problems.remove(key);
@@ -101,7 +111,9 @@ final class LanguageService {
             'positionEncodings': ['utf-16'],
           },
           'workspace': {
-            'applyEdit': false,
+            // Unsolicited requests receive an explicit applied:false response.
+            // Completion imports in this document use additionalTextEdits.
+            'applyEdit': true,
             'configuration': false,
             'workspaceEdit': {
               'documentChanges': true,
@@ -115,6 +127,13 @@ final class LanguageService {
               'completionItem': {
                 'snippetSupport': true,
                 'documentationFormat': ['plaintext'],
+                'resolveSupport': {
+                  'properties': [
+                    'documentation',
+                    'detail',
+                    'additionalTextEdits',
+                  ],
+                },
               },
             },
             'hover': {
@@ -130,8 +149,19 @@ final class LanguageService {
             'codeAction': {
               'codeActionLiteralSupport': {
                 'codeActionKind': {
-                  'valueSet': ['quickfix', 'source.organizeImports'],
+                  'valueSet': [
+                    'quickfix',
+                    'refactor',
+                    'refactor.extract',
+                    'refactor.inline',
+                    'refactor.rewrite',
+                    'source.organizeImports',
+                  ],
                 },
+              },
+              'dataSupport': true,
+              'resolveSupport': {
+                'properties': ['edit'],
               },
             },
             'rename': {'prepareSupport': false},
@@ -140,7 +170,7 @@ final class LanguageService {
         'initializationOptions': spec.kind == LanguageServerKind.dart
             ? {
                 'onlyAnalyzeProjectsWithOpenFiles': true,
-                'suggestFromUnimportedLibraries': false,
+                'suggestFromUnimportedLibraries': true,
               }
             : <String, Object?>{},
       });
@@ -373,6 +403,45 @@ final class LanguageService {
     Cancellation? cancellation,
     bool lint = false,
   }) async {
+    if (method == 'completionItem/resolve') {
+      final entry = _completions[params['ticket']];
+      if (entry == null ||
+          entry.doc.workspace != doc.workspace ||
+          entry.doc.path != doc.path ||
+          (entry.doc.version != doc.version &&
+              (doc.version != entry.doc.version + 1 ||
+                  acceptedCompletionText(entry.doc.text, entry.item) !=
+                      doc.text)) ||
+          sessions[entry.session.spec.id] != entry.session ||
+          !entry.session.ready) {
+        throw const Cancelled();
+      }
+      final provider = entry.session.capabilities['completionProvider'];
+      final resolved = provider is Map && provider['resolveProvider'] == true
+          ? await entry.session.connection.request(
+              method,
+              entry.item,
+              cancellation: cancellation,
+            )
+          : entry.item;
+      cancellation?.check();
+      if (!entry.session.ready ||
+          sessions[entry.session.spec.id] != entry.session ||
+          !completionVersionMatches(
+            entry.doc,
+            entry.session.documents[doc.path],
+            entry.item,
+          )) {
+        throw const Cancelled();
+      }
+      if (resolved is! Map) {
+        throw const LanguageFailure('Invalid resolved completion.');
+      }
+      return checkedCompletion(
+        entry.doc.text,
+        Map<String, Object?>.from(resolved),
+      );
+    }
     final session = sessionFor(doc, lint: lint);
     if (session == null) return null;
     final capability = switch (method) {
@@ -384,6 +453,7 @@ final class LanguageService {
       'textDocument/documentSymbol' => 'documentSymbolProvider',
       'textDocument/rename' => 'renameProvider',
       'textDocument/codeAction' => 'codeActionProvider',
+      'codeAction/resolve' => 'codeActionProvider',
       'textDocument/formatting' => 'documentFormattingProvider',
       _ => throw const LanguageFailure('Unsupported language operation.'),
     };
@@ -391,14 +461,45 @@ final class LanguageService {
         session.capabilities[capability] == false) {
       return null;
     }
+    if (method == 'codeAction/resolve') {
+      final provider = session.capabilities[capability];
+      if (provider is! Map || provider['resolveProvider'] != true) {
+        return params;
+      }
+    }
     final result = await session.connection.request(method, {
       ...params,
-      'textDocument': {'uri': Uri.file(doc.path).toString()},
+      if (method != 'codeAction/resolve')
+        'textDocument': {'uri': Uri.file(doc.path).toString()},
     }, cancellation: cancellation);
     if (!session.ready ||
         sessions[session.spec.id] != session ||
         session.documents[doc.path]?.version != doc.version) {
       throw const Cancelled();
+    }
+    if (method == 'textDocument/completion') {
+      _completions.removeWhere(
+        (_, entry) =>
+            entry.doc.path == doc.path && entry.doc.workspace == doc.workspace,
+      );
+      final values = result is List
+          ? result
+          : (result is Map ? result['items'] : null);
+      final items = <Map<String, Object?>>[];
+      for (final raw in (values is List ? values : []).take(200)) {
+        if (raw is! Map || raw['label'] is! String) continue;
+        final item = Map<String, Object?>.from(raw);
+        final ticket = ++_nextCompletion;
+        while (_completions.length >= 800) {
+          _completions.remove(_completions.keys.first);
+        }
+        _completions[ticket] = (session: session, doc: doc, item: item);
+        items.add({...checkedCompletion(doc.text, item), 'ticket': ticket});
+      }
+      return {
+        'isIncomplete': result is Map && result['isIncomplete'] == true,
+        'items': items,
+      };
     }
     return result;
   }
@@ -406,6 +507,7 @@ final class LanguageService {
   Future<void> stop(String id) async {
     final session = sessions.remove(id);
     if (session == null) return;
+    _completions.removeWhere((_, entry) => identical(entry.session, session));
     generation++;
     final wasReady = session.ready;
     session.ready = false;

@@ -19,6 +19,7 @@ import 'package:tabryo/features/editor/presentation/monaco_editor.dart';
 import 'package:tabryo/features/language/application/language_service.dart';
 import 'package:tabryo/features/language/domain/language_server.dart';
 import 'package:tabryo/features/language/infrastructure/lsp_connection.dart';
+import 'package:tabryo/features/language/infrastructure/local_language_sources.dart';
 import 'package:webview_win_floating/webview_win_floating.dart';
 
 void controlKey(int key) {
@@ -166,6 +167,9 @@ void main() {
         LocalDocumentFiles(PreviewCache()),
         formatter: LocalDartFormatter(),
         language: LanguageService(LocalLanguageServers()),
+        languageSources: LocalLanguageSources(
+          LocalDocumentFiles(PreviewCache()),
+        ),
         webAssets: BundledEditorAssets(
           load: (name) async =>
               (await rootBundle.load(name)).buffer.asUint8List(),
@@ -624,6 +628,60 @@ void main() {
         "document.querySelector('.suggest-widget')?.innerText.includes('toString') ?? false",
         true,
       );
+      const importSource = 'void main() { Ran; }\n';
+      buffer.controller.value = TextEditingValue(
+        text: importSource,
+        selection: TextSelection.collapsed(
+          offset: importSource.indexOf('Ran') + 3,
+        ),
+      );
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      editor.webCommand?.call('completion');
+      await expectWeb(
+        tester,
+        reconnected,
+        "[...document.querySelectorAll('.suggest-widget .monaco-list-row')].some(e => e.querySelector('.label-name')?.textContent === 'Random')",
+        true,
+      );
+      await reconnected.runJavaScript("""
+        (() => {
+          const row = [...document.querySelectorAll('.suggest-widget .monaco-list-row')].find(e => e.querySelector('.label-name')?.textContent === 'Random');
+          row.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
+          row.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, button:0}));
+          row.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, button:0}));
+        })();
+      """);
+      await expectWeb(
+        tester,
+        reconnected,
+        "document.querySelector('.view-lines')?.innerText.includes('dart:math') ?? false",
+        true,
+      );
+      expect(
+        buffer.controller.text,
+        contains("import 'dart:math';"),
+        reason: buffer.error,
+      );
+      expect(buffer.controller.text, contains('Random'));
+      expect(await file.readAsString(), isNot(contains("import 'dart:math';")));
+      final sourcePath = p.join(
+        p.dirname(p.dirname(editor.dartFormatters[root]!)),
+        'lib',
+        'math',
+        'random.dart',
+      );
+      await editor.navigateLanguage(buffer, Uri.file(sourcePath).toString(), {
+        'line': 0,
+        'character': 0,
+      });
+      await until(tester, () => editor.active!.readOnly);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Dependency source · Read only'),
+        findsOneWidget,
+      );
+      expect(await editor.save(editor.active!), isFalse);
+      editor.select(buffer);
       buffer.controller.text = 'void main(){print("ação 🌱");}\n';
       debugPrint(
         'Native editor: completion rendered; checking language format on save',

@@ -178,7 +178,7 @@ final class ProjectSetup {
           commands.add(
             command(
               'Install Python development tools',
-              'Installs Pyright, Ruff, debugpy and pytest in $venv. This does not enable their IDE integrations.',
+              'Installs Pyright, Ruff, debugpy and pytest in $venv. Language servers and debugging start separately.',
               uv,
               [
                 'pip',
@@ -246,7 +246,7 @@ final class ProjectSetup {
       commands.add(
         command(
           'Install Python development tools',
-          'Installs Pyright, Ruff, debugpy and pytest in $venv. This does not enable their IDE integrations.',
+          'Installs Pyright, Ruff, debugpy and pytest in $venv. Language servers and debugging start separately.',
           python,
           [
             '-m',

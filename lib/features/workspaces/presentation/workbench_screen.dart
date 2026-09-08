@@ -24,6 +24,7 @@ import '../../mcp/presentation/mcp_hub_screen.dart';
 import '../domain/workspace.dart';
 import 'workbench_dialogs.dart';
 import 'workbench_view_model.dart';
+import '../../debugger/presentation/debug_panel.dart';
 
 final class WorkbenchScreen extends StatefulWidget {
   const WorkbenchScreen({required this.model, super.key});
@@ -151,28 +152,48 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
           onApply: model.applyProjectToolchains,
           taskPanel: model.tasks == null
               ? null
-              : (project, selection) => TasksPanel(
-                  key: ValueKey(project.id),
-                  model: model.tasks!,
-                  project: project,
-                  projects: projects.discovery.projects,
-                  selection: selection,
-                  onRun: model.runTask,
-                  onOpenConfiguration: () async {
-                    await model.openFile(
-                      p.join(project.directory, '.tabryo', 'project.json'),
-                    );
-                    if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  },
-                  onStop: model.stopTask,
-                  onTerminal: (task) {
-                    model.showTaskTerminal(task);
-                    if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  },
-                  onOpen: (task, result) async {
-                    await model.openTestResult(task, result);
-                    if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  },
+              : (project, selection) => Column(
+                  children: [
+                    if (model.debugger != null)
+                      DebugPanel(
+                        key: ValueKey('debug:${project.id}'),
+                        service: model.debugger!,
+                        project: project,
+                        tools: selection,
+                        onStart: model.startDebugger,
+                        onStop: model.debugger!.stop,
+                        onControl: model.controlDebugger,
+                        onSource: (path, line, column) async {
+                          await model.openDebugSource(path, line, column);
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                      ),
+                    TasksPanel(
+                      key: ValueKey(project.id),
+                      model: model.tasks!,
+                      project: project,
+                      projects: projects.discovery.projects,
+                      selection: selection,
+                      onRun: model.runTask,
+                      onOpenConfiguration: () async {
+                        await model.openFile(
+                          p.join(project.directory, '.tabryo', 'project.json'),
+                        );
+                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      },
+                      onStop: model.stopTask,
+                      onTerminal: (task) {
+                        model.showTaskTerminal(task);
+                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      },
+                      onOpen: (task, result) async {
+                        await model.openTestResult(task, result);
+                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      },
+                    ),
+                  ],
                 ),
           onRun: (project, command) async {
             await model.runProjectCommand(project, command);

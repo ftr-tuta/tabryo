@@ -186,6 +186,40 @@ final class _TasksPanelState extends State<TasksPanel> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           if (widget.model.message != null) Text(widget.model.message!),
+          if (widget.project.kind == ProjectKind.python) ...[
+            const Text(
+              'Django management · requires manage.py in this project',
+            ),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final preset in <String, List<String>>{
+                  'Django check': ['check'],
+                  'Django migration plan': ['migrate', '--plan'],
+                  'Django make migrations': ['makemigrations'],
+                  'Django migrate': ['migrate'],
+                }.entries)
+                  OutlinedButton(
+                    onPressed: busy
+                        ? null
+                        : () => _act(() async {
+                            final task = await widget.model.prepare(
+                              widget.project,
+                              widget.selection,
+                              ProjectTaskKind.run,
+                              target: p.join(
+                                widget.project.directory,
+                                'manage.py',
+                              ),
+                              arguments: preset.value,
+                            );
+                            await _approve(task);
+                          }),
+                    child: Text(preset.key),
+                  ),
+              ],
+            ),
+          ],
           OutlinedButton(
             onPressed: busy || widget.model.scanning
                 ? null

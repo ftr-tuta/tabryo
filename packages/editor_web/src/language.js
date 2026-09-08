@@ -10,7 +10,16 @@ export function installLanguage(editor, documents, emit, snapshot) {
     isTrusted: false, supportHtml: false });
   const docFor = model => [...documents.values()].find(d => d.model === model);
   const uriFor = uri => [...documents.values()].find(d => d.sourceUri === uri)?.model.uri ?? monaco.Uri.parse(uri);
-  function request(model, method, params = {}, cancellation) {
+  const completion = (item, model, fallback) => ({
+    label: item.label, kind: completionKind(item.kind), detail: item.detail,
+    documentation: markdown(item.documentation), sortText: item.sortText, filterText: item.filterText,
+    insertText: item.textEdit?.newText ?? item.insertText ?? item.label,
+    insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : 0,
+    range: item.textEdit?.range ? range(item.textEdit.range) : (item.textEdit?.replace ? range(item.textEdit.replace) : fallback),
+    additionalTextEdits: item.additionalTextEdits?.map(edit => ({ range: range(edit.range), text: edit.newText })),
+    _ticket: item.ticket, _model: model, _version: model.getVersionId(),
+  });
+  function request(model, method, params = {}, cancellation, stillValid) {
     const doc = docFor(model);
     if (!doc || !doc.languageEnabled || pending.size >= 32 || cancellation?.isCancellationRequested) return Promise.resolve(null);
     emit(snapshot(doc));
@@ -20,7 +29,7 @@ export function installLanguage(editor, documents, emit, snapshot) {
       const finish = result => {
         if (!pending.has(request)) return;
         pending.delete(request); clearTimeout(timer); subscription?.dispose();
-        resolve(!model.isDisposed() && model.getVersionId() === version ? result : null);
+        resolve(!model.isDisposed() && (model.getVersionId() === version || stillValid?.()) ? result : null);
       };
       const timer = setTimeout(() => { emit({ type: 'languageCancel', id: doc.id, request }); finish(null); }, 25000);
       let subscription;
@@ -39,14 +48,17 @@ export function installLanguage(editor, documents, emit, snapshot) {
         const word = model.getWordUntilPosition(at);
         const fallback = { startLineNumber: at.lineNumber, endLineNumber: at.lineNumber,
           startColumn: word.startColumn, endColumn: word.endColumn };
-        return { incomplete: result?.isIncomplete ?? false, suggestions: (Array.isArray(result) ? result : result?.items ?? []).slice(0, 200).map(item => ({
-          label: item.label, kind: completionKind(item.kind), detail: item.detail,
-          documentation: markdown(item.documentation), sortText: item.sortText, filterText: item.filterText,
-          insertText: item.textEdit?.newText ?? item.insertText ?? item.label,
-          insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : 0,
-          range: item.textEdit?.range ? range(item.textEdit.range) : (item.textEdit?.replace ? range(item.textEdit.replace) : fallback),
-          additionalTextEdits: item.additionalTextEdits?.map(edit => ({ range: range(edit.range), text: edit.newText })),
-        })) };
+        return { incomplete: result?.isIncomplete ?? false, suggestions: (Array.isArray(result) ? result : result?.items ?? []).slice(0, 200).map(item => completion(item, model, fallback)) };
+      },
+      resolveCompletionItem: async (item, cancel) => {
+        if (item._model.isDisposed() || item._model.getVersionId() !== item._version) return item;
+        const before = item._model.getValue();
+        const start = item._model.getOffsetAt({lineNumber:item.range.startLineNumber, column:item.range.startColumn});
+        const end = item._model.getOffsetAt({lineNumber:item.range.endLineNumber, column:item.range.endColumn});
+        const expected = before.slice(0, start) + item.insertText + before.slice(end);
+        const result = await request(item._model, 'completionItem/resolve', { ticket: item._ticket }, cancel,
+          () => item._model.getVersionId() === item._version + 1 && item._model.getValue() === expected);
+        return result ? completion(result, item._model, item.range) : item;
       },
     });
     monaco.languages.registerHoverProvider(language, {

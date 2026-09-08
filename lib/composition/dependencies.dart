@@ -24,6 +24,9 @@ import '../features/tasks/infrastructure/local_task_files.dart';
 import '../features/tasks/presentation/tasks_view_model.dart';
 import '../features/language/application/language_service.dart';
 import '../features/language/infrastructure/lsp_connection.dart';
+import '../features/language/infrastructure/local_language_sources.dart';
+import '../features/debugger/application/debug_service.dart';
+import '../features/debugger/infrastructure/dap_connection.dart';
 import '../features/terminals/infrastructure/native_terminal.dart';
 import '../features/terminals/infrastructure/local_text_clipboard.dart';
 import '../features/workspaces/presentation/workbench_view_model.dart';
@@ -38,6 +41,7 @@ WorkbenchViewModel createWorkbench() {
     cache: cache,
   );
   return WorkbenchViewModel(
+    debugger: DebugService(LocalDebugAdapters()),
     projects: ProjectsViewModel(LocalProjectEnvironment()),
     tasks: TasksViewModel(LocalTaskFiles(), windows: Platform.isWindows),
     collaboration: Platform.isWindows
@@ -53,6 +57,7 @@ WorkbenchViewModel createWorkbench() {
       formatter: LocalDartFormatter(),
       blackFormatter: LocalBlackFormatter(),
       language: LanguageService(LocalLanguageServers()),
+      languageSources: LocalLanguageSources(LocalDocumentFiles(cache)),
       webAssets: BundledEditorAssets(
         load: (name) async {
           final data = await rootBundle.load(name);
