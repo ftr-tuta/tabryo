@@ -134,7 +134,6 @@ Future<void> expectWeb(
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-  binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
   // Use the same native test cases in the compiled Release application, where
   // GTK/WebKit stderr is observable without the debug service test transport.
   if (kReleaseMode) {
@@ -331,7 +330,7 @@ void main() {
       await expectWeb(
         tester,
         browser,
-        "document.querySelector('.view-lines').innerText.includes('External')",
+        "document.querySelector('.view-lines')?.innerText.includes('External')",
         true,
       );
       expect(editor.active, isNot(same(buffer)));
@@ -339,7 +338,7 @@ void main() {
       await expectWeb(
         tester,
         browser,
-        "document.querySelector('.view-lines').innerText.includes('local')",
+        "document.querySelector('.view-lines')?.innerText.includes('local')",
         true,
       );
       expect(buffer.controller.text, contains('ação 🌱'));
@@ -370,7 +369,7 @@ void main() {
       await expectWeb(
         tester,
         reconnected,
-        "document.querySelector('.view-lines').innerText.includes('local')",
+        "document.querySelector('.view-lines')?.innerText.includes('local')",
         true,
       );
       expect(await editor.synchronizeBuffer(buffer), isTrue);

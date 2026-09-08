@@ -431,9 +431,10 @@ void MyWebView::addScriptChannelByName(gchar* channelName) {
 }
 
 void MyWebView::removeScriptChannelByName(gchar* channelName) {
-    _JsChannelInfo *info = m_jsChannels[channelName];
-    if (!info) return; // not exists
-    m_jsChannels.erase(channelName);
+    const auto channel = m_jsChannels.find(channelName);
+    if (channel == m_jsChannels.end()) return;
+    _JsChannelInfo *info = channel->second;
+    m_jsChannels.erase(channel);
     g_signal_handler_disconnect(m_user_content_manager, info->signal_id);
     webkit_user_content_manager_unregister_script_message_handler(m_user_content_manager, channelName);
 
