@@ -112,6 +112,18 @@ final class EditorPane extends StatelessWidget {
       final active = model.active;
       return Column(
         children: [
+          if (model.recoveryError != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(model.recoveryError!),
+            ),
+          if (model.recoveries.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text(
+                'Unsaved copies are available. Open Recover documents in the command palette.',
+              ),
+            ),
           SizedBox(
             height: 42,
             child: ListView(

@@ -276,6 +276,18 @@ final class WorkbenchDialogs {
                     ),
                   ),
                   CheckboxListTile(
+                    value: value.recoverDocuments,
+                    onChanged: (enabled) => update(
+                      () => value = value.copyWith(recoverDocuments: enabled),
+                    ),
+                    title: const Text(
+                      'Recover unsaved documents after a crash',
+                    ),
+                    subtitle: const Text(
+                      'Stores local text copies, which can contain sensitive data. Turning off clears this session and offered recovery copies. Other running windows keep their own copies.',
+                    ),
+                  ),
+                  CheckboxListTile(
                     value: value.watchFiles,
                     onChanged: (enabled) => update(
                       () => value = value.copyWith(watchFiles: enabled),
@@ -327,5 +339,97 @@ final class WorkbenchDialogs {
       ),
     );
     if (accepted == true) await model.updatePreferences(value);
+  }
+
+  Future<void> recoverDocuments() async {
+    final editor = model.editor;
+    if (editor == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => ListenableBuilder(
+        listenable: editor,
+        builder: (_, _) => AlertDialog(
+          title: const Text('Recover documents'),
+          content: SizedBox(
+            width: 720,
+            height: 420,
+            child: ListView(
+              children: [
+                if (!editor.recoveryEnabled)
+                  const Text(
+                    'Enable document recovery in Preferences to keep local copies.',
+                  ),
+                if (editor.recoveryError != null) Text(editor.recoveryError!),
+                if (editor.recoveryEnabled && editor.recoveries.isEmpty)
+                  const Text('No abandoned document copies were found.'),
+                for (final document in editor.recoveries)
+                  ListTile(
+                    title: Text(document.path),
+                    subtitle: const Text(
+                      'Preview or restore into a tab. The source file is not changed.',
+                    ),
+                    onTap: () => showDialog<void>(
+                      context: dialogContext,
+                      builder: (previewContext) => AlertDialog(
+                        title: Text(document.path),
+                        content: SizedBox(
+                          width: 720,
+                          height: 400,
+                          child: SingleChildScrollView(
+                            child: SelectableText(document.text),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(previewContext),
+                            child: const Text('Close'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: () async {
+                            await model.openWorkspace(document.root);
+                            if (model.workspace?.root != document.root) return;
+                            if (await editor.restoreDocument(document)) {
+                              model.showEditor(true);
+                              if (dialogContext.mounted) {
+                                Navigator.pop(dialogContext);
+                              }
+                            }
+                          },
+                          child: const Text('Restore'),
+                        ),
+                        IconButton(
+                          tooltip: 'Discard recovery copy',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            if (await confirm(
+                              'Discard recovery copy?',
+                              document.path,
+                              'Discard',
+                            )) {
+                              await editor.discardRecovery(document);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

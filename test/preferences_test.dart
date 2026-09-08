@@ -21,6 +21,7 @@ void main() {
         rememberWorkspaces: true,
         restoreLayout: true,
         watchFiles: true,
+        recoverDocuments: true,
         dartFormatters: {'/project': '/sdk/bin/dart'},
         theme: AppTheme.dark,
         fontSize: 18,
@@ -34,9 +35,11 @@ void main() {
       expect(loaded.theme, AppTheme.dark);
       expect(loaded.roots, ['/project']);
       expect(loaded.watchFiles, isTrue);
+      expect(loaded.recoverDocuments, isTrue);
       expect(loaded.dartFormatters, {'/project': '/sdk/bin/dart'});
       await store.save(const Preferences());
       expect((await store.load()).preferences.roots, isEmpty);
+      expect((await store.load()).preferences.recoverDocuments, isFalse);
       expect((await store.load()).preferences.dartFormatters, isEmpty);
       expect(await file.readAsString(), isNot(contains('/project')));
       expect(await File('${file.path}.tmp').exists(), isFalse);

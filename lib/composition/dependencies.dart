@@ -7,6 +7,7 @@ import '../core/preview_cache.dart';
 import '../features/collaboration/infrastructure/local_collaboration_client.dart';
 import '../features/collaboration/presentation/collaboration_view_model.dart';
 import '../features/editor/infrastructure/local_document_files.dart';
+import '../features/editor/infrastructure/local_document_recovery.dart';
 import '../features/editor/infrastructure/local_dart_formatter.dart';
 import '../features/editor/infrastructure/bundled_editor_assets.dart';
 import '../features/editor/presentation/editor_view_model.dart';
@@ -39,6 +40,7 @@ WorkbenchViewModel createWorkbench() {
     files: LocalWorkspaceFiles(cache),
     editor: EditorViewModel(
       LocalDocumentFiles(cache),
+      recovery: LocalDocumentRecovery.forUser(),
       formatter: LocalDartFormatter(),
       webAssets: BundledEditorAssets(
         load: (name) async {

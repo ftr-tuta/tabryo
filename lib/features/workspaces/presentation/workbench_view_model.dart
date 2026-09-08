@@ -97,6 +97,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     final result = await preferencesStore.load();
     if (_shutdown) return;
     preferences = result.preferences;
+    await editor?.configureRecovery(preferences.recoverDocuments);
     editor?.dartFormatters = preferences.dartFormatters;
     editor?.monitorExternalChanges(preferences.watchFiles);
     message = result.warning;
@@ -753,6 +754,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
 
   Future<void> updatePreferences(Preferences value) => guarded(() async {
     preferences = value;
+    await editor?.configureRecovery(value.recoverDocuments);
     await _configureWatcher();
     await _save(force: true);
     notifyListeners();

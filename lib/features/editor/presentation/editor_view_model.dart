@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 
 import '../domain/document_files.dart';
 import '../domain/document_formatter.dart';
+import '../domain/document_recovery.dart';
 import '../domain/editor_assets.dart';
 
 final class EditorBuffer {
@@ -43,8 +44,158 @@ final class EditorBuffer {
 }
 
 final class EditorViewModel extends DartitectViewModel {
-  EditorViewModel(this.files, {this.webAssets, this.formatter});
+  EditorViewModel(this.files, {this.webAssets, this.formatter, this.recovery});
   final DocumentFiles files;
+  final DocumentRecovery? recovery;
+  bool recoveryEnabled = false;
+  String? recoveryError;
+  List<RecoveredDocument> recoveries = const [];
+  Timer? _recoveryTimer;
+  Future<void> _recoveryWrite = Future.value();
+  bool _writingRecovery = false;
+  bool _recoveryRequested = false;
+  bool _recovering = false;
+
+  Future<void> configureRecovery(bool enabled) async {
+    if (_closed || recovery == null || recoveryEnabled == enabled) return;
+    recoveryEnabled = enabled;
+    _recoveryTimer?.cancel();
+    try {
+      if (enabled) {
+        recoveries = await recovery!.pending();
+        if (!await flushRecovery()) return;
+      } else {
+        await _recoveryWrite;
+        await recovery!.save([]);
+        for (final document in recoveries) {
+          await recovery!.remove(document.id);
+        }
+        recoveries = const [];
+      }
+      recoveryError = recovery!.warning;
+    } catch (error) {
+      recoveryError =
+          'Recovery storage failed: $error. Buffers remain in memory.';
+    }
+    if (!_closed) notifyListeners();
+  }
+
+  void _scheduleRecovery() {
+    if (!recoveryEnabled || _closed) return;
+    // A fixed delay (not a debounce) also checkpoints continuous typing.
+    _recoveryTimer ??= Timer(const Duration(milliseconds: 350), () {
+      _recoveryTimer = null;
+      unawaited(flushRecovery());
+    });
+  }
+
+  Future<bool> flushRecovery() async {
+    if (!recoveryEnabled || recovery == null) return true;
+    _recoveryTimer?.cancel();
+    _recoveryTimer = null;
+    _recoveryRequested = true;
+    if (_writingRecovery) {
+      await _recoveryWrite;
+      return recoveryError == null;
+    }
+    _writingRecovery = true;
+    _recoveryWrite = () async {
+      while (_recoveryRequested && recoveryEnabled) {
+        _recoveryRequested = false;
+        final documents = [
+          for (final buffer in _buffers.where((b) => b.dirty))
+            RecoveredDocument(
+              id: '',
+              root: buffer.root,
+              path: buffer.path,
+              text: buffer.controller.text,
+              diskText: buffer.baseline.text,
+              newline: buffer.baseline.newline,
+              bom: buffer.baseline.bom,
+              start: buffer.controller.selection.baseOffset.clamp(
+                0,
+                buffer.controller.text.length,
+              ),
+              end: buffer.controller.selection.extentOffset.clamp(
+                0,
+                buffer.controller.text.length,
+              ),
+            ),
+        ];
+        try {
+          await recovery!.save(documents);
+          recoveryError = null;
+        } catch (error) {
+          recoveryError =
+              'Recovery snapshot could not be saved: $error. Buffers remain in memory.';
+        }
+        if (!_closed) notifyListeners();
+      }
+    }();
+    await _recoveryWrite;
+    _writingRecovery = false;
+    return recoveryError == null;
+  }
+
+  Future<bool> restoreDocument(RecoveredDocument document) async {
+    if (_recovering || _closed || !recoveries.contains(document)) return false;
+    _recovering = true;
+    try {
+      if (_buffers.any((b) => p.equals(b.path, document.path))) {
+        throw const DocumentFailure(
+          'Close the existing tab before restoring this copy.',
+        );
+      }
+      // The filesystem adapter reauthorizes the path and compares current disk.
+      if (!await open(document.root, document.path)) return false;
+      final buffer = _buffers.lastWhere((b) => p.equals(b.path, document.path));
+      final changed = !document.matches(buffer.baseline);
+      buffer.controller.value = TextEditingValue(
+        text: document.text,
+        selection: TextSelection(
+          baseOffset: document.start,
+          extentOffset: document.end,
+        ),
+      );
+      buffer.reviewRequired = changed;
+      if (changed) {
+        buffer.diskText = buffer.baseline.text;
+        buffer.error = 'Disk changed since this recovery copy. Compare and choose Keep local edits or reload before saving.';
+      }
+      if (!await flushRecovery()) return false;
+      await recovery!.remove(document.id);
+      recoveries = recoveries.where((d) => d.id != document.id).toList();
+      return true;
+    } catch (error) {
+      recoveryError =
+          'Could not restore this copy: $error. The recovery copy is retained.';
+      return false;
+    } finally {
+      _recovering = false;
+      if (!_closed) notifyListeners();
+    }
+  }
+
+  Future<void> discardRecovery(RecoveredDocument document) async {
+    try {
+      await recovery?.remove(document.id);
+      recoveries = recoveries.where((d) => d.id != document.id).toList();
+    } catch (error) {
+      recoveryError = '$error';
+    }
+    if (!_closed) notifyListeners();
+  }
+
+  /// Only called after the application's Save/Discard confirmation succeeds.
+  Future<void> finishRecoverySession() async {
+    _recoveryTimer?.cancel();
+    _recoveryTimer = null;
+    final enabled = recoveryEnabled;
+    recoveryEnabled = false;
+    await _recoveryWrite;
+    if (enabled) await recovery?.save([]);
+  }
+
   final DocumentFormatter? formatter;
   Map<String, String> dartFormatters = const {};
   final EditorAssets? webAssets;
@@ -194,6 +345,7 @@ final class EditorViewModel extends DartitectViewModel {
           if (lastText != owned.controller.text) {
             lastText = owned.controller.text;
             owned.version++;
+            _scheduleRecovery();
           }
           if (owned.dirty != wasDirty) {
             wasDirty = owned.dirty;
@@ -300,6 +452,7 @@ final class EditorViewModel extends DartitectViewModel {
       if (_closed) return false;
       buffer.baseline = saved;
       buffer.diskText = null;
+      _scheduleRecovery();
       return !buffer.dirty;
     } catch (error) {
       if (!_closed) buffer.error = '$error';
@@ -454,6 +607,7 @@ final class EditorViewModel extends DartitectViewModel {
     if (!_buffers.contains(buffer)) return true;
     if (buffer.saving || (buffer.dirty && !discard)) return false;
     _buffers.remove(buffer);
+    _scheduleRecovery();
     if (identical(_selected[buffer.root], buffer)) {
       _selected.remove(buffer.root);
       final next = inWorkspace(buffer.root).lastOrNull;
@@ -480,11 +634,14 @@ final class EditorViewModel extends DartitectViewModel {
 
   @override
   Future<void> disposeAsync() async {
+    await flushRecovery();
+    _recoveryTimer?.cancel();
     _closed = true;
     formatter?.close();
     _monitorEpoch++;
     _monitor?.cancel();
     await webAssets?.close();
+    await recovery?.close();
     for (final buffer in _buffers) {
       buffer.dispose();
     }

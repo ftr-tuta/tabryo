@@ -8,6 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/features/editor/domain/document_files.dart';
 import 'package:tabryo/features/editor/domain/document_formatter.dart';
+import 'package:tabryo/core/preview_cache.dart';
+import 'package:tabryo/features/editor/domain/document_recovery.dart';
+import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
+import 'package:tabryo/features/editor/infrastructure/local_document_recovery.dart';
 import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart';
 import 'package:tabryo/features/editor/domain/editor_assets.dart';
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
@@ -89,6 +93,170 @@ void main() {
   setUp(() {
     files = MemoryDocuments();
     editor = EditorViewModel(files)..selectWorkspace(root);
+  });
+
+  test('recovery survives process death and excludes live owners', () async {
+    final directory = await Directory.systemTemp.createTemp('editor-recovery-');
+    final storage = LocalDocumentRecovery(
+      Directory(p.join(directory.path, 'copies')),
+    );
+    final config = File('.dart_tool/package_config.json').absolute;
+    final packages =
+        (jsonDecode(await config.readAsString()) as Map)['packages'] as List;
+    final flutter = packages.cast<Map>().firstWhere(
+      (v) => v['name'] == 'flutter',
+    );
+    final sdkRoot = p.dirname(
+      p.dirname(config.uri.resolve(flutter['rootUri'] as String).toFilePath()),
+    );
+    final executable = p.join(
+      sdkRoot,
+      'bin',
+      'cache',
+      'dart-sdk',
+      'bin',
+      Platform.isWindows ? 'dart.exe' : 'dart',
+    );
+    final source = File(p.join(directory.path, 'owner.dart'));
+    await source.writeAsString('''
+import 'dart:io';
+import 'package:tabryo/features/editor/domain/document_recovery.dart';
+import 'package:tabryo/features/editor/infrastructure/local_document_recovery.dart';
+Future<void> main(List<String> args) async {
+  final store = LocalDocumentRecovery(Directory(args[0]));
+  await store.save([RecoveredDocument(id: '', root: args[1], path: args[2],
+    text: 'ação 🌱\\n', diskText: 'before\\n', newline: '\\r\\n', bom: true, start: 5, end: 7)]);
+  stdout.writeln('saved');
+  await stdin.drain<void>();
+}
+''');
+    final child = await Process.start(executable, [
+      '--packages=${config.path}',
+      source.path,
+      p.join(directory.path, 'copies'),
+      directory.path,
+      p.join(directory.path, 'source.dart'),
+    ]);
+    final errors = child.stderr.transform(utf8.decoder).join();
+    addTearDown(() async {
+      child.kill();
+      await child.exitCode;
+      await storage.close();
+      await directory.delete(recursive: true);
+    });
+    expect(
+      await child.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .first
+          .timeout(const Duration(seconds: 20)),
+      'saved',
+    );
+    expect(await storage.pending(), isEmpty);
+    expect(child.kill(ProcessSignal.sigkill), isTrue);
+    await child.exitCode.timeout(const Duration(seconds: 10));
+    expect(await errors, isEmpty);
+    final recovered = await storage.pending();
+    expect(recovered, hasLength(1));
+    expect(recovered.single.text, 'ação 🌱\n');
+    expect(recovered.single.bom, isTrue);
+    expect(recovered.single.newline, '\r\n');
+    expect(recovered.single.start, 5);
+    await storage.remove(recovered.single.id);
+    expect(await storage.pending(), isEmpty);
+  });
+
+  test('recovery compares disk, preserves selection and clears only after a durable transfer', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'editor-documents-',
+    );
+    final root = await directory.resolveSymbolicLinks();
+    final disk = File(p.join(root, 'ação.dart'));
+    await disk.writeAsBytes([0xef, 0xbb, 0xbf, ...utf8.encode('before\r\n')]);
+    final localFiles = LocalDocumentFiles(PreviewCache());
+    final copies = Directory(p.join(root, 'copies'));
+    final first = EditorViewModel(
+      localFiles,
+      recovery: LocalDocumentRecovery(copies),
+    )..selectWorkspace(root);
+    await first.configureRecovery(true);
+    await first.open(root, disk.path);
+    first.active!.controller.value = const TextEditingValue(
+      text: 'ação 🌱\n',
+      selection: TextSelection(baseOffset: 5, extentOffset: 7),
+    );
+    expect(await first.flushRecovery(), isTrue);
+    await first.disposeAsync();
+    await disk.writeAsString('external\n');
+    final next = EditorViewModel(
+      localFiles,
+      recovery: LocalDocumentRecovery(copies),
+    )..selectWorkspace(root);
+    addTearDown(() async {
+      await next.disposeAsync();
+      await directory.delete(recursive: true);
+    });
+    await next.configureRecovery(true);
+    expect(next.recoveries, hasLength(1));
+    expect(await next.restoreDocument(next.recoveries.single), isTrue);
+    expect(next.active!.controller.text, 'ação 🌱\n');
+    expect(
+      next.active!.controller.selection,
+      const TextSelection(baseOffset: 5, extentOffset: 7),
+    );
+    expect(next.active!.reviewRequired, isTrue);
+    expect(next.active!.diskText, 'external\n');
+    expect(await next.save(next.active!), isFalse);
+    expect(await disk.readAsString(), 'external\n');
+    next.keepLocalEdits(next.active!);
+    expect(await next.save(next.active!), isTrue);
+    expect(await disk.readAsString(), 'ação 🌱\n');
+    await next.finishRecoverySession();
+    expect(next.recoveries, isEmpty);
+  });
+
+  test('recovery is opt-in, revocable and keeps unreadable or missing source copies', () async {
+    final directory = await Directory.systemTemp.createTemp('editor-copies-');
+    final root = await directory.resolveSymbolicLinks();
+    final copies = Directory(p.join(root, 'copies'));
+    final store = LocalDocumentRecovery(copies);
+    final model = EditorViewModel(
+      LocalDocumentFiles(PreviewCache()),
+      recovery: store,
+    )..selectWorkspace(root);
+    addTearDown(() async {
+      await model.disposeAsync();
+      await directory.delete(recursive: true);
+    });
+    expect(await copies.exists(), isFalse);
+    final prior = LocalDocumentRecovery(copies);
+    await prior.save([
+      RecoveredDocument(
+        id: '',
+        root: root,
+        path: p.join(root, 'missing.dart'),
+        text: 'kept',
+        diskText: 'old',
+        newline: '\n',
+        bom: false,
+        start: 0,
+        end: 0,
+      ),
+    ]);
+    await prior.close();
+    final corrupt = await Directory(p.join(copies.path, 'session-corrupt'))
+        .create();
+    await File(p.join(corrupt.path, 'owner.lock')).writeAsString('');
+    final invalid = File(p.join(corrupt.path, 'documents.json'));
+    await invalid.writeAsString('{broken');
+    await model.configureRecovery(true);
+    expect(model.recoveries, hasLength(1));
+    expect(model.recoveryError, contains('could not be read'));
+    expect(await model.restoreDocument(model.recoveries.single), isFalse);
+    expect(model.recoveries.single.text, 'kept');
+    await model.configureRecovery(false);
+    expect(model.recoveries, isEmpty);
+    expect(await invalid.readAsString(), '{broken');
   });
 
   test(

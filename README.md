@@ -75,7 +75,23 @@ Saving checks the original bytes, modification time and file mode, stages a
 flushed replacement beside the file, rechecks the baseline and replaces it.
 Conflicts, unavailable paths, unpreserved file modes and write failures preserve the buffer. This is
 optimistic concurrency; it does not lock out other applications during the final
-filesystem rename. Unsaved buffers live in memory; crash recovery remains planned.
+filesystem rename.
+
+**Recover unsaved documents after a crash** is a separate opt-in preference.
+It keeps flushed local copies of dirty buffers under
+`%LOCALAPPDATA%/Tabryo/editor-recovery` on Windows or
+`${XDG_STATE_HOME:-~/.local/state}/Tabryo/editor-recovery` on Linux. Copies can
+contain sensitive source text. They are updated about 350 ms after an edit;
+input not yet received from the editor or flushed to storage can be lost in a crash.
+OS locks keep running windows' copies separate. After reopening, choose
+**Review copies** or **Recover documents** in the command palette. Preview can
+copy text even when its original file is missing. Restore opens an unsaved tab
+and compares the current disk; changed files require **Keep local edits** or
+reload before saving. Restoring never writes the source. UTF-8 text, selection,
+BOM and line-ending metadata are retained; undo history starts fresh.
+Save/Discard on normal exit clears this session's copies. Turning recovery off
+clears this session and its offered copies; other running windows and unreadable
+copies are retained. Storage failures are visible and preserve in-memory edits.
 
 For **Dart format on save**, open a workspace and enter its Dart executable in
 **Preferences**. Use an absolute `dart.exe` path on Windows (for Flutter, this is

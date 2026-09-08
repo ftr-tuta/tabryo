@@ -9,6 +9,7 @@ final class Preferences {
     this.rememberWorkspaces = false,
     this.restoreLayout = false,
     this.watchFiles = false,
+    this.recoverDocuments = false,
     this.dartFormatters = const {},
     this.roots = const [],
     this.layout = const [],
@@ -20,6 +21,7 @@ final class Preferences {
   final bool rememberWorkspaces;
   final bool restoreLayout;
   final bool watchFiles;
+  final bool recoverDocuments;
   final Map<String, String> dartFormatters;
   final List<String> roots;
   final List<Map<String, Object?>> layout;
@@ -32,6 +34,7 @@ final class Preferences {
     bool? rememberWorkspaces,
     bool? restoreLayout,
     bool? watchFiles,
+    bool? recoverDocuments,
     Map<String, String>? dartFormatters,
     List<String>? roots,
     List<Map<String, Object?>>? layout,
@@ -43,6 +46,7 @@ final class Preferences {
     rememberWorkspaces: rememberWorkspaces ?? this.rememberWorkspaces,
     restoreLayout: restoreLayout ?? this.restoreLayout,
     watchFiles: watchFiles ?? this.watchFiles,
+    recoverDocuments: recoverDocuments ?? this.recoverDocuments,
     dartFormatters: dartFormatters ?? this.dartFormatters,
     roots: roots ?? this.roots,
     layout: layout ?? this.layout,
@@ -53,6 +57,7 @@ final class Preferences {
     'rememberPreferences': rememberPreferences,
     'rememberWorkspaces': rememberWorkspaces,
     'restoreLayout': restoreLayout,
+    'recoverDocuments': recoverDocuments,
     if (rememberPreferences) ...{
       'theme': theme.name,
       'fontFamily': fontFamily,
@@ -74,6 +79,7 @@ final class Preferences {
       rememberPreferences: remember,
       rememberWorkspaces: json['rememberWorkspaces'] == true,
       restoreLayout: json['restoreLayout'] == true,
+      recoverDocuments: json['recoverDocuments'] == true,
       theme: remember
           ? AppTheme.values.firstWhere(
               (t) => t.name == json['theme'],

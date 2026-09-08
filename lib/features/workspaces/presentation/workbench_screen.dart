@@ -44,6 +44,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
           model.showEditor(true);
           return AppExitResponse.cancel;
         }
+        await editor?.finishRecoverySession();
         await model.shutdown();
         return AppExitResponse.exit;
       },
@@ -95,6 +96,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('Fetch', '', () => dialogs.remote('fetch')),
     ('Push', '', () => dialogs.remote('push')),
     ('Preferences', '', dialogs.preferences),
+    ('Recover documents', '', dialogs.recoverDocuments),
   ];
 
   Future<void> _openMcpHub() async {
@@ -398,6 +400,20 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                       setState(() {});
                     },
                     child: const Text('Dismiss'),
+                  ),
+                ],
+              ),
+            if (model.editor?.recoveries.isNotEmpty == true ||
+                model.editor?.recoveryError != null)
+              MaterialBanner(
+                content: Text(
+                  model.editor!.recoveryError ??
+                      'Unsaved document copies are available for recovery.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: dialogs.recoverDocuments,
+                    child: const Text('Review copies'),
                   ),
                 ],
               ),
