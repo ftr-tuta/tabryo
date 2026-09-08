@@ -69,12 +69,10 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
   Future<void> _copy() async {
     final range = _controller.selection;
     if (range != null) {
+      final text = widget.session.terminal.buffer.getText(range);
       // User-initiated Flutter clipboard access belongs to this focused view.
-      // ignore: dartitect_dt3123
-      await Clipboard.setData(
-        // ignore: dartitect_dt3121
-        ClipboardData(text: widget.session.terminal.buffer.getText(range)),
-      );
+      // ignore: dartitect_dt3123, dartitect_dt3121
+      await Clipboard.setData(ClipboardData(text: text));
     }
   }
 

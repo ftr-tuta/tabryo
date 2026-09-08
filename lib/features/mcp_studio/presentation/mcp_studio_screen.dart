@@ -246,26 +246,7 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
                   ],
                   onChanged: (value) => setState(() => _file = value),
                 ),
-                Container(
-                  height: 280,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outlineVariant,
-                    ),
-                  ),
-                  // The source preview has a fixed 280px viewport and its own scroll extent.
-                  // ignore: dartitect_dt3145
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(12),
-                    child: SelectableText(
-                      plan.files[_file] ?? plan.files.values.first,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ),
+                _sourcePreview(plan.files[_file] ?? plan.files.values.first),
                 const SizedBox(height: 12),
                 for (final command in model.previewCommands)
                   SelectableText(command),
@@ -333,14 +314,11 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
                   'Run in order. Check that each command exits successfully before continuing. '
                   'Terminal output is local and transient; the Hub masks inspected MCP results.',
                 ),
-                for (final (index, command)
-                    in model.studio.commands(project).indexed)
+                for (final (index, command) in model.commands.indexed)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text('${index + 1}. ${command.title}'),
-                    subtitle: Text(
-                      '${command.spec.executable}\n${jsonEncode(command.spec.arguments)}',
-                    ),
+                    subtitle: Text(command.subtitle),
                     trailing: IconButton(
                       tooltip: 'Review ${command.title}',
                       onPressed: disabled
@@ -355,5 +333,19 @@ final class _McpStudioScreenState extends State<McpStudioScreen> {
         ),
       );
     },
+  );
+
+  Widget _sourcePreview(String text) => Container(
+    height: 280,
+    decoration: BoxDecoration(
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+    ),
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: SelectableText(
+        text,
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      ),
+    ),
   );
 }

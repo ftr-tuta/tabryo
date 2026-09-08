@@ -17,8 +17,18 @@ final class McpStudioViewModel extends DartitectViewModel {
   List<StudioPlan> get projects => List.unmodifiable(_projects);
   String? message;
   bool busy = false;
+  List<({String title, String subtitle})> commands = const [];
   bool _closed = false;
   void _notify() {
+    commands = [
+      if (selected case final project?)
+        for (final command in studio.commands(project))
+          (
+            title: command.title,
+            subtitle:
+                '${command.spec.executable}\n${jsonEncode(command.spec.arguments)}',
+          ),
+    ];
     if (!_closed) notifyListeners();
   }
 
