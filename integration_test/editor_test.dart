@@ -532,6 +532,11 @@ void main() {
         "document.querySelectorAll('.squiggly-error').length > 0",
         true,
       );
+      // IntegrationTest leaves native text input active. Register the Flutter
+      // keyboard stub before this dialog attaches, so enterText uses its real
+      // client ID in Release too (the -1 test client is accepted only in Debug).
+      tester.testTextInput.register();
+      addTearDown(tester.testTextInput.unregister);
       await tester.tap(find.byTooltip('Document actions'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Rename symbol'));
@@ -548,6 +553,18 @@ void main() {
         'count',
       );
       await tester.pumpAndSettle();
+      expect(
+        tester.widget<EditableText>(find.byType(EditableText)).controller.text,
+        'count',
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Review rename'),
+            )
+            .onPressed,
+        isNotNull,
+      );
       await tester.tap(find.text('Review rename'));
       await until(
         tester,
@@ -561,6 +578,7 @@ void main() {
       );
       expect(buffer.dirty, isTrue);
       expect(await file.readAsString(), isNot(contains('count')));
+      tester.testTextInput.unregister();
       debugPrint('Native editor: rename review applied; checking completion');
       await until(tester, () => state.surfaceVisible);
       const completionSource =
