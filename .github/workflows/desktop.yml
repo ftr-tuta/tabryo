@@ -67,7 +67,13 @@ jobs:
       - name: Linux embedded editor integration
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded --verbose
+        run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded
+      - name: Linux Release editor integration
+        if: runner.os == 'Linux' && !cancelled()
+        timeout-minutes: 5
+        run: |
+          flutter build linux --release -t integration_test/editor_test.dart
+          xvfb-run -a build/linux/x64/release/bundle/tabryo
       - name: Build Release integration entrypoint for memory observation
         run: flutter build ${{ matrix.device }} --release -t integration_test/workbench_test.dart
       - name: Windows Release integration and memory

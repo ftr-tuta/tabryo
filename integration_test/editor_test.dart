@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -133,7 +134,13 @@ Future<void> expectWeb(
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
+  // Use the same native test cases in the compiled Release application, where
+  // GTK/WebKit stderr is observable without the debug service test transport.
+  if (kReleaseMode) {
+    binding.allTestsPassed.future.then((passed) => exit(passed ? 0 : 1));
+  }
   testWidgets(
     'native Monaco edits Unicode, preserves undo and safely saves across dialogs',
     (tester) async {
