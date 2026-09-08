@@ -40,6 +40,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   EditorBuffer? _comparisonDocument;
   String? _error;
   Timer? _loadTimeout;
+  int _opening = 0;
   int _request = 0;
   final _documents = <EditorBuffer, _WebDocument>{};
   final _pending = <int, Completer<void>>{};
@@ -58,9 +59,16 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   }
 
   Future<void> _open() async {
+    final attempt = ++_opening;
+    bool current() => mounted && attempt == _opening;
+    _loadTimeout?.cancel();
+    // Cover assets and native controller creation as well as page loading.
+    _loadTimeout = Timer(const Duration(seconds: 20), () {
+      if (current() && !_ready) _fail();
+    });
     try {
       final page = await model.openWebEditor();
-      if (!mounted) return;
+      if (!current()) return;
       _page = page;
       final browser = WinWebViewController(
         params: WindowsWebViewControllerCreationParams(
@@ -69,7 +77,9 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       );
       _browser = browser;
       await browser.setVisibility(false);
+      if (!current()) return;
       await browser.setJavaScriptMode(JavaScriptMode.unrestricted);
+      if (!current()) return;
       await browser.setNavigationDelegate(
         WinNavigationDelegate(
           onNavigationRequest: (request) =>
@@ -78,30 +88,34 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
                       page.uri.replace(fragment: '')
               ? NavigationDecision.navigate
               : NavigationDecision.prevent,
-          onHttpError: (_) => _fail(),
-          onWebResourceError: (_) => _fail(),
+          onHttpError: (_) {
+            if (current()) _fail();
+          },
+          onWebResourceError: (_) {
+            if (current()) _fail();
+          },
         ),
       );
+      if (!current()) return;
       await browser.addJavaScriptChannel(
         'TabryoEditor',
-        onMessageReceived: (event) => _receive(event.message),
+        onMessageReceived: (event) {
+          if (current()) _receive(event.message);
+        },
       );
-      if (!mounted) {
+      if (!current()) {
         return;
       }
       setState(() {});
-      _loadTimeout?.cancel();
-      _loadTimeout = Timer(const Duration(seconds: 20), () {
-        if (!_ready) _fail();
-      });
       await browser.loadRequest(page.uri);
     } catch (_) {
-      _fail();
+      if (current()) _fail();
     }
   }
 
   void _fail() {
     if (!mounted) return;
+    _opening++;
     _loadTimeout?.cancel();
     setState(() {
       _ready = false;
@@ -123,7 +137,12 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       _comparisonDocument = null;
     });
     await WidgetsBinding.instance.endOfFrame;
-    await browser?.dispose();
+    try {
+      await browser?.dispose().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Disposal still completes if native initialization eventually returns.
+      // A stopped native surface must not prevent a new connection attempt.
+    }
     if (mounted) await _open();
   }
 
@@ -371,6 +390,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
 
   @override
   void dispose() {
+    _opening++;
     _loadTimeout?.cancel();
     editorRoutes.unsubscribe(this);
     model.removeListener(_schedule);

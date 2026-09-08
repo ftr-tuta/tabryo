@@ -6,8 +6,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/features/editor/domain/document_files.dart';
+import 'package:tabryo/features/editor/domain/editor_assets.dart';
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
+import 'package:tabryo/features/editor/presentation/monaco_editor.dart';
 import 'package:tabryo/features/git/domain/git_ports.dart';
 import 'package:tabryo/features/preferences/domain/preferences.dart';
 import 'package:tabryo/features/workspaces/presentation/workbench_view_model.dart';
@@ -43,6 +45,19 @@ final class MemoryDocuments implements DocumentFiles {
   }
 }
 
+final class PendingEditorAssets implements EditorAssets {
+  final attempts = <Completer<EditorPage>>[];
+  @override
+  Future<EditorPage> open() {
+    final attempt = Completer<EditorPage>();
+    attempts.add(attempt);
+    return attempt.future;
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
 void main() {
   final root = Platform.isWindows ? r'C:\project' : '/project';
   late MemoryDocuments files;
@@ -51,6 +66,42 @@ void main() {
     files = MemoryDocuments();
     editor = EditorViewModel(files)..selectWorkspace(root);
   });
+
+  testWidgets(
+    'stalled initialization preserves buffers and ignores late attempts',
+    (tester) async {
+      final assets = PendingEditorAssets();
+      final model = EditorViewModel(files, webAssets: assets)
+        ..selectWorkspace(root);
+      await model.open(root, p.join(root, 'server.dart'));
+      model.active!.controller.text = 'unsaved';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: MonacoEditor(model: model, visible: true)),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 21));
+      expect(find.text('Reconnect editor'), findsOneWidget);
+      expect(model.active!.controller.text, 'unsaved');
+      await tester.tap(find.text('Reconnect editor'));
+      await tester.pump();
+      await tester.pump();
+      expect(assets.attempts, hasLength(2));
+      // A late old success cannot create a native controller or hijack the retry.
+      assets.attempts.first.complete(
+        EditorPage(Uri.parse('http://127.0.0.1/old'), 'old', root),
+      );
+      await tester.pump();
+      expect(find.text('Loading code editor…'), findsOneWidget);
+      assets.attempts.last.completeError(StateError('Unavailable'));
+      await tester.pumpAndSettle();
+      expect(find.text('Reconnect editor'), findsOneWidget);
+      expect(model.active!.controller.text, 'unsaved');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await model.disposeAsync();
+    },
+  );
 
   test(
     'failed and overlapping saves preserve buffers and edits made while saving',

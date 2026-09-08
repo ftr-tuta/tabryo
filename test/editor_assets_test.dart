@@ -7,6 +7,30 @@ import 'package:tabryo/features/editor/infrastructure/bundled_editor_assets.dart
 
 void main() {
   test(
+    'asset initialization can reconnect after a transient failure',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('editor-assets-');
+      var unavailable = true;
+      final assets = BundledEditorAssets(
+        load: (name) async => Uint8List.fromList(utf8.encode(name)),
+        list: () async {
+          if (unavailable) throw const FileSystemException('Unavailable');
+          return ['assets/editor/index.html', 'assets/editor/editor.js'];
+        },
+        profileDirectory: directory.path,
+      );
+      addTearDown(() async {
+        await assets.close();
+        await directory.delete(recursive: true);
+      });
+      await expectLater(assets.open(), throwsA(isA<FileSystemException>()));
+      unavailable = false;
+      final page = await assets.open();
+      expect((await assets.open()).uri, page.uri);
+    },
+  );
+
+  test(
     'bundled editor serves only its local capability and blocks cross origins',
     () async {
       final directory = await Directory.systemTemp.createTemp('editor-assets-');

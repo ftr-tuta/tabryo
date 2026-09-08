@@ -23,7 +23,15 @@ final class BundledEditorAssets implements EditorAssets {
   bool _closed = false;
 
   @override
-  Future<EditorPage> open() => _opening ??= _open();
+  Future<EditorPage> open() => _opening ??= _open().onError<Object>((
+    error,
+    stack,
+  ) {
+    // A failed asset read/bind is retryable once the installation or local
+    // resource becomes available. Keep sharing an in-flight successful open.
+    _opening = null;
+    Error.throwWithStackTrace(error, stack);
+  });
 
   Future<EditorPage> _open() async {
     if (_closed) throw StateError('Editor assets are closed.');
