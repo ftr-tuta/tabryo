@@ -1,3 +1,7 @@
+// Flutter HardwareKeyboard is presentation input state; Dartitect 1.1.0
+// classifies the SDK's services/ source directory as infrastructure.
+// ignore_for_file: dartitect_dt3121
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm2/xterm.dart';

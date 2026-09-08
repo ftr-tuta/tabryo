@@ -222,11 +222,16 @@ final class EditorViewModel extends DartitectViewModel {
 
   Future<bool> reload(EditorBuffer buffer) async {
     if (buffer.saving || !_buffers.contains(buffer)) return false;
+    final version = buffer.version;
     buffer.saving = true;
     notifyListeners();
     try {
       final disk = await files.open(buffer.root, buffer.path);
       if (_closed || !_buffers.contains(buffer)) return false;
+      if (buffer.version != version) {
+        buffer.error = 'The document changed while reloading. Your edits are preserved; review the disk version before trying again.';
+        return false;
+      }
       buffer.baseline = disk;
       buffer.controller.text = disk.text;
       buffer.diskText = null;

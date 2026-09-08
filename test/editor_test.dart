@@ -19,16 +19,20 @@ import 'workbench_test.dart'
 final class MemoryDocuments implements DocumentFiles {
   final content = <String, String>{};
   Completer<void>? saving;
+  Completer<void>? reading;
   Object? failure;
   int writes = 0;
   @override
-  Future<DocumentSnapshot> open(String root, String path) async =>
-      DocumentSnapshot(
-        root: root,
-        path: path,
-        text: content[path] ?? 'original',
-        revision: Object(),
-      );
+  Future<DocumentSnapshot> open(String root, String path) async {
+    await reading?.future;
+    return DocumentSnapshot(
+      root: root,
+      path: path,
+      text: content[path] ?? 'original',
+      revision: Object(),
+    );
+  }
+
   @override
   Future<DocumentSnapshot> save(DocumentSnapshot baseline, String text) async {
     writes++;
@@ -72,6 +76,27 @@ void main() {
       files.failure = null;
       expect(await editor.save(buffer), isTrue);
       expect(buffer.dirty, isFalse);
+      await editor.disposeAsync();
+    },
+  );
+
+  test(
+    'reload preserves input arriving while the disk read is in progress',
+    () async {
+      final path = p.join(root, 'server.dart');
+      await editor.open(root, path);
+      final buffer = editor.active!;
+      files.content[path] = 'external edit';
+      files.reading = Completer<void>();
+      final reload = editor.reload(buffer);
+      buffer.controller.text = 'new local input';
+      files.reading!.complete();
+      expect(await reload, isFalse);
+      expect(buffer.controller.text, 'new local input');
+      expect(buffer.baseline.text, 'original');
+      expect(buffer.dirty, isTrue);
+      expect(buffer.error, contains('changed while reloading'));
+      expect(files.content[path], 'external edit');
       await editor.disposeAsync();
     },
   );
