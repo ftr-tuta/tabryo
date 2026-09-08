@@ -241,6 +241,17 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
     }
   }
 
+  String? _fvmVersion(String source) {
+    try {
+      final configuration = jsonDecode(source);
+      final version = configuration is Map ? configuration['flutter'] : null;
+      return version is String ? version : null;
+    } on FormatException {
+      // Invalid optional version metadata does not suppress installed SDKs.
+      return null;
+    }
+  }
+
   @override
   Future<ToolchainHints> toolchains(DevelopmentProject project) async {
     await validateProject(project);
@@ -267,21 +278,16 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
     );
     final fvm = await _text(root, '.fvmrc');
     if (fvm != null) {
-      try {
-        final configuration = jsonDecode(fvm);
-        final version = configuration is Map ? configuration['flutter'] : null;
-        final cache = environment['FVM_CACHE_PATH'];
-        if (version is String &&
-            RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(version) &&
-            cache != null) {
-          await add(
-            ProjectTool.flutter,
-            p.join(cache, version),
-            'FVM pinned version',
-          );
-        }
-      } on FormatException {
-        /* The project-local SDK remains available. */
+      final version = _fvmVersion(fvm);
+      final cache = environment['FVM_CACHE_PATH'];
+      if (version != null &&
+          RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(version) &&
+          cache != null) {
+        await add(
+          ProjectTool.flutter,
+          p.join(cache, version),
+          'FVM pinned version',
+        );
       }
     }
     for (final executable in _path(windows ? ['flutter.bat'] : ['flutter'])) {

@@ -245,8 +245,10 @@ final class LocalDocumentRecovery implements DocumentRecovery {
           try {
             await File(p.join(entry.key, 'owner.lock')).delete();
             await Directory(entry.key).delete();
-          } on FileSystemException {
-            /* Another process may be scanning. */
+          } on FileSystemException catch (error) {
+            // Another process may be scanning; no recoverable content is lost.
+            warning =
+                'Empty recovery storage could not be removed at ${entry.key}: ${error.message}';
           }
         }
       }
