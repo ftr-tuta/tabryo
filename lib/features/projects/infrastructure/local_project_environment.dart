@@ -336,7 +336,12 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       ),
       'Project .venv',
     );
-    for (final tool in [ProjectTool.uv, ProjectTool.poetry, ProjectTool.ruff]) {
+    for (final tool in [
+      ProjectTool.uv,
+      ProjectTool.poetry,
+      ProjectTool.ruff,
+      ProjectTool.black,
+    ]) {
       await add(
         tool,
         p.join(
@@ -392,6 +397,7 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       ProjectTool.pyenv: windows ? ['pyenv.bat'] : ['pyenv'],
       ProjectTool.node: windows ? ['node.exe'] : ['node'],
       ProjectTool.ruff: windows ? ['ruff.exe'] : ['ruff'],
+      ProjectTool.black: windows ? ['black.exe'] : ['black'],
     }.entries) {
       for (final executable in _path(entry.value)) {
         await add(entry.key, executable, 'PATH');

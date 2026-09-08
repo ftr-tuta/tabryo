@@ -13,10 +13,12 @@ final class ProjectsScreen extends StatelessWidget {
     this.onRun,
     this.onCreate,
     this.language,
+    this.taskPanel,
     super.key,
   });
   final ProjectsViewModel model;
   final LanguageService? language;
+  final Widget Function(DevelopmentProject, ToolchainSelection)? taskPanel;
   final Future<void> Function(DevelopmentProject, ToolchainSelection) onApply;
   final Future<void> Function(DevelopmentProject, ProjectCommand)? onRun;
   final Future<void> Function(ProjectCreation)? onCreate;
@@ -160,6 +162,8 @@ final class ProjectsScreen extends StatelessWidget {
                                   project: project,
                                   onRun: onRun,
                                 ),
+                                if (taskPanel != null)
+                                  taskPanel!(project, model.selection),
                               ],
                             ),
                           ),
@@ -199,6 +203,7 @@ final class _ToolchainFormState extends State<_ToolchainForm> {
       ProjectTool.node,
       ProjectTool.pyright,
       ProjectTool.ruff,
+      ProjectTool.black,
     ],
   };
   final _fields = <ProjectTool, TextEditingController>{};
@@ -250,6 +255,8 @@ final class _ToolchainFormState extends State<_ToolchainForm> {
                 : '${tool.name} executable',
             helperText: tool == ProjectTool.flutter
                 ? 'Uses its bundled Dart SDK for format on save.'
+                : tool == ProjectTool.black
+                ? 'Optional: selects Black for Python format on save, even with Ruff active. Clear to use Ruff.'
                 : 'Absolute path. Leave empty to clear the selection.',
           ),
           onChanged: (path) => value = value.withPath(tool, path),

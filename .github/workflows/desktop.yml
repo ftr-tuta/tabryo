@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: '3.12.10'
       - name: Install native project tools
-        run: python -m pip install uv==0.8.22 poetry==2.2.1 ruff==0.16.6
+        run: python -m pip install uv==0.8.22 poetry==2.2.1 ruff==0.16.6 black==26.5.1 pytest==9.0.2
       - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
       - run: dart run dartitect_cli:dartitect scan
@@ -56,6 +56,7 @@ jobs:
         env:
           TABRYO_TEST_PROJECT_SETUP: '1'
           TABRYO_TEST_LANGUAGE_PYTHON: '1'
+          TABRYO_TEST_TASKS: '1'
       - name: Windows native terminal tests
         if: runner.os == 'Windows'
         run: flutter test integration_test/terminal_host_test.dart -d windows
@@ -95,14 +96,14 @@ jobs:
         run: flutter build ${{ matrix.device }} --release -t integration_test/workbench_test.dart
       - name: Windows Release integration and memory
         if: runner.os == 'Windows'
-        timeout-minutes: 3
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $app = Start-Process -FilePath build/windows/x64/runner/Release/tabryo.exe -Wait -PassThru -NoNewWindow
           exit $app.ExitCode
       - name: Linux Release integration and memory
         if: runner.os == 'Linux'
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: xvfb-run -a build/linux/x64/release/bundle/tabryo
       - run: flutter build ${{ matrix.device }} --release
       - name: Package Windows

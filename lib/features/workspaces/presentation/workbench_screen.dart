@@ -15,6 +15,7 @@ import '../../editor/presentation/monaco_editor.dart';
 import '../../collaboration/presentation/collaboration_screen.dart';
 import '../../mcp_studio/presentation/mcp_studio_screen.dart';
 import '../../projects/presentation/projects_screen.dart';
+import '../../tasks/presentation/tasks_panel.dart';
 import '../../mcp_studio/domain/studio_project.dart';
 import '../../terminals/presentation/terminal_pane_view.dart';
 import '../../mcp/presentation/mcp_hub_screen.dart';
@@ -131,6 +132,25 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
           language: model.editor?.language,
           model: projects,
           onApply: model.applyProjectToolchains,
+          taskPanel: model.tasks == null
+              ? null
+              : (project, selection) => TasksPanel(
+                  key: ValueKey(project.id),
+                  model: model.tasks!,
+                  project: project,
+                  projects: projects.discovery.projects,
+                  selection: selection,
+                  onRun: model.runTask,
+                  onStop: model.stopTask,
+                  onTerminal: (task) {
+                    model.showTaskTerminal(task);
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  },
+                  onOpen: (task, result) async {
+                    await model.openTestResult(task, result);
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  },
+                ),
           onRun: (project, command) async {
             await model.runProjectCommand(project, command);
             if (dialogContext.mounted) Navigator.pop(dialogContext);

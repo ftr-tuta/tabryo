@@ -166,8 +166,9 @@ only after success; existing destinations are refused. Cancel removes an empty
 preview, while failed generator output remains at the reported path for recovery.
 Dart and Flutter use `--no-pub`; Python uses uv without modifying a parent
 workspace or initializing Git. Install dependencies as a separate reviewed step.
-Language servers are started separately through Language intelligence. Test
-exploration, DAP, Flutter execution and DevTools remain pending.
+Language servers are started separately through Language intelligence.
+**Tasks and tests** discovers test files and runs reviewed commands, as described
+below. DAP, Flutter device execution and DevTools remain pending.
 
 The native project tests exercise Dart/Flutter generation, Python environment
 creation, uv **0.8.22**, Poetry **2.2.1**, and pip with Python **3.12.10**.
@@ -358,9 +359,18 @@ All affected files must already be open and synchronized with that language
 session; open any reported missing file and retry. Every affected buffer is
 checked again after review. Normal protected saves write to disk separately.
 File creation/deletion/renaming and commands returned by servers are refused.
-Full refactoring support, completion auto-imports and Black selection remain open.
-An active Ruff server enables Python format on save. Formatter failures and
-concurrent input preserve the buffer and expose **Save without formatting**.
+Full refactoring support and completion auto-imports remain open.
+An active Ruff server enables Python format on save. To use Black instead, select
+its installed executable in the project's toolchain form and apply the choice.
+Black works without a language server; Ruff may remain active for lint and fixes.
+Clear the Black path to return to Ruff. The closest configured Python project
+controls the choice, including an explicitly cleared child selection. Paths
+persist only with preference persistence. Install Black in the intended
+environment yourself (`python -m pip install black`) before selecting it.
+Black receives the captured buffer through stdin and reads project options using
+the source filename; it never writes that source directly. Output and runtime
+are bounded, and Windows streams use UTF-8. Formatter failures, changed tool
+choices and concurrent input preserve the buffer and expose **Save without formatting**.
 
 Sessions isolate workspace/project roots and known nested projects. At most four
 servers run, with 32 pending requests per connection, 20-second request timeouts,
@@ -378,6 +388,51 @@ a pinned development dependency for these tests; language servers are not
 bundled into the application. Desktop CI requires the Python language tests
 with `TABRYO_TEST_LANGUAGE_PYTHON=1` and installed Node/Python/Ruff. Optional
 `TABRYO_TEST_NODE`, `TABRYO_TEST_PYTHON` and `TABRYO_TEST_RUFF` paths override PATH.
+
+## Tasks and tests
+
+Open **Projects and toolchains → Tasks and tests** after applying the selected
+project's SDK/interpreter. **Discover test files** lists `*_test.dart`,
+`test_*.py` and `*_test.py` without importing or executing them. Discovery skips
+known nested projects, dependency/build directories and directory links, with
+limits of six levels, 512 directories, 12,000 entries and 1,000 files. A reached
+limit is displayed. Nonstandard names can be entered manually; dynamic test
+cases appear in the native results after execution.
+
+Select a file, or leave it empty to run the native runner's default test scope.
+An optional Dart/Flutter name substring or pytest `-k` expression narrows the
+selection. **Review task** shows the executable, literal arguments, directory and
+environment overrides. **Run reviewed task** starts an owned terminal only after
+checking tool choices, current project paths and synchronized saved buffers.
+Tests can execute project configuration, plugins and fixtures. Install pytest
+in the selected Python environment; Dart/Flutter test dependencies must already
+be available. Flutter commands use `--no-pub` so dependency setup remains explicit.
+
+Tasks also offer Dart/Flutter analysis, Python Ruff analysis (`python -m ruff`),
+Dart/Python script execution with a JSON argument list, Dart executable builds,
+and Flutter builds for this desktop host, web or Android APK. Builds require
+the corresponding installed platform toolchain. Flutter app execution with
+devices and debugging remains a separate pending capability.
+
+Overlapping project commands, including environment setup and Studio commands,
+are refused. Up to four tasks in separate projects can run. **Show terminal**
+opens the task's output; **Stop task**, closing its terminal, workspace or Tabryo
+stops its owned process tree. Stopped tasks are marked cancelled. Results retain
+the native exit code and separate passes, failures, skips and incomplete reports;
+select a result to view details and open its project source location.
+
+Dart/Flutter's JSON file reporter and pytest's JUnit XML supply structured results.
+Temporary reports are read after exit and removed; unexpected filesystem content
+is retained with its location. Reports are limited to 4 MiB and 2,000 test entries,
+with 16 KiB of failure details per case. Missing, malformed or incomplete reports
+cannot turn a test run green. Up to 20 task runs remain in memory for this session.
+Results describe the files at execution time and are not refreshed after edits.
+Shared task configuration, coverage UI and workspace text search remain pending.
+
+Native tests exercise Black **26.5.1** and pytest **9.0.2** with
+`TABRYO_TEST_TASKS=1`; optional `TABRYO_TEST_BLACK` and `TABRYO_TEST_PYTHON`
+override tool discovery. The desktop workbench test also runs real Flutter tests
+through an owned terminal and checks source navigation and task cancellation.
 
 ## Build and test
 

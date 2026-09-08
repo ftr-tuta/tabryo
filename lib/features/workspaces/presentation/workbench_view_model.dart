@@ -15,6 +15,8 @@ import '../../git/domain/git_ports.dart';
 import '../../preferences/domain/preferences.dart';
 import '../../projects/domain/project.dart';
 import '../../projects/presentation/projects_view_model.dart';
+import '../../tasks/domain/project_task.dart';
+import '../../tasks/presentation/tasks_view_model.dart';
 import '../../mcp/presentation/mcp_hub_view_model.dart';
 import '../../terminals/domain/terminal_ports.dart';
 import '../../terminals/presentation/terminal_session.dart';
@@ -36,11 +38,13 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.collaboration,
     this.clipboard,
     this.projects,
+    this.tasks,
   }) {
     editor?.addListener(_editorChanged);
   }
   final PtyHost host;
   final ProjectsViewModel? projects;
+  final TasksViewModel? tasks;
   final TextClipboard? clipboard;
   Future<String?> readClipboard() async => clipboard?.readText();
   Future<void> writeClipboard(String text) async => clipboard?.writeText(text);
@@ -105,6 +109,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     projects?.selections.addAll(preferences.projectToolchains);
     await editor?.configureRecovery(preferences.recoverDocuments);
     editor?.dartFormatters = preferences.dartFormatters;
+    _configureBlack();
     editor?.monitorExternalChanges(preferences.watchFiles);
     message = result.warning;
     // Restore only root metadata. Opening a project or starting a process
@@ -376,7 +381,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
   }
 
   void _reserveProjectCommand(String directory) {
-    if (_projectRuns.keys.any(
+    if ([..._projectRuns.keys, ..._studioRuns.keys].any(
       (path) =>
           p.equals(path, directory) ||
           p.isWithin(path, directory) ||
@@ -403,7 +408,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
         );
       }
     }
-    if (buffers.any((b) => b.dirty || b.saving)) {
+    if (buffers.any((b) => b.dirty || b.saving || b.reviewRequired)) {
       throw const ProjectFailure(
         'Save project documents before running setup.',
       );
@@ -446,6 +451,124 @@ final class WorkbenchViewModel extends DartitectViewModel {
       if (_projectRuns[project.directory] == -1) {
         _projectRuns.remove(project.directory);
       }
+    }
+  }
+
+  Future<void> runTask(ProjectTask task) async {
+    final owner = workspace;
+    final project = task.project;
+    if (_shutdown ||
+        owner == null ||
+        projects == null ||
+        tasks?.isPrepared(task) != true ||
+        !p.equals(owner.root, project.workspace)) {
+      throw const ProjectFailure(
+        'Open the owning workspace and review this task again.',
+      );
+    }
+    final chosen = projects!.selections[project.id];
+    if (task.target != null &&
+        projects!.discovery.projects.any(
+          (nested) =>
+              p.isWithin(project.directory, nested.directory) &&
+              p.isWithin(nested.directory, task.target!),
+        )) {
+      throw const ProjectFailure(
+        'Select the nested project before running its file.',
+      );
+    }
+    if (chosen == null ||
+        chosen.paths.length != task.tools.paths.length ||
+        chosen.paths.entries.any((e) => task.tools[e.key] != e.value)) {
+      throw const ProjectFailure(
+        'Toolchains changed after task review. Prepare a new task.',
+      );
+    }
+    if (tasks!.runs.where((t) => t.status == TaskStatus.running).length >= 4) {
+      throw const ProjectFailure(
+        'Stop a running task before starting more (limit: 4).',
+      );
+    }
+    _reserveProjectCommand(project.directory);
+    try {
+      await projects!.environment.validateCommand(project, task.command);
+      if (task.target != null) {
+        await tasks!.files.validateTarget(project, task.target!);
+      }
+      await _checkProjectDocuments(project.directory);
+      // Synchronizing the editor can await native input. Renew path checks
+      // after it before starting the reviewed command.
+      await projects!.environment.validateCommand(project, task.command);
+      if (task.target != null) {
+        await tasks!.files.validateTarget(project, task.target!);
+      }
+      if (_shutdown ||
+          !workspaces.contains(owner) ||
+          tasks?.isPrepared(task) != true ||
+          !identical(chosen, projects!.selections[project.id])) {
+        throw const ProjectFailure(
+          'The workspace or tool selection changed. Review again.',
+        );
+      }
+      late final TerminalSession session;
+      session = _start(
+        owner,
+        task.command.spec,
+        task.command.title,
+        onFinished: () async {
+          try {
+            await tasks!.finished(task, session.exitCode);
+          } finally {
+            _projectRuns.remove(project.directory);
+          }
+        },
+      );
+      _projectRuns[project.directory] = session.id;
+      tasks!.started(task, session.id);
+    } finally {
+      if (_projectRuns[project.directory] == -1) {
+        _projectRuns.remove(project.directory);
+      }
+    }
+  }
+
+  Future<void> stopTask(ProjectTask task) async {
+    if (task.status != TaskStatus.running) return;
+    tasks?.stopping(task);
+    await sessions[task.sessionId]?.close();
+  }
+
+  void showTaskTerminal(ProjectTask task) {
+    final owner = workspace;
+    if (owner == null || !p.equals(owner.root, task.project.workspace)) return;
+    final index = owner.tabs.indexWhere(
+      (t) => t.panes.sessions.contains(task.sessionId),
+    );
+    if (index < 0) return;
+    showEditor(false);
+    selectTab(index);
+    focusSession(task.sessionId!);
+  }
+
+  Future<void> openTestResult(ProjectTask task, TestCaseResult result) async {
+    if (result.path == null || workspace?.root != task.project.workspace) {
+      return;
+    }
+    await tasks!.files.validateTarget(task.project, result.path!);
+    await openFile(result.path!);
+    final buffer = editor?.active;
+    if (buffer != null && buffer.path == result.path && result.line != null) {
+      await editor!.navigateLanguage(
+        buffer,
+        Uri.file(result.path!).toString(),
+        {
+          'line': (result.line! - 1).clamp(
+            0,
+            buffer.controller.text.split('\n').length - 1,
+          ),
+          'character': 0,
+        },
+      );
     }
   }
 
@@ -512,7 +635,12 @@ final class WorkbenchViewModel extends DartitectViewModel {
   ) async {
     await studio!.studio.storage.validateProject(project);
     checkStudioBuffers(project);
-    if (_studioRuns.containsKey(project.path)) {
+    if ([..._studioRuns.keys, ..._projectRuns.keys].any(
+      (path) =>
+          p.equals(path, project.path) ||
+          p.isWithin(path, project.path) ||
+          p.isWithin(project.path, path),
+    )) {
       throw const StudioFailure(
         'A Studio command is still running in this project. Wait for it to finish or close its terminal.',
       );
@@ -764,6 +892,11 @@ final class WorkbenchViewModel extends DartitectViewModel {
     final session = sessions[id];
     if (session == null && !restoredSessions.containsKey(id)) return;
     if (session != null) {
+      for (final task in tasks?.runs ?? <ProjectTask>[]) {
+        if (task.sessionId == id && task.status == TaskStatus.running) {
+          tasks?.stopping(task);
+        }
+      }
       await session.close();
       session.removeListener(_sessionChanged);
       session.dispose();
@@ -926,8 +1059,18 @@ final class WorkbenchViewModel extends DartitectViewModel {
     );
   }
 
+  void _configureBlack() {
+    editor?.blackFormatters = {
+      for (final entry in preferences.projectToolchains.entries)
+        if (entry.key.startsWith('python:'))
+          entry.key.substring('python:'.length):
+              entry.value[ProjectTool.black] ?? '',
+    };
+  }
+
   Future<void> _configureWatcher() async {
     editor?.dartFormatters = preferences.dartFormatters;
+    _configureBlack();
     editor?.monitorExternalChanges(preferences.watchFiles);
     await _watcher?.cancel();
     _watcher = null;
@@ -986,6 +1129,11 @@ final class WorkbenchViewModel extends DartitectViewModel {
     _watchDebounce?.cancel();
     await _watcher?.cancel();
     for (final session in sessions.values) {
+      for (final task in tasks?.runs ?? <ProjectTask>[]) {
+        if (task.sessionId == session.id && task.status == TaskStatus.running) {
+          tasks?.stopping(task);
+        }
+      }
       await session.close();
       session.removeListener(_sessionChanged);
       session.dispose();
@@ -996,6 +1144,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     await editor?.disposeAsync();
     await studio?.disposeAsync();
     await projects?.disposeAsync();
+    await tasks?.disposeAsync();
     await collaboration?.disposeAsync();
   }();
   @override

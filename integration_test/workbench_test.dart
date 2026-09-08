@@ -21,6 +21,11 @@ import 'package:tabryo/features/git/infrastructure/local_git.dart';
 import 'package:tabryo/features/preferences/infrastructure/local_preferences.dart';
 import 'package:tabryo/features/projects/infrastructure/local_project_environment.dart';
 import 'package:tabryo/features/projects/presentation/projects_view_model.dart';
+import 'package:tabryo/features/projects/domain/project.dart';
+import 'package:tabryo/features/tasks/domain/project_task.dart';
+import 'package:tabryo/features/tasks/infrastructure/local_task_files.dart';
+import 'package:tabryo/features/tasks/presentation/tasks_view_model.dart';
+import 'package:tabryo/features/tasks/presentation/tasks_panel.dart';
 import 'package:tabryo/features/terminals/domain/terminal_ports.dart';
 import 'package:tabryo/features/terminals/infrastructure/native_terminal.dart';
 import 'package:tabryo/features/terminals/infrastructure/local_text_clipboard.dart';
@@ -127,6 +132,184 @@ void main() {
   if (kReleaseMode) {
     binding.allTestsPassed.future.then((passed) => exit(passed ? 0 : 1));
   }
+  testWidgets(
+    'reviewed Flutter tests report native results and task stop closes its process',
+    (tester) async {
+      final temporary = await Directory.systemTemp.createTemp(
+        'native-project-tests-',
+      );
+      final directory = await Directory(p.join(temporary.path, 'ação & tests'))
+          .create();
+      final root = await directory.resolveSymbolicLinks();
+      await File(p.join(root, 'pubspec.yaml')).writeAsString(
+        'name: native_tests\nenvironment:\n  sdk: ^3.13.2\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n',
+      );
+      final testFile = File(p.join(root, 'test', 'example_test.dart'));
+      await testFile.parent.create();
+      await testFile.writeAsString(
+        "import 'package:flutter_test/flutter_test.dart';\nvoid main() { test('ação passes', () { expect(1, 1); }); test('failure is visible', () { expect(1, 2); }); }\n",
+      );
+      final environment = LocalProjectEnvironment();
+      final project = DevelopmentProject(
+        workspace: root,
+        directory: root,
+        name: 'native_tests',
+        kind: ProjectKind.flutter,
+      );
+      final hints = await environment.toolchains(project);
+      final flutter = hints.candidates[ProjectTool.flutter]!.first.path;
+      final tools = ToolchainSelection({
+        ProjectTool.flutter: flutter,
+        ProjectTool.dart: p.join(
+          flutter,
+          'bin',
+          'cache',
+          'dart-sdk',
+          'bin',
+          Platform.isWindows ? 'dart.exe' : 'dart',
+        ),
+      });
+      final setup = await Process.run(
+        p.join(flutter, 'bin', Platform.isWindows ? 'flutter.bat' : 'flutter'),
+        ['pub', 'get', '--offline'],
+        workingDirectory: root,
+      ).timeout(const Duration(seconds: 60));
+      expect(setup.exitCode, 0, reason: '${setup.stdout}\n${setup.stderr}');
+      final cache = PreviewCache();
+      final git = LocalGit(
+        executable: findExecutable(['git.exe', 'git'])!,
+        cache: cache,
+      );
+      final projects = ProjectsViewModel(environment)
+        ..selections[project.id] = tools;
+      final tasks = TasksViewModel(
+        LocalTaskFiles(),
+        windows: Platform.isWindows,
+      );
+      final host = CountingHost();
+      final editor = EditorViewModel(LocalDocumentFiles(cache));
+      final model = WorkbenchViewModel(
+        host: host,
+        launcher: InteractiveLauncher(),
+        files: LocalWorkspaceFiles(cache),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: LocalPreferencesStore(
+          File(p.join(temporary.path, 'preferences.json')),
+        ),
+        projects: projects,
+        tasks: tasks,
+        editor: editor,
+      );
+      addTearDown(() async {
+        await model.disposeAsync();
+        await temporary.delete(recursive: true);
+      });
+      await model.openWorkspace(root);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TasksPanel(
+                model: tasks,
+                project: project,
+                projects: [project],
+                selection: tools,
+                onRun: model.runTask,
+                onStop: model.stopTask,
+                onTerminal: model.showTaskTerminal,
+                onOpen: model.openTestResult,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Discover test files'));
+      await until(tester, () => !tasks.scanning);
+      expect(tasks.discoveries[project.id]!.paths, [testFile.path]);
+      expect(host.starts, 0);
+      await tester.tap(find.text('Review task'));
+      await until(
+        tester,
+        () => find.text('Run reviewed task').evaluate().isNotEmpty,
+      );
+      expect(host.starts, 0);
+      await tester.tap(find.text('Run reviewed task'));
+      await until(tester, () => tasks.runs.isNotEmpty);
+      final task = tasks.runs.single;
+      await until(
+        tester,
+        () => task.results != null,
+        timeout: const Duration(seconds: 60),
+      );
+      await model.sessions[task.sessionId]!.finished;
+      expect(
+        task.status,
+        TaskStatus.failed,
+        reason: terminalText(model.sessions[task.sessionId]!),
+      );
+      expect(task.results!.complete, isTrue);
+      expect(
+        task.results!.cases.map((t) => t.outcome),
+        containsAll([TestOutcome.passed, TestOutcome.failed]),
+      );
+      expect(task.results!.cases.first.path, testFile.path);
+      final selected = await tasks.prepare(
+        project,
+        tools,
+        ProjectTaskKind.test,
+        target: testFile.path,
+        filter: 'ação passes',
+      );
+      await model.runTask(selected);
+      await until(
+        tester,
+        () => selected.results != null,
+        timeout: const Duration(seconds: 60),
+      );
+      await model.sessions[selected.sessionId]!.finished;
+      expect(
+        selected.status,
+        TaskStatus.passed,
+        reason:
+            '${selected.error}\n${terminalText(model.sessions[selected.sessionId]!)}',
+      );
+      expect(selected.results!.cases.single.name, 'ação passes');
+      await model.openTestResult(selected, selected.results!.cases.single);
+      expect(editor.active!.path, testFile.path);
+      expect(await Directory(selected.report!.directory).exists(), isFalse);
+      final dartProject = DevelopmentProject(
+        workspace: root,
+        directory: root,
+        name: 'script',
+        kind: ProjectKind.dart,
+      );
+      projects.selections[dartProject.id] = tools;
+      final entry = File(p.join(root, 'wait.dart'));
+      await entry.writeAsString(
+        "import 'dart:async'; void main() { print('WAIT_READY'); Timer.periodic(const Duration(seconds:1), (_) {}); }",
+      );
+      final running = await tasks.prepare(
+        dartProject,
+        tools,
+        ProjectTaskKind.run,
+        target: entry.path,
+      );
+      await model.runTask(running);
+      await until(
+        tester,
+        () =>
+            terminalText(model.sessions[running.sessionId]!)
+                .contains('WAIT_READY'),
+      );
+      await model.stopTask(running);
+      expect(running.status, TaskStatus.cancelled);
+      expect(model.sessions[running.sessionId]!.status, SessionStatus.exited);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
   testWidgets(
     'project creation reviews the native Flutter command and publishes its result',
     (tester) async {

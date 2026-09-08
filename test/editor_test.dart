@@ -13,6 +13,9 @@ import 'package:tabryo/features/editor/domain/document_recovery.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_recovery.dart';
 import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart';
+import 'package:tabryo/features/editor/infrastructure/local_black_formatter.dart';
+import 'package:tabryo/features/projects/infrastructure/local_project_environment.dart';
+import 'package:tabryo/features/projects/domain/project.dart';
 import 'package:tabryo/features/editor/domain/editor_assets.dart';
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
@@ -114,6 +117,108 @@ void main() {
     files = MemoryDocuments();
     editor = EditorViewModel(files)..selectWorkspace(root);
   });
+
+  test('Black selection is project scoped and rejects a changed formatter while saving', () async {
+    final formatter = PendingFormatter();
+    final model = EditorViewModel(files, blackFormatter: formatter)
+      ..blackFormatters = {root: 'black-one', p.join(root, 'nested'): ''}
+      ..selectWorkspace(root);
+    await model.open(root, p.join(root, 'nested', 'main.py'));
+    model.active!.controller.text = 'not formatted';
+    expect(await model.save(model.active!), isTrue);
+    expect(formatter.started.isCompleted, isFalse);
+    await model.open(root, p.join(root, 'main.py'));
+    final buffer = model.active!;
+    buffer.controller.text = 'x=1';
+    final saving = model.save(buffer);
+    await formatter.started.future;
+    model.blackFormatters = {root: 'black-two'};
+    formatter.result.complete(const FormattedDocument('x = 1\n', 0, 0));
+    expect(await saving, isFalse);
+    expect(buffer.controller.text, 'x=1');
+    expect(buffer.formatFailed, isTrue);
+    expect(files.writes, 1);
+    expect(await model.save(buffer, withoutFormatting: true), isTrue);
+    await model.disposeAsync();
+    expect(formatter.closed, isTrue);
+  });
+
+  test('installed Black honors project options and preserves source, Unicode selection, BOM and CRLF', () async {
+    final directory = await Directory.systemTemp.createTemp('python-format-');
+    final root = await directory.resolveSymbolicLinks();
+    final project = DevelopmentProject(
+      workspace: root,
+      directory: root,
+      name: 'format',
+      kind: ProjectKind.python,
+    );
+    final hints = await LocalProjectEnvironment().toolchains(project);
+    final black =
+        Platform.environment['TABRYO_TEST_BLACK'] ??
+        hints.candidates[ProjectTool.black]?.firstOrNull?.path;
+    expect(
+      black,
+      isNotNull,
+      reason: 'Install Black or provide TABRYO_TEST_BLACK.',
+    );
+    final formatter = LocalBlackFormatter();
+    addTearDown(() async {
+      formatter.close();
+      await directory.delete(recursive: true);
+    });
+    await File(p.join(root, 'pyproject.toml'))
+        .writeAsString('[tool.black]\nskip-string-normalization = true\n');
+    final file = File(p.join(root, 'ação example.py'));
+    await file.writeAsBytes([
+      0xef,
+      0xbb,
+      0xbf,
+      ...utf8.encode("value='ação 🌱'\r\n"),
+    ]);
+    final disk = await file.readAsBytes();
+    const text = "value =    'ação 🌱'\n";
+    final a = text.indexOf('ação');
+    final formatted = await formatter.format(
+      executable: black!,
+      root: root,
+      path: file.path,
+      text: text,
+      start: a + 'ação 🌱'.length,
+      end: a,
+    );
+    expect(formatted.text, "value = 'ação 🌱'\n");
+    expect(formatted.text.substring(formatted.end, formatted.start), 'ação 🌱');
+    expect(await file.readAsBytes(), disk);
+    await expectLater(
+      formatter.format(
+        executable: black,
+        root: root,
+        path: file.path,
+        text: 'def invalid(',
+        start: 0,
+        end: 0,
+      ),
+      throwsA(isA<DocumentFailure>()),
+    );
+    expect(await file.readAsBytes(), disk);
+    final model =
+        EditorViewModel(
+            LocalDocumentFiles(PreviewCache()),
+            blackFormatter: formatter,
+          )
+          ..blackFormatters = {root: black}
+          ..selectWorkspace(root);
+    await model.open(root, file.path);
+    model.active!.controller.text = text;
+    expect(await model.save(model.active!), isTrue);
+    expect(await file.readAsBytes(), [
+      0xef,
+      0xbb,
+      0xbf,
+      ...utf8.encode("value = 'ação 🌱'\r\n"),
+    ]);
+    await model.disposeAsync();
+  }, skip: Platform.environment['TABRYO_TEST_TASKS'] != '1');
 
   test('disabling recovery can retry a failed deletion without losing the last copy', () async {
     final directory = await Directory.systemTemp.createTemp(

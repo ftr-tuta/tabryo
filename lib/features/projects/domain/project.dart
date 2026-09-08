@@ -15,6 +15,7 @@ enum ProjectTool {
   node,
   pyright,
   ruff,
+  black,
 }
 
 final class DevelopmentProject {

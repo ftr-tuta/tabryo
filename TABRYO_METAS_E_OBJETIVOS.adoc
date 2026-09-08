@@ -115,6 +115,10 @@ A etapa MCP permanece aberta; os aceites pendentes estão separados da implement
 |Em implementação
 |Criação revisada de projetos Dart, Python e TypeScript, sem sobrescrever pastas; exemplos de ferramenta, recurso e prompt; testes nativos; execução revisada no terminal; registro no Hub e chamada da ferramenta pelo Codex real em configuração isolada.
 |Inspetor interativo de prompts, logs de aplicação sanitizados, assistência gráfica do Codex, dependências transitivas congeladas, reabertura no Studio após reiniciar e qualificação Linux. Projetos da sessão ficam listados; arquivos e entradas do Hub persistem.
+|<<dev-01,DEV-01>>
+|Em implementação
+|Tarefas revisadas de análise, execução de scripts e builds; descoberta de arquivos de teste; seleção por arquivo/filtro; relatórios nativos Dart/Flutter e pytest com falhas, cancelamento e navegação. Um comando por projeto, compartilhando a exclusão com setup e Studio.
+|Busca global, configuração compartilhável de tarefas, cobertura e matriz integral de execução. Esta fatia não conclui os demais fluxos IDE.
 |Demais metas
 |Planejada
 |Base existente preservada.
@@ -436,8 +440,16 @@ exigem arquivos abertos, revisão e conferência de versões antes de alterar bu
 o salvamento permanece separado. Ruff oferece formatação Python ao salvar.
 Os testes nativos de linguagem exercitam servidores reais e ambiente Python próprio.
 Refatorações que criam/removem/renomeiam arquivos, auto-imports de completion,
-seleção de Black e fontes de dependências fora do workspace permanecem abertas.
-Tarefas/testes, DAP, execução Flutter,
+e fontes de dependências fora do workspace permanecem abertas.
+Black possui seleção explícita por projeto e formatação protegida via stdin,
+com seleção, Unicode, BOM/CRLF e recusa de resultados após troca do formatador.
+Tarefas oferecem descoberta de arquivos de teste sem execução, revisão de comandos,
+análise, scripts Dart/Python, builds Dart/Flutter e testes seletivos com resultados
+JSON/JUnit dos runners nativos. O terminal é proprietário dos processos; tarefas,
+setup e Studio recusam execução sobreposta no mesmo projeto. Cancelamento,
+falhas, relatórios incompletos e navegação de resultados permanecem explícitos.
+Busca global, configuração compartilhável de tarefas e interface de cobertura
+continuam abertas. DAP, execução Flutter,
 DevTools, perfis Django/FastAPI e contexto IDE/Codex continuam pendentes no mesmo PR;
 esta entrega não conclui a matriz Python/Dart/Flutter nem os aceites IME/DPI.
 

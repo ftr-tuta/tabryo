@@ -59,6 +59,7 @@ final class EditorViewModel extends DartitectViewModel {
     this.files, {
     this.webAssets,
     this.formatter,
+    this.blackFormatter,
     this.recovery,
     this.language,
   }) {
@@ -84,6 +85,19 @@ final class EditorViewModel extends DartitectViewModel {
   ) async {
     final original = buffer.controller.text;
     final selection = buffer.controller.selection;
+    if (p.extension(buffer.path).toLowerCase() == '.py' && sdk != null) {
+      if (blackFormatter == null) {
+        throw const DocumentFailure('Black formatting is unavailable.');
+      }
+      return blackFormatter!.format(
+        executable: sdk.executable,
+        root: sdk.root,
+        path: buffer.path,
+        text: original,
+        start: selection.baseOffset.clamp(0, original.length),
+        end: selection.extentOffset.clamp(0, original.length),
+      );
+    }
     final edits = await languageRequest(buffer, 'textDocument/formatting', {
       'options': {'tabSize': 2, 'insertSpaces': true},
     }, lint: true);
@@ -544,10 +558,15 @@ final class EditorViewModel extends DartitectViewModel {
   }
 
   final DocumentFormatter? formatter;
+  final DocumentFormatter? blackFormatter;
   Map<String, String> dartFormatters = const {};
+  Map<String, String> blackFormatters = const {};
   ({String root, String executable})? _formatterFor(EditorBuffer buffer) {
+    final formatters = p.extension(buffer.path).toLowerCase() == '.py'
+        ? blackFormatters
+        : dartFormatters;
     final roots =
-        dartFormatters.keys
+        formatters.keys
             .where(
               (root) =>
                   (p.equals(root, buffer.root) ||
@@ -556,8 +575,8 @@ final class EditorViewModel extends DartitectViewModel {
             )
             .toList()
           ..sort((a, b) => b.length.compareTo(a.length));
-    if (roots.isEmpty || dartFormatters[roots.first]!.isEmpty) return null;
-    return (root: roots.first, executable: dartFormatters[roots.first]!);
+    if (roots.isEmpty || formatters[roots.first]!.isEmpty) return null;
+    return (root: roots.first, executable: formatters[roots.first]!);
   }
 
   final EditorAssets? webAssets;
@@ -763,7 +782,11 @@ final class EditorViewModel extends DartitectViewModel {
         lint: true,
       );
       if (!withoutFormatting &&
-          ((sdk != null && p.extension(buffer.path) == '.dart') ||
+          ((sdk != null &&
+                  [
+                    '.dart',
+                    '.py',
+                  ].contains(p.extension(buffer.path).toLowerCase())) ||
               languageFormatter != null)) {
         try {
           final version = buffer.version;
@@ -1008,6 +1031,7 @@ final class EditorViewModel extends DartitectViewModel {
     await _languageEvents?.cancel();
     await language?.close();
     formatter?.close();
+    blackFormatter?.close();
     _monitorEpoch++;
     _monitor?.cancel();
     await webAssets?.close();

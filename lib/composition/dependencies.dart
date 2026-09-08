@@ -9,6 +9,7 @@ import '../features/collaboration/presentation/collaboration_view_model.dart';
 import '../features/editor/infrastructure/local_document_files.dart';
 import '../features/editor/infrastructure/local_document_recovery.dart';
 import '../features/editor/infrastructure/local_dart_formatter.dart';
+import '../features/editor/infrastructure/local_black_formatter.dart';
 import '../features/editor/infrastructure/bundled_editor_assets.dart';
 import '../features/editor/presentation/editor_view_model.dart';
 import '../features/mcp_studio/application/mcp_studio.dart';
@@ -19,6 +20,8 @@ import '../features/git/infrastructure/local_git.dart';
 import '../features/preferences/infrastructure/local_preferences.dart';
 import '../features/projects/infrastructure/local_project_environment.dart';
 import '../features/projects/presentation/projects_view_model.dart';
+import '../features/tasks/infrastructure/local_task_files.dart';
+import '../features/tasks/presentation/tasks_view_model.dart';
 import '../features/language/application/language_service.dart';
 import '../features/language/infrastructure/lsp_connection.dart';
 import '../features/terminals/infrastructure/native_terminal.dart';
@@ -36,6 +39,7 @@ WorkbenchViewModel createWorkbench() {
   );
   return WorkbenchViewModel(
     projects: ProjectsViewModel(LocalProjectEnvironment()),
+    tasks: TasksViewModel(LocalTaskFiles(), windows: Platform.isWindows),
     collaboration: Platform.isWindows
         ? CollaborationViewModel(LocalCollaborationClient())
         : null,
@@ -47,6 +51,7 @@ WorkbenchViewModel createWorkbench() {
       LocalDocumentFiles(cache),
       recovery: LocalDocumentRecovery.forUser(),
       formatter: LocalDartFormatter(),
+      blackFormatter: LocalBlackFormatter(),
       language: LanguageService(LocalLanguageServers()),
       webAssets: BundledEditorAssets(
         load: (name) async {
