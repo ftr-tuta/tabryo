@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tabryo/core/cancellation.dart';
+import 'package:tabryo/features/collaboration/domain/collaboration.dart';
+import 'package:tabryo/features/collaboration/presentation/collaboration_view_model.dart';
 import 'package:tabryo/features/files/domain/workspace_files.dart';
 import 'package:tabryo/features/git/domain/git_ports.dart';
 import 'package:tabryo/features/preferences/domain/preferences.dart';
@@ -25,6 +27,32 @@ final class MemoryPreferences implements PreferencesStore {
     value = Preferences.fromJson(preferences.toJson());
     writes++;
   }
+}
+
+final class ReservedCollaboration implements CollaborationClient {
+  ReservedCollaboration(this.root);
+  final String root;
+  final operations = <String>[];
+  @override
+  Future<void> connect({bool start = false}) async {}
+  @override
+  Future<Json> call(String operation, [Json arguments = const {}]) async {
+    operations.add(operation);
+    return {
+      'participants': [
+        {
+          'id': 'writer',
+          'root': root,
+          'repository': root,
+          'writer': 1,
+          'state': 'paused',
+        },
+      ],
+    };
+  }
+
+  @override
+  void close() {}
 }
 
 final class MemoryFiles implements WorkspaceFiles {
@@ -133,14 +161,16 @@ void main() {
   late NoGit git;
   late WorkbenchViewModel model;
   final root = Platform.isWindows ? r'C:\project' : '/project';
-  WorkbenchViewModel create() => WorkbenchViewModel(
-    host: host,
-    launcher: MemoryLauncher(),
-    files: files,
-    gitReader: git,
-    gitMutator: git,
-    preferencesStore: preferences,
-  );
+  WorkbenchViewModel create({CollaborationViewModel? collaboration}) =>
+      WorkbenchViewModel(
+        collaboration: collaboration,
+        host: host,
+        launcher: MemoryLauncher(),
+        files: files,
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: preferences,
+      );
   setUp(() {
     host = MemoryHost();
     preferences = MemoryPreferences();
@@ -150,6 +180,33 @@ void main() {
   });
   tearDown(() async {
     if (model.sessions.isNotEmpty) await model.shutdown();
+  });
+
+  test('collaboration reservations block duplicate writers and remote credentials stay out of preferences', () async {
+    final client = ReservedCollaboration(root);
+    model = create(collaboration: CollaborationViewModel(client));
+    await model.openWorkspace(root);
+    await model.openTerminal(codex: true);
+    expect(host.specs, isEmpty);
+    expect(model.message, contains('collaboration writer'));
+    await model.openCollaborationTerminal({
+      'root': root,
+      'executable': '/codex',
+      'arguments': ['resume', '--remote', 'ws://127.0.0.1:1234', 'thread'],
+      'environment': {'TABRYO_REMOTE_TOKEN': 'private-token'},
+      'unsetEnvironment': ['CODEX_THREAD_ID'],
+    });
+    expect(host.specs.single.arguments.first, 'resume');
+    expect(
+      host.specs.single.environment['TABRYO_REMOTE_TOKEN'],
+      'private-token',
+    );
+    expect(
+      jsonEncode(preferences.value.toJson()),
+      isNot(contains('private-token')),
+    );
+    await model.shutdown();
+    expect(client.operations.contains('stop'), isFalse);
   });
 
   test('boot and restored splits never start commands, Git, watchers or filesystem scans', () async {

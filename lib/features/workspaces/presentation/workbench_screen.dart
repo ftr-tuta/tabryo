@@ -4,7 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../../editor/presentation/editor_pane.dart';
+import '../../collaboration/presentation/collaboration_screen.dart';
+import '../../mcp_studio/presentation/mcp_studio_screen.dart';
+import '../../mcp_studio/domain/studio_project.dart';
 import '../../terminals/presentation/terminal_pane_view.dart';
+import '../../mcp/presentation/mcp_hub_screen.dart';
 import '../domain/workspace.dart';
 import 'workbench_dialogs.dart';
 import 'workbench_view_model.dart';
@@ -25,6 +30,13 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     super.initState();
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
+        if (model.studio?.busy == true) return AppExitResponse.cancel;
+        final editor = model.editor;
+        if (editor != null &&
+            !await confirmDocumentClose(context, editor, editor.buffers)) {
+          model.showEditor(true);
+          return AppExitResponse.cancel;
+        }
         await model.shutdown();
         return AppExitResponse.exit;
       },
@@ -42,6 +54,19 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('New shell', 'Ctrl+Shift+T', () => model.openTerminal()),
     ('Open Codex', '', () => model.openTerminal(codex: true)),
     ('Resume Codex', '', () => model.openTerminal(codex: true, resume: true)),
+    ('MCP Hub', '', _openMcpHub),
+    ('MCP Studio', '', _openMcpStudio),
+    ('Collaboration', '', _openCollaboration),
+    ('Editor', '', () => model.showEditor(true)),
+    ('Terminals', '', () => model.showEditor(false)),
+    (
+      'Save document',
+      'Ctrl+S',
+      () {
+        final buffer = model.editor?.active;
+        if (buffer != null) model.editor!.save(buffer);
+      },
+    ),
     (
       'Split side by side',
       'Ctrl+Shift+D',
@@ -64,6 +89,111 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('Push', '', () => dialogs.remote('push')),
     ('Preferences', '', dialogs.preferences),
   ];
+
+  Future<void> _openMcpHub() async {
+    final hub = model.mcpHub;
+    final root = model.workspace?.root;
+    if (hub == null || root == null) return;
+    await hub.selectWorkspace(root);
+    if (!mounted) return;
+    try {
+      await showDialog<void>(
+        context: context,
+        useSafeArea: false,
+        builder: (_) => Dialog.fullscreen(child: McpHubScreen(model: hub)),
+      );
+    } finally {
+      await hub.disconnect();
+    }
+  }
+
+  Future<void> _openCollaboration() async {
+    final collaboration = model.collaboration;
+    if (collaboration == null) return;
+    await showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      builder: (dialogContext) => Dialog.fullscreen(
+        child: CollaborationScreen(
+          model: collaboration,
+          root: model.workspace?.root,
+          onOpenTerminal: (launch) async {
+            await model.openCollaborationTerminal(launch);
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMcpStudio() async {
+    final studio = model.studio;
+    final root = model.workspace?.root;
+    if (studio == null || root == null) return;
+    studio.selectWorkspace(root);
+    await showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      barrierDismissible: false,
+      builder: (dialogContext) => Dialog.fullscreen(
+        child: McpStudioScreen(
+          model: studio,
+          onOpen: (project) async {
+            await model.openStudioProject(project);
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+          onRun: (project, spec, title) async {
+            await model.runStudioCommand(project, spec, title);
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+          onRegister: _registerStudioProject,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _registerStudioProject(StudioPlan project) async {
+    final hub = model.mcpHub;
+    if (hub == null) throw const StudioFailure('MCP Hub is unavailable.');
+    model.checkStudioBuffers(project);
+    final draft = await model.studio!.studio.registration(project);
+    if (!mounted) return;
+    if (!await dialogs.confirm(
+      'Connect Codex?',
+      'Starts Codex and the MCP servers enabled in its trusted configuration. '
+          'You will review the new entry before saving it.',
+      'Connect',
+    )) {
+      return;
+    }
+    await hub.selectWorkspace(project.path);
+    try {
+      if (!await hub.connect()) {
+        throw StudioFailure(hub.message ?? 'Codex could not connect.');
+      }
+      final change = hub.prepare(draft);
+      if (!mounted) return;
+      if (!await dialogs.confirm(
+        'Register ${project.name}?',
+        '${change.filePath}\n\n${change.preview}\n\nSaving reconnects this Hub and starts the server.',
+        'Save and reconnect',
+      )) {
+        return;
+      }
+      if (!await hub.apply(change)) {
+        throw StudioFailure(hub.message ?? 'Registration failed.');
+      }
+      hub.select(project.name);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        useSafeArea: false,
+        builder: (_) => Dialog.fullscreen(child: McpHubScreen(model: hub)),
+      );
+    } finally {
+      await hub.disconnect();
+    }
+  }
 
   Future<void> _palette() async {
     var query = '';
@@ -160,41 +290,73 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
           style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: -.5),
         ),
         actions: [
-          TextButton.icon(
-            onPressed: dialogs.openWorkspace,
-            icon: const Icon(Icons.create_new_folder_outlined),
-            label: const Text('Open workspace'),
+          SizedBox(
+            width: (MediaQuery.sizeOf(context).width - 140).clamp(0, 850),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton.icon(
+                    onPressed: dialogs.openWorkspace,
+                    icon: const Icon(Icons.create_new_folder_outlined),
+                    label: const Text('Open workspace'),
+                  ),
+                  TextButton.icon(
+                    onPressed: model.workspace == null
+                        ? null
+                        : () => model.openTerminal(),
+                    icon: const Icon(Icons.terminal),
+                    label: const Text('Shell'),
+                  ),
+                  TextButton(
+                    onPressed: model.workspace == null
+                        ? null
+                        : () => model.openTerminal(codex: true),
+                    child: const Text('Codex'),
+                  ),
+                  TextButton(
+                    onPressed: model.workspace == null
+                        ? null
+                        : () => model.openTerminal(codex: true, resume: true),
+                    child: const Text('Resume'),
+                  ),
+                  IconButton(
+                    tooltip: 'MCP Hub',
+                    onPressed: model.workspace == null || model.mcpHub == null
+                        ? null
+                        : _openMcpHub,
+                    icon: const Icon(Icons.hub_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'MCP Studio',
+                    onPressed: model.workspace == null || model.studio == null
+                        ? null
+                        : _openMcpStudio,
+                    icon: const Icon(Icons.construction_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Command palette (Ctrl+Shift+P)',
+                    onPressed: _palette,
+                    icon: const Icon(Icons.search),
+                  ),
+                  IconButton(
+                    tooltip: 'Collaboration',
+                    onPressed: model.collaboration == null
+                        ? null
+                        : _openCollaboration,
+                    icon: const Icon(Icons.groups_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Preferences',
+                    onPressed: dialogs.preferences,
+                    icon: const Icon(Icons.settings_outlined),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ),
+            ),
           ),
-          TextButton.icon(
-            onPressed: model.workspace == null
-                ? null
-                : () => model.openTerminal(),
-            icon: const Icon(Icons.terminal),
-            label: const Text('Shell'),
-          ),
-          TextButton(
-            onPressed: model.workspace == null
-                ? null
-                : () => model.openTerminal(codex: true),
-            child: const Text('Codex'),
-          ),
-          TextButton(
-            onPressed: model.workspace == null
-                ? null
-                : () => model.openTerminal(codex: true, resume: true),
-            child: const Text('Resume'),
-          ),
-          IconButton(
-            tooltip: 'Command palette (Ctrl+Shift+P)',
-            onPressed: _palette,
-            icon: const Icon(Icons.search),
-          ),
-          IconButton(
-            tooltip: 'Preferences',
-            onPressed: dialogs.preferences,
-            icon: const Icon(Icons.settings_outlined),
-          ),
-          const SizedBox(width: 8),
         ],
       ),
       body: Column(
@@ -222,11 +384,46 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                 Expanded(
                   child: Column(
                     children: [
-                      _tabs(context),
+                      if (model.editor != null)
+                        Row(
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => model.showEditor(true),
+                              icon: const Icon(Icons.edit_note),
+                              label: Text(
+                                'Editor${model.editor!.hasDirty ? ' ●' : ''}',
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => model.showEditor(false),
+                              icon: const Icon(Icons.terminal),
+                              label: const Text('Terminals'),
+                            ),
+                          ],
+                        ),
                       Expanded(
-                        child: model.tab == null
-                            ? _welcome(context)
-                            : _panes(model.tab!.panes),
+                        child: IndexedStack(
+                          index: model.editing && model.editor != null ? 0 : 1,
+                          children: [
+                            if (model.editor != null)
+                              ExcludeFocus(
+                                excluding: !model.editing,
+                                child: EditorPane(model: model.editor!),
+                              )
+                            else
+                              const SizedBox.shrink(),
+                            Column(
+                              children: [
+                                _tabs(context),
+                                Expanded(
+                                  child: model.tab == null
+                                      ? _welcome(context)
+                                      : _panes(model.tab!.panes),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -552,7 +749,18 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                           'Its terminal sessions will be closed. Project files and worktrees remain on disk.',
                           'Close',
                         )) {
-                          await model.closeWorkspace();
+                          final editor = model.editor;
+                          final root = model.workspace?.root;
+                          if (editor == null ||
+                              root == null ||
+                              (context.mounted &&
+                                  await confirmDocumentClose(
+                                    context,
+                                    editor,
+                                    editor.inWorkspace(root),
+                                  ))) {
+                            await model.closeWorkspace(discardEdits: true);
+                          }
                         }
                       },
                 icon: const Icon(Icons.close, size: 18),
@@ -634,7 +842,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                 ),
                 onTap: () => entry.directory
                     ? model.navigateFiles(entry.path)
-                    : model.previewFile(entry.path),
+                    : model.openFile(entry.path),
               ),
           ],
         ),

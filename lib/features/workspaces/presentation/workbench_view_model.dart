@@ -4,9 +4,16 @@ import 'package:dartitect_flutter/dartitect_flutter.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/cancellation.dart';
+import '../../collaboration/presentation/collaboration_view_model.dart';
+import '../../collaboration/domain/collaboration.dart';
+import '../../editor/presentation/editor_view_model.dart';
+import '../../editor/domain/document_files.dart';
+import '../../mcp_studio/domain/studio_project.dart';
+import '../../mcp_studio/presentation/mcp_studio_view_model.dart';
 import '../../files/domain/workspace_files.dart';
 import '../../git/domain/git_ports.dart';
 import '../../preferences/domain/preferences.dart';
+import '../../mcp/presentation/mcp_hub_view_model.dart';
 import '../../terminals/domain/terminal_ports.dart';
 import '../../terminals/presentation/terminal_session.dart';
 import '../domain/workspace.dart';
@@ -21,13 +28,35 @@ final class WorkbenchViewModel extends DartitectViewModel {
     required this.gitReader,
     required this.gitMutator,
     required this.preferencesStore,
-  });
+    this.mcpHub,
+    this.editor,
+    this.studio,
+    this.collaboration,
+  }) {
+    editor?.addListener(_editorChanged);
+  }
   final PtyHost host;
   final CodexLauncher launcher;
   final WorkspaceFiles files;
   final GitReader gitReader;
   final GitMutator gitMutator;
   final PreferencesStore preferencesStore;
+  final McpHubViewModel? mcpHub;
+  final EditorViewModel? editor;
+  final McpStudioViewModel? studio;
+  final CollaborationViewModel? collaboration;
+  bool editing = false;
+  final _studioRuns = <String, int>{};
+  void _editorChanged() {
+    if (!_shutdown) notifyListeners();
+  }
+
+  void showEditor(bool value) {
+    editing = value;
+    _visibility();
+    notifyListeners();
+  }
+
   final workspaces = <Workspace>[];
   final sessions = <int, TerminalSession>{};
   final restoredSessions = <int, String>{};
@@ -111,6 +140,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
       }
       focusedSession = tab?.panes.sessions.firstOrNull;
     }
+    editor?.selectWorkspace(workspace?.root);
     notifyListeners();
   }
 
@@ -172,6 +202,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
 
   Future<void> selectWorkspace(int index) async {
     activeWorkspace = index;
+    editor?.selectWorkspace(workspace?.root);
     fileDirectory = workspace?.root;
     fileOffset = 0;
     historyPage = 0;
@@ -184,17 +215,27 @@ final class WorkbenchViewModel extends DartitectViewModel {
     await refresh();
   }
 
-  Future<void> closeWorkspace() => guarded(() async {
+  Future<void> closeWorkspace({bool discardEdits = false}) => guarded(() async {
     final current = workspace;
     if (current == null) return;
+    if (editor?.closeWorkspace(current.root, discard: discardEdits) == false) {
+      message = 'Save or discard the workspace documents before closing.';
+      notifyListeners();
+      return;
+    }
     for (final id in current.tabs.expand((t) => t.panes.sessions).toList()) {
       await closeSession(id);
     }
     workspaces.remove(current);
+    studio?.forgetWorkspace(current.root);
     activeWorkspace = activeWorkspace.clamp(
       0,
       workspaces.isEmpty ? 0 : workspaces.length - 1,
     );
+    editor?.selectWorkspace(workspace?.root);
+    fileDirectory = workspace?.root;
+    previewTitle = null;
+    previewText = null;
     await _configureWatcher();
     await refresh();
     await _save();
@@ -290,6 +331,86 @@ final class WorkbenchViewModel extends DartitectViewModel {
     notifyListeners();
   });
 
+  Future<void> openFile(String path) => guarded(() async {
+    if (busy) {
+      throw const DocumentFailure(
+        'Wait for the active workspace operation before opening a document.',
+      );
+    }
+    final root = workspace?.root;
+    if (root == null) return;
+    final editable = editor != null && await editor!.open(root, path);
+    if (_shutdown) return;
+    if (!editable) {
+      if (workspace?.root != root) return;
+      await previewFile(path);
+      if (editor?.message != null) message = editor!.message;
+    } else if (workspace?.root == root) {
+      editing = true;
+      _visibility();
+      dismissPreview();
+    }
+    if (!_shutdown) notifyListeners();
+  });
+
+  Future<void> openStudioProject(StudioPlan project) async {
+    await studio!.studio.storage.validateProject(project);
+    await openWorkspace(project.path);
+    await openFile(p.join(project.path, studio!.studio.entryFile(project)));
+  }
+
+  Future<void> runStudioCommand(
+    StudioPlan project,
+    LaunchSpec spec,
+    String title,
+  ) async {
+    await studio!.studio.storage.validateProject(project);
+    checkStudioBuffers(project);
+    if (_studioRuns.containsKey(project.path)) {
+      throw const StudioFailure(
+        'A Studio command is still running in this project. Wait for it to finish or close its terminal.',
+      );
+    }
+    _studioRuns[project.path] = -1;
+    try {
+      await openWorkspace(project.path);
+      if (_shutdown) throw const StudioFailure('The application is closing.');
+      checkStudioBuffers(project);
+      final owner = workspace;
+      if (owner == null || !p.equals(owner.root, project.path)) {
+        throw const StudioFailure(
+          'Open the project workspace before running commands.',
+        );
+      }
+      final session = _start(
+        owner,
+        spec,
+        title,
+        onFinished: () async {
+          _studioRuns.remove(project.path);
+        },
+      );
+      _studioRuns[project.path] = session.id;
+      await _save();
+    } finally {
+      if (_studioRuns[project.path] == -1) _studioRuns.remove(project.path);
+    }
+  }
+
+  void checkStudioBuffers(StudioPlan project) {
+    if (editor?.buffers.any(
+          (b) =>
+              (b.dirty || b.saving) &&
+              (p.equals(b.root, project.path) ||
+                  p.isWithin(project.path, b.path)),
+        ) ==
+        true) {
+      throw const StudioFailure(
+        'Save the project documents before running this command.',
+      );
+    }
+  }
+
   Future<void> previewDiff(GitChange change, {required bool staged}) =>
       guarded(() async {
         if (change.untracked) {
@@ -348,6 +469,23 @@ final class WorkbenchViewModel extends DartitectViewModel {
     final spec = codex
         ? launcher.codex(current.root, resume: resume)
         : launcher.shell(current.root);
+    if (codex && collaboration != null) {
+      final reservations = await collaboration!.reservations();
+      if (reservations.any(
+        (row) =>
+            row['writer'] == 1 &&
+            (p.equals(row['root'] as String, current.root) ||
+                p.equals(
+                  row['repository'] as String,
+                  repository?.commonDirectory ?? '',
+                )),
+      )) {
+        throw const CollaborationFailure(
+          'This repository has a collaboration writer. Open its terminal from Collaboration.',
+        );
+      }
+    }
+    if (_shutdown) return;
     if (spec == null) {
       message = 'Codex was not found on PATH. Install the Codex CLI, then reopen Tabryo.';
       notifyListeners();
@@ -362,13 +500,35 @@ final class WorkbenchViewModel extends DartitectViewModel {
     await _save();
   });
 
-  void _start(
+  Future<void> openCollaborationTerminal(Json launch) async {
+    final root = launch['root'] as String;
+    await openWorkspace(root);
+    final owner = workspace;
+    if (_shutdown || owner == null || !p.equals(owner.root, root)) {
+      throw const CollaborationFailure('Open the participant project first.');
+    }
+    _start(
+      owner,
+      LaunchSpec(
+        executable: launch['executable'] as String,
+        workingDirectory: root,
+        arguments: (launch['arguments'] as List).cast<String>(),
+        environment: Map<String, String>.from(launch['environment'] as Map),
+        unsetEnvironment: (launch['unsetEnvironment'] as List).cast<String>(),
+      ),
+      'Codex collaboration',
+    );
+    await _save();
+  }
+
+  TerminalSession _start(
     Workspace owner,
     LaunchSpec spec,
     String title, {
     SplitDirection? split,
     Future<void> Function()? onFinished,
   }) {
+    editing = false;
     final session = TerminalSession(
       id: ++_nextId,
       title: title,
@@ -405,6 +565,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     message = null;
     _visibility();
     notifyListeners();
+    return session;
   }
 
   void _sessionChanged() {
@@ -412,7 +573,9 @@ final class WorkbenchViewModel extends DartitectViewModel {
   }
 
   void _visibility() {
-    final visible = tab?.panes.sessions ?? const <int>[];
+    final visible = editing
+        ? const <int>[]
+        : tab?.panes.sessions ?? const <int>[];
     for (final entry in sessions.entries) {
       entry.value.markVisible(visible.contains(entry.key));
     }
@@ -427,6 +590,10 @@ final class WorkbenchViewModel extends DartitectViewModel {
   }
 
   void cycleTab(int direction) {
+    if (editing && editor != null) {
+      editor!.cycle(direction);
+      return;
+    }
     final w = workspace;
     if (w == null || w.tabs.isEmpty) return;
     selectTab((w.activeTab + direction) % w.tabs.length);
@@ -539,21 +706,36 @@ final class WorkbenchViewModel extends DartitectViewModel {
   });
 
   Future<void> removeWorktree(GitWorktree tree) => guarded(() async {
-    final repo = await selectedRepository();
+    if (busy) {
+      throw const DocumentFailure('Wait for the active workspace operation.');
+    }
     busy = true;
     notifyListeners();
     try {
-      await gitMutator.removeWorktree(
-        repo,
-        tree,
-        sessions.values
+      if (editor?.opening == true ||
+          editor?.buffers.any(
+                (buffer) =>
+                    p.equals(buffer.root, tree.path) ||
+                    p.isWithin(tree.path, buffer.path),
+              ) ==
+              true) {
+        throw const DocumentFailure(
+          'Close editor documents in this worktree and finish pending file opens before removing it.',
+        );
+      }
+      final repo = await selectedRepository();
+      await gitMutator.removeWorktree(repo, tree, [
+        ...(await collaboration?.reservations() ?? const <Json>[]).map(
+          (row) => row['root'] as String,
+        ),
+        ...sessions.values
             .where(
               (s) =>
                   s.status == SessionStatus.running ||
                   s.status == SessionStatus.closing,
             )
             .map((s) => s.spec.workingDirectory),
-      );
+      ]);
       await refresh();
     } finally {
       busy = false;
@@ -631,6 +813,11 @@ final class WorkbenchViewModel extends DartitectViewModel {
       session.dispose();
     }
     sessions.clear();
+    await mcpHub?.disposeAsync();
+    editor?.removeListener(_editorChanged);
+    await editor?.disposeAsync();
+    await studio?.disposeAsync();
+    await collaboration?.disposeAsync();
   }();
   @override
   Future<void> disposeAsync() async {

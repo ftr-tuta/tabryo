@@ -1,0 +1,715 @@
+= Tabryo — Metas e objetivos para uma IDE centrada no Codex
+:lang: pt-BR
+:toc: left
+:toc-title: Sumário
+:toclevels: 3
+:sectnums:
+:sectnumlevels: 3
+:idprefix:
+:idseparator: -
+:revnumber: 1.2
+:description: Visão, metas, dependências e critérios de aceite para a evolução do Tabryo.
+
+Este é o documento central de evolução do Tabryo, baseado na versão `0.1.0` e no código do commit `0ac8b71`.
+O estado inicial histórico de todas as metas é *Planejada*; a situação atual está registrada em <<progresso>>.
+As versões sugeridas são propostas de agrupamento, sem datas ou compromisso de publicação.
+Este documento distingue o escopo integral das capacidades já implementadas e qualificadas. Atualizá-lo não representa publicar um release.
+
+.RECOMENDAÇÃO DE OPERAÇÃO
+* *Papel:* executor de integração; coordenador único do resultado.
+* *Modelo/esforço:* GPT-5.6 Terra — High para integração entre módulos; Medium para implementações delimitadas em um módulo.
+* *Janela:* continuar o executor durante a mesma fatia funcional; preparar uma nova tarefa na passagem de marco, com base e próximo aceite explícitos.
+* *Contexto inicial:* este documento, `README.md`, `pubspec.yaml`, `dartitect.json`, interfaces existentes e estado Git do checkout autorizado.
+* *Escrita e paralelismo:* writer único por repositório; código de produto, testes nativos e documentação existente; zero subagentes por padrão.
+* *Escalonamento:* Sol High para decisão não resolvida de arquitetura, permissões, exposição remota ou compatibilidade.
+* *Economia:* um documento central e entregas funcionais limitadas; cada implementação deve caber em 100 minutos com 20 minutos de reserva ou ser dividida antes da escrita.
+
+[[visao]]
+== Visão e decisões de produto
+
+*Transformar o Tabryo em uma IDE centrada no Codex, na qual seja fácil conectar ferramentas, desenvolver código, acompanhar agentes e revisar alterações.*
+
+O fluxo pretendido começa pela abertura de um workspace autorizado.
+A pessoa conecta ou cria ferramentas MCP, usa o Codex para trabalhar no contexto escolhido e acompanha os resultados no editor, no terminal e na revisão Git.
+O aplicativo mantém visíveis o projeto, a tarefa, as permissões e o estado de cada operação.
+
+As decisões confirmadas são:
+
+* MCP é a primeira grande prioridade e só estará completo quando houver *Hub*, *Studio* e *Tabryo como servidor MCP*.
+* O produto deve consumir servidores, criar servidores e expor recursos próprios de forma autorizada.
+* O Studio oferecerá projetos iniciais em *Dart, Python e TypeScript*.
+* A interface se adaptará às atividades *Desenvolver*, *Conversar* e *Revisar*, preservando contexto e alterações.
+* Editor de código, Git visual e integração profunda com Codex pertencem à evolução principal.
+* Flutter, Dartitect e MVVM serão preservados, com serviços de aplicação compartilhados entre interface e MCP.
+* A integração gráfica usará o *Codex App Server*, com a opção de terminal preservada. Conversas e aprovações serão obtidas pelo protocolo, sem reconstrução a partir da aparência da TUI.
+* A exposição do Tabryo será local, desativada inicialmente e ativada pelo usuário. Exposição remota terá evolução e avaliação próprias.
+
+[[baseline]]
+== Base existente e limites conhecidos
+
+A base foi conferida nos arquivos do checkout indicado. A descrição das validações anteriores vem do README e não constitui uma nova execução desses testes.
+
+[cols="2,4,3",options="header"]
+|===
+|Área |Base da versão 0.1.0 |Evolução necessária
+|Plataformas e arquitetura
+|Aplicativo desktop local para Windows 11 x64 e Ubuntu 24.04 x64; Flutter 3.47.2, Dart 3.13.2 e Dartitect 1.1.0; perfil `native_strict`, MVVM e injeção por construtor.
+|Manter as fronteiras arquiteturais ao adicionar editor, protocolos e serviços.
+|Terminal e Codex
+|Shell, Codex CLI instalado e retomada no terminal; integração PTY nativa; nenhum processo iniciado no boot.
+|Cliente gráfico do App Server e estados estruturados de tarefas e aprovações.
+|Arquivos
+|Listagem paginada, autorização de raiz e prévias somente leitura; links que saem do workspace exigem autorização de outro workspace.
+|Documentos editáveis, recuperação, busca e serviços de linguagem.
+|Git
+|Status, diff textual, histórico paginado, stage/unstage por arquivo, commit, fetch/push e worktrees com proteções.
+|Diff estruturado, operações por trecho, grafo, blame, comparações históricas e resolução de conflitos.
+|Interface
+|Temas claro, escuro e sistema, abas e divisões de terminais, paleta de comandos e atalhos. Persistência de preferências, diretórios, layout e monitoramento é opcional.
+|Layouts por atividade, painéis reorganizáveis, acessibilidade e consistência de todos os novos fluxos.
+|Integrações
+|`CodexLauncher` descreve o lançamento da CLI. Não há Hub, Studio, servidor MCP próprio ou cliente gráfico do App Server nos módulos inspecionados.
+|Interfaces de integração e entregas MCP qualificadas.
+|Validação anterior
+|O README relata interação real com Codex no Windows e validação automatizada Linux com Xvfb.
+|Aceites próprios das novas capacidades nos dois sistemas; não presumir aceitação manual ou autenticada no Linux.
+|===
+
+Os limites existentes incluem prévias de arquivos de 512 KiB, cache compartilhado de arquivos/Git de 24 MiB, histórico com uma página de 100 commits, até quatro painéis por aba e 2.000 linhas de histórico por terminal.
+Leituras Git são limitadas e canceláveis, com dois leitores globais e um writer por diretório Git comum.
+Esses limites são referências de projeto; editor, logs MCP, serviços de linguagem e novas sessões precisarão de limites próprios.
+As observações de memória documentadas no README dependem de plataforma, renderer, processo medido e carga; não são garantias para a futura IDE.
+
+Fontes locais: <<fonte-readme>>, <<fonte-versao>>, <<fonte-arquitetura>> e <<fonte-interfaces>>.
+
+[[progresso]]
+== Progresso da implementação
+
+As primeiras fatias implementam o cliente local do App Server, o MCP Hub, um editor mínimo e a criação de projetos STDIO no MCP Studio.
+A etapa MCP permanece aberta; os aceites pendentes estão separados da implementação já exercitada no Windows.
+
+[cols="1,2,4,4",options="header"]
+|===
+|Meta |Estado atual |Implementado |Aceite ainda pendente
+|<<base-01,BASE-01>>
+|Em implementação
+|Porta Codex, transporte JSONL limitado, modelos MCP, contratos de documentos e criação de projetos; serviços separados da apresentação.
+|Contratos de linguagem e diff; qualificação integral por plataforma e capacidade.
+|<<safe-01,SAFE-01>>
+|Em implementação
+|Prévia imutável de configuração e projetos; versões esperadas; buffers preservados em conflitos; gravação de documentos por substituição com checagem dos bytes; comandos do Studio serializados por projeto e bloqueados com documentos pendentes.
+|Concorrência entre aplicações durante o rename final, patches e operações Git propostas pelas novas interfaces; recuperação após falha abrupta.
+|<<codex-01,CODEX-01>>
+|Em implementação
+|Inicialização local, inspeção MCP, sessões WebSocket autenticadas e colaboração Windows. Serviço separado da janela, SQLite, ferramentas MCP com identidade por conexão, mensagens idempotentes, checkpoints versionados com estado Git/local e painel de participantes/aprovações. Entregas armazenadas, encaminhadas, confirmadas e incertas são distintas. Retomada de conversas, interrupção e troca real entre agentes exercitadas com Codex 0.147.0.
+|Transporte WebSocket experimental; Linux e comunicação entre computadores ainda sem qualificação. Histórico gráfico completo de conversas fora do painel de colaboração continua pendente. O inspetor MCP mantém a recusa explícita das interações não suportadas.
+|<<mcp-01,MCP-01>>
+|Em implementação
+|Hub com STDIO/HTTP, administração de entradas de usuário, configuração revisável, inventário, ferramentas/recursos, início do fluxo OAuth e reconexão.
+|Escrita por projeto, OAuth com provedor real, revogação de credenciais no provedor, diagnóstico ampliado e validação Linux. A CLI 0.147.0 recusa escrita em camadas de projeto pelo App Server; essas origens ficam somente leitura.
+|<<edit-01,EDIT-01>>
+|Em validação
+|Abas, edição UTF-8, indicação de pendências, desfazer/refazer, Ctrl+S/Ctrl+Tab, comparação/releitura de disco, confirmação ao fechar e preservação entre workspaces/atividades; BOM e LF/CRLF preservados. Limites de 12 documentos e 512 KiB por documento.
+|Aceite Linux e ajustes/execução assistida dos três exemplos pela interface. O fluxo desktop Windows foi exercitado com fechamento nativo cancelado, conflito em disco, abertura do projeto e comando revisado no PTY.
+|<<mcp-02,MCP-02>>
+|Em implementação
+|Criação revisada de projetos Dart, Python e TypeScript, sem sobrescrever pastas; exemplos de ferramenta, recurso e prompt; testes nativos; execução revisada no terminal; registro no Hub e chamada da ferramenta pelo Codex real em configuração isolada.
+|Inspetor interativo de prompts, logs de aplicação sanitizados, assistência gráfica do Codex, dependências transitivas congeladas, reabertura no Studio após reiniciar e qualificação Linux. Projetos da sessão ficam listados; arquivos e entradas do Hub persistem.
+|Demais metas
+|Planejada
+|Base existente preservada.
+|Servidor Tabryo, editor completo, IDE gráfica e demais objetivos descritos a seguir.
+|===
+
+Os testes nativos de integração exercitam o Codex CLI 0.147.0 no Windows com configuração descartável, servidor STDIO e endpoint Streamable HTTP em loopback.
+Eles incluem descoberta, chamada de ferramenta, leitura de recurso, preservação de comentários/opções, conflito de versão e desabilitação/remoção.
+Não executam um modelo nem autenticam um provedor remoto; essa evidência não certifica interação autenticada ou funcionamento no Linux.
+Testes de serviço e widgets cobrem revisão antes de escrever/executar, isolamento de sessão, mascaramento de credenciais conhecidas e janela estreita com texto ampliado.
+
+O Studio foi exercitado com Dart 3.13.2 / `dart_mcp` 0.5.2, Python 3.12.10 / `mcp` 2.1.1 e Node.js 26.5.1 / SDK TypeScript 1.30.0.
+Cada projeto gerado executa testes do seu ecossistema: `dart test`, `pytest` ou `node --test`, com descoberta e uso de ferramentas, recursos e prompts.
+Os três também foram registrados e usados pelo Codex CLI 0.147.0 para chamada de ferramenta e leitura de recurso; nenhum modelo foi invocado.
+Os testes do editor incluem modificação externa com mesmo tamanho/data, troca de link, arquivo somente leitura, escrita concorrente e limite de edição sem truncamento.
+O salvamento usa concorrência otimista e não oferece compare-and-swap contra aplicações que escrevem durante o rename final. Buffers não salvos permanecem somente em memória.
+
+O campo `version` da configuração é interpretado pelo próprio Codex: mudanças semânticas concorrentes são recusadas, enquanto comentários adicionais são preservados.
+Desconectar o Hub encerra sua conexão e seus resultados transitórios, mas não promete cancelar uma operação já recebida por um servidor remoto.
+Configurações de outros clientes Codex podem exigir reconexão separada; remover a entrada local não revoga uma credencial no provedor.
+
+[[prioridades]]
+== Prioridades, estados e ordem de entrega
+
+Prioridade indica precedência, não uma data. Dependência significa que o contrato ou comportamento indicado deve estar disponível antes do aceite da meta dependente.
+Uma dependência parcial está explicitamente identificada; ela não torna a meta inteira concluída.
+
+[cols="1,5",options="header"]
+|===
+|Prioridade |Significado
+|P0 |Primeira etapa MCP e seus pré-requisitos indispensáveis de segurança, compatibilidade, edição mínima e integração.
+|P1 |Evolução principal da IDE após MCP; o polimento visual continua desde P0.
+|P2 |Capacidades avançadas após estabilizar os fluxos principais.
+|P3 |Possibilidades posteriores, com decisão própria de arquitetura e escopo.
+|===
+
+Os estados previstos são *Planejada*, *Em implementação*, *Em validação* e *Concluída*.
+Só mudar para Concluída quando os critérios específicos e os critérios transversais aplicáveis estiverem atendidos.
+Documentação de fornecedor, compilação ou teste com substitutos não equivalem a validação real com Codex.
+Limitações conhecidas permanecem explícitas, com a capacidade afetada e a condição para reavaliação.
+
+[cols="1,2,4,3",options="header"]
+|===
+|Etapa |Versão proposta |Metas e sequência |Condição de saída
+|Base
+|0.1.0 existente
+|Preservar a experiência descrita em <<baseline>>.
+|Referência para regressões, sem declarar novas funcionalidades.
+|MCP completo
+|0.2.x, proposta
+|<<base-01,BASE-01>> → <<safe-01,SAFE-01>> e <<codex-01,CODEX-01>> → <<mcp-01,MCP-01>> → <<edit-01,EDIT-01>> e <<mcp-02,MCP-02>> → <<mcp-03,MCP-03>>. Aplicar o recorte inicial de <<ui-01,UI-01>> em cada entrega.
+|Hub, Studio nas três linguagens e servidor Tabryo aceitos, com matriz qualificada e sem lacunas obrigatórias ocultas.
+|IDE principal
+|0.3.x, proposta
+|<<ui-01,UI-01>>, <<edit-02,EDIT-02>>, <<edit-03,EDIT-03>>, <<rev-01,REV-01>>, <<git-01,GIT-01>>, <<safe-02,SAFE-02>>, <<codex-02,CODEX-02>> e <<dev-01,DEV-01>>, respeitando suas dependências.
+|Desenvolver, conversar e revisar com edição confiável, Git visual e interação gráfica Codex.
+|Uso avançado
+|0.4.x, proposta
+|<<codex-03,CODEX-03>>, <<dev-02,DEV-02>> e <<mcp-04,MCP-04>>.
+|Recursos avançados com capacidades e limites documentados por versão.
+|Expansões
+|Versão a definir
+|<<ext-01,EXT-01>>, <<ext-02,EXT-02>> e <<ext-03,EXT-03>>.
+|Propostas reavaliadas após estabilização local; sem compromisso antecipado de entrega.
+|===
+
+Hub, Studio e servidor Tabryo são entregas funcionais separadas e obrigatórias.
+Uma publicação intermediária pode identificar o que já foi entregue, mas não pode anunciar a etapa MCP como completa antes do aceite das três.
+O editor inicial do Studio é um recorte próprio; a IDE inteira não é pré-requisito para essa etapa.
+
+[[fundacoes]]
+== Fundações compartilhadas
+
+[[base-01]]
+=== BASE-01 — Contratos e qualificação das integrações
+
+* *Problema atendido:* acoplar o aplicativo diretamente a SDKs ou versões pode produzir promessas de compatibilidade que a implementação não sustenta.
+* *Resultado esperado:* interfaces próprias e uma matriz explícita de versões, transportes e capacidades.
+* *Prioridade:* P0.
+* *Dependências:* base descrita em <<baseline>> e fontes oficiais em <<fontes>>.
+* *Critérios de aceite:* definir os contratos de integração Codex, registro/configuração e execução MCP, documentos editáveis, serviços de linguagem e diff estruturado; registrar versão do protocolo, SDK e Codex para cada combinação avaliada; distinguir suporte declarado, suporte exercitado e lacunas; impedir a ativação silenciosa de capacidades não negociadas.
+* *Estado inicial:* Planejada.
+
+[[safe-01]]
+=== SAFE-01 — Escrita concorrente e permissões compartilhadas
+
+* *Problema atendido:* usuário, Codex, ferramentas MCP e processos externos podem modificar o mesmo arquivo ou configuração.
+* *Resultado esperado:* serviço comum de autorização, detecção de versão e aplicação de alterações, com preservação de buffers modificados.
+* *Prioridade:* P0.
+* *Dependências:* <<base-01,BASE-01>>.
+* *Critérios de aceite:* conferir o conteúdo-base antes de salvar ou aplicar patch; identificar divergência entre disco, buffer e proposta; oferecer comparação, recarga ou resolução explícita sem perda do buffer; revalidar a base depois da confirmação; serializar mutações Git pelo diretório comum e coordenar escritas de documentos e configuração; negar caminhos fora da raiz autorizada, inclusive por links; invalidar acesso revogado e respeitar confirmações para a operação concreta.
+* *Estado inicial:* Planejada.
+
+[[codex-01]]
+=== CODEX-01 — Adaptador local do Codex App Server
+
+* *Problema atendido:* o lançamento da CLI no terminal não fornece à interface os eventos e aprovações necessários às integrações MCP.
+* *Resultado esperado:* serviço de aplicação para conversar com o App Server e acompanhar uma operação Codex local.
+* *Prioridade:* P0, restrita à fundação necessária ao MCP.
+* *Dependências:* <<base-01,BASE-01>> e <<safe-01,SAFE-01>>.
+* *Critérios de aceite:* identificar a instalação e versão da CLI, inicializar a conexão, apresentar indisponibilidade ou incompatibilidade, iniciar uma interação, receber progresso e chamadas de ferramentas, encaminhar aprovações e interrupção e apresentar o resultado final; exercer uma chamada MCP real pelo Codex; manter o terminal disponível; não armazenar tokens em logs nem substituir políticas do Codex por permissões locais mais amplas.
+* *Estado inicial:* Planejada.
+
+O App Server é a interface indicada pela documentação para clientes com histórico, autenticação, aprovações e eventos estruturados.
+A implementação começará pela comunicação local; seu protocolo e transporte serão tratados separadamente do protocolo MCP.
+A documentação descreve STDIO como transporte padrão e marca WebSocket como experimental.
+Cada recurso experimental terá identificação e ativação próprias, vinculadas à versão qualificada. Fonte: <<fonte-app-server>>.
+
+[[mcp]]
+== Primeira prioridade — MCP completo
+
+[[mcp-01]]
+=== MCP-01 — Hub para consumir e administrar servidores
+
+* *Problema atendido:* configurar servidores externamente dificulta descoberta, autenticação, diagnóstico e controle do acesso.
+* *Resultado esperado:* um MCP Hub para adicionar, configurar, habilitar, desabilitar, autenticar, reiniciar e remover servidores STDIO e Streamable HTTP.
+* *Prioridade:* P0.
+* *Dependências:* <<base-01,BASE-01>>, <<safe-01,SAFE-01>> e <<codex-01,CODEX-01>>.
+* *Critérios de aceite:* conectar um servidor local STDIO e um remoto Streamable HTTP; usar ferramentas dos dois com Codex; escolher configuração de usuário ou projeto; visualizar ferramentas, recursos, capacidades anunciadas, estado e erros; inspecionar uma chamada e seu resultado; recuperar falha de autenticação ou inicialização; desabilitar, reiniciar e remover pela interface; revogar o acesso local e impedir novas chamadas nas sessões afetadas, informando qualquer ação adicional necessária no provedor.
+* *Estado inicial:* Planejada.
+
+==== Configuração compatível e controle de acesso
+
+A configuração deve respeitar a resolução de caminhos e escopos da instalação do Codex.
+A documentação aponta `~/.codex/config.toml` para usuário e `.codex/config.toml` para projetos confiáveis; o Tabryo deve mostrar a origem e o valor efetivo antes da edição. Fonte: <<fonte-codex-mcp>>.
+
+O editor de configuração deverá:
+
+* Mostrar uma prévia das alterações antes de salvar, com valores sensíveis mascarados.
+* Preservar opções, comentários e seções existentes, inclusive campos desconhecidos que não sejam alvo da alteração. Se não puder preservá-los, apresentar a limitação e impedir uma regravação destrutiva.
+* Detectar alterações externas entre a leitura, a prévia e o salvamento; reapresentar a diferença em caso de conflito.
+* Separar escopo, origem, estado configurado e estado da conexão em execução; indicar quando é necessário reconectar uma sessão Codex.
+* Preservar argumentos, diretório de trabalho, referências a variáveis, filtros de ferramentas, políticas e limites compatíveis com a versão qualificada.
+* Impedir que habilitar um servidor conceda automaticamente confiança a um projeto ou amplie permissões de execução.
+
+A documentação confirma STDIO e Streamable HTTP, com bearer token e OAuth no transporte HTTP.
+Essa cobertura orienta o Hub; o resultado efetivo de cada método de autenticação será qualificado por versão e servidor. Fonte: <<fonte-codex-mcp>>.
+
+Autenticação seguirá o mecanismo suportado pelo Codex e pelo servidor.
+Preferir referências a segredos e armazenamento seguro já disponível; credenciais não devem aparecer em logs, prévias, exportações ou projetos gerados.
+Remover uma configuração, encerrar uma conexão e revogar uma credencial no provedor são operações distintas, e a interface deve mostrar o alcance de cada uma.
+
+==== Inspeção e ciclo de vida
+
+Cada chamada exibirá servidor, operação, argumentos permitidos para inspeção, permissões relevantes, progresso quando disponível, resultado, erro ou cancelamento.
+Dados sensíveis serão ocultados também em erros, cabeçalhos e saídas do processo.
+O acesso à inspeção será explícito, com retenção limitada e exportação somente de dados sanitizados.
+
+Estados esperados incluem desabilitado, iniciando, conectado, autenticação necessária, indisponível, reiniciando e erro.
+Timeout, encerramento do processo, desconexão e recusa de autorização devem produzir mensagens com uma próxima ação possível.
+Se o transporte ou SDK não confirmar o cancelamento remoto, a interface distinguirá a interrupção da espera local de uma operação que pode continuar no servidor; não repetirá automaticamente mutações de resultado desconhecido.
+Reiniciar deve encerrar conexões ou processos sob responsabilidade do Tabryo sem atingir processos externos.
+
+[[edit-01]]
+=== EDIT-01 — Editor mínimo para o Studio
+
+* *Problema atendido:* criar um servidor requer consultar e ajustar seus arquivos antes de executá-lo.
+* *Resultado esperado:* edição incremental dos projetos gerados, reutilizável pelo editor completo.
+* *Prioridade:* P0.
+* *Dependências:* <<base-01,BASE-01>> e <<safe-01,SAFE-01>>.
+* *Critérios de aceite:* abrir arquivos em abas, editar, indicar alterações pendentes, desfazer/refazer, salvar e preservar alterações ao fechar ou trocar de atividade; tratar erro de escrita e modificação externa sem perda silenciosa; permitir ajustar e executar os exemplos das três linguagens; manter prévias limitadas para conteúdo não editável.
+* *Estado inicial:* Planejada.
+
+[[mcp-02]]
+=== MCP-02 — Studio para criar, testar e registrar servidores
+
+* *Problema atendido:* começar um MCP exige montar um projeto, entender seu protocolo e alternar entre ferramentas de desenvolvimento e teste.
+* *Resultado esperado:* criador de projetos Dart, Python e TypeScript, com exemplos de ferramentas, recursos e prompts, assistência do Codex e inspeção integrada.
+* *Prioridade:* P0.
+* *Dependências:* <<base-01,BASE-01>>, <<safe-01,SAFE-01>>, <<codex-01,CODEX-01>>, <<mcp-01,MCP-01>> e <<edit-01,EDIT-01>>.
+* *Critérios de aceite:* criar um servidor funcional em cada linguagem numa pasta escolhida e autorizada; apresentar os arquivos e comandos antes de gerar ou executar; preservar conteúdo preexistente; incluir instruções de execução e testes nativos; listar e chamar uma ferramenta, ler um recurso e obter um prompt; inspecionar argumentos, resultados e logs sanitizados; corrigir um exemplo com assistência do Codex; registrar o servidor no Hub e invocar sua ferramenta pelo Codex a partir do Tabryo.
+* *Estado inicial:* Planejada.
+
+Os projetos iniciais serão pequenos, compreensíveis e nomeados pelo produto criado, com versão de SDK e dependências reproduzíveis.
+A criação assistida terá o mesmo fluxo de revisão de alterações e permissões da edição comum.
+O Studio mostrará dependências de runtime ausentes e permitirá ao usuário revisar instalações e comandos necessários.
+Executar testes usará o ecossistema nativo do projeto: `dart test`, `pytest` e o runner definido pelo projeto TypeScript.
+Os logs de aplicação STDIO devem permanecer separados das mensagens do protocolo.
+
+Para a primeira entrega, cada linguagem deve oferecer um caminho STDIO completo.
+O Hub também deve consumir Streamable HTTP, independentemente da linguagem do servidor remoto.
+Projetos HTTP gerados pelo Studio só serão apresentados como disponíveis nas combinações qualificadas da <<matriz-mcp>>; a ausência de um SDK não autoriza excluir Dart nem reduzir a exigência de HTTP no Hub.
+
+[[mcp-03]]
+=== MCP-03 — Tabryo como servidor MCP local
+
+* *Problema atendido:* clientes MCP precisam acessar contexto e navegação do Tabryo sem acoplamento à interface nem acesso irrestrito à máquina.
+* *Resultado esperado:* endpoint local, ativado pelo usuário, expondo contexto do workspace, arquivos, Git, diffs e ações de navegação autorizadas.
+* *Prioridade:* P0.
+* *Dependências:* <<base-01,BASE-01>>, <<safe-01,SAFE-01>> e <<mcp-01,MCP-01>>; compõe o encerramento da etapa com <<mcp-02,MCP-02>>.
+* *Critérios de aceite:* um cliente MCP externo ao módulo consulta o workspace permitido, lista/lê arquivos e consulta status/diffs Git; solicita abertura ou seleção de um arquivo no Tabryo; recebe erro compreensível ao acessar raiz não autorizada ou capacidade ausente; não consegue escapar da raiz por caminho relativo, link ou troca de workspace; o usuário visualiza conexões e chamadas, revoga acesso e desativa o servidor, encerrando sua exposição.
+* *Estado inicial:* Planejada.
+
+O transporte local concreto será escolhido na qualificação: processo STDIO ou endpoint restrito a loopback, conforme a integração aprovada.
+Um listener TCP local deve validar origem e identidade/capacidade do cliente; loopback sozinho não concede autorização.
+Não haverá escuta remota ou descoberta pública por padrão.
+O consentimento deverá indicar cliente, workspace, capacidades e duração/alcance do acesso.
+Trocar o workspace não transferirá silenciosamente permissões para outra raiz.
+
+As ferramentas chamarão serviços de aplicação, nunca widgets diretamente.
+Consulta de arquivos e Git reutilizará autorização, cancelamento e limites existentes; ações de navegação serão pedidos tipados, tratados pela aplicação conforme a atividade disponível.
+Alterações futuras solicitadas por ferramentas passarão pelos mesmos controles de concorrência e confirmação da interface.
+
+[[matriz-mcp]]
+=== Matriz de conformidade por linguagem, transporte e capacidade
+
+*Suporte completo* significa cobertura documentada das capacidades qualificadas que compõem esta etapa.
+Não significa equivalência entre SDKs, suporte a toda extensão MCP ou disponibilidade de qualquer recurso em todo cliente.
+Capacidades que o Codex não oferecer diretamente devem ser diferenciadas das exercitadas pelo inspetor do Studio; não converter essa diferença em uma afirmação de suporte nativo do Codex.
+
+Legenda: *Obrigatória* é um requisito futuro; *A qualificar* não é aprovação; *Declarada* é informação do fornecedor, ainda sem validação de produto; *Condicional* depende de capacidade negociada e combinação aprovada.
+As linhas STDIO do Studio têm evidência funcional no Windows; isso não certifica os aceites pendentes das metas nem outras plataformas.
+
+[cols="2,2,2,3,3",options="header"]
+|===
+|Componente / linguagem |Transporte |Ferramentas, recursos e prompts |Autenticação e ciclo de vida |Qualificação atual / aceite pendente
+|Studio — Dart
+|STDIO
+|Os três exercitados por `dart test`; ferramenta e recurso também pelo Codex.
+|Processos locais encerrados nos testes; sem credenciais. Cancelamento ainda não qualificado.
+|Windows: Dart 3.13.2, `dart_mcp` 0.5.2 e Codex 0.147.0. Linux pendente.
+|Studio — Dart
+|Streamable HTTP
+|Condicional ao adaptador/SDK escolhido.
+|HTTP e autorização precisam de solução qualificada.
+|Lacuna conhecida no candidato `dart_mcp`; não anunciar projeto HTTP pronto.
+|Studio — Python
+|STDIO
+|Os três exercitados por `pytest`; ferramenta e recurso também pelo Codex via STDIO.
+|Ambiente virtual local; sem credenciais. Cancelamento ainda não qualificado.
+|Windows: Python 3.12.10, SDK `mcp` 2.1.1 e Codex 0.147.0. Linux pendente.
+|Studio — Python
+|Streamable HTTP
+|A qualificar por capacidade.
+|Bearer/OAuth e reconexão a qualificar conforme o servidor.
+|Condicional para geração HTTP; não inferir aceite do SDK.
+|Studio — TypeScript
+|STDIO
+|Os três exercitados por `node --test`; ferramenta e recurso também pelo Codex.
+|Processos locais encerrados nos testes; sem credenciais. Cancelamento ainda não qualificado.
+|Windows: Node.js 26.5.1, SDK 1.30.0 e Codex 0.147.0. Linux pendente.
+|Studio — TypeScript
+|Streamable HTTP
+|A qualificar por capacidade.
+|Bearer/OAuth e reconexão a qualificar conforme o servidor.
+|Condicional para geração HTTP; não inferir paridade com Python.
+|Hub — cliente Dart/Flutter
+|STDIO e Streamable HTTP
+|Descoberta de ferramentas/recursos obrigatória; outras capacidades conforme negociação.
+|Configuração, autenticação HTTP, reinício e revogação obrigatórios.
+|STDIO e HTTP loopback exercitados no Windows com Codex 0.147.0. OAuth real e Linux pendentes.
+|Tabryo — servidor Dart/Flutter
+|Local, a definir em BASE-01
+|Recursos de contexto e ferramentas de navegação obrigatórios; prompts apenas se anunciados.
+|Consentimento, escopo, encerramento e revogação obrigatórios.
+|A qualificar com cliente externo ao módulo; exposição remota fora desta etapa.
+|===
+
+O candidato `dart_mcp` 0.5.2 declara ferramentas, recursos, prompts e STDIO, mas não suporte pronto a Streamable HTTP, autorização ou cancelamento; sua paginação é parcial e o pacote é experimental.
+As capacidades fora do STDIO exercitado continuam exigindo qualificação própria, incluindo alternativa ou adaptador para as lacunas necessárias. Fonte: <<fonte-dart-mcp>>.
+Os SDKs oficiais Python 2.1.1 e TypeScript 1.30.0 foram exercitados nos projetos STDIO gerados; a listagem oficial não substitui os aceites específicos de cada capacidade. Fonte: <<fonte-sdks>>.
+
+A qualificação de cada linha deve registrar linguagem/runtime, pacote e versão, revisão do protocolo, transporte, capacidades negociadas, cliente e versão do Codex, sistema operacional, autenticação, testes executados e limitações.
+O registro deve acompanhar a documentação normal de compatibilidade do produto, sem criar certificados ou relatórios por tentativa.
+Uma lacuna obrigatória mantém a etapa aberta; uma capacidade opcional indisponível aparece como tal na interface e na documentação.
+
+[[ide]]
+== Evolução principal da IDE
+
+[[ui-01]]
+=== UI-01 — Identidade e layouts por atividade
+
+* *Problema atendido:* diferentes atividades disputam espaço e foco; uma interface inconsistente aumenta o custo de navegação.
+* *Resultado esperado:* identidade visual consistente, temas claro/escuro/sistema, painéis redimensionáveis e reorganizáveis e layouts Desenvolver, Conversar e Revisar.
+* *Prioridade:* P1 para a entrega completa; polimento obrigatório desde os fluxos P0.
+* *Dependências:* base existente; <<edit-01,EDIT-01>> e <<codex-01,CODEX-01>> para integração do contexto mínimo; os painéis avançados acompanham suas respectivas metas.
+* *Critérios de aceite:* trocar de atividade preservando workspace, tarefa, arquivo, seleção, alterações e foco útil; controlar navegação e redimensionamento pelo teclado; verificar contraste, foco visível, semântica acessível e escalas de tela; fornecer estados vazios com ação útil, progresso e mensagens de recuperação; respeitar preferências de persistência; organizar textos e formatos para futura localização.
+* *Estado inicial:* Planejada.
+
+Desenvolver prioriza arquivos, editor e execução; Conversar prioriza tarefa, contexto e eventos do Codex; Revisar prioriza Git, diff e decisões sobre alterações.
+Cada atividade permite acesso aos outros recursos sem duplicar sessões ou perder trabalho.
+Desde MCP, os novos formulários e inspetores devem respeitar temas, teclado, acessibilidade, estados vazios e feedback de operações.
+
+[[edit-02]]
+=== EDIT-02 — Editor de código completo
+
+* *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.
+* *Resultado esperado:* editor com abas, destaque de sintaxe, busca/substituição, desfazer/refazer, seleção múltipla, salvamento confiável e recuperação de alterações.
+* *Prioridade:* P1.
+* *Dependências:* <<edit-01,EDIT-01>> e <<safe-01,SAFE-01>>.
+* *Critérios de aceite:* editar Dart/Flutter, Python e TypeScript/JavaScript; buscar e substituir com escopo visível; desfazer/refazer inclusive em múltiplas seleções; preservar codificação e finais de linha suportados; recuperar alterações após encerramento inesperado sem substituir silenciosamente o disco; identificar arquivos binários, grandes ou de codificação não suportada e oferecer uma ação segura.
+* *Estado inicial:* Planejada.
+
+[[edit-03]]
+=== EDIT-03 — Serviços de linguagem por LSP
+
+* *Problema atendido:* edição textual não oferece entendimento semântico do projeto.
+* *Resultado esperado:* autocomplete, diagnósticos, definição, referências, renomeação e formatação, priorizando Dart/Flutter, Python e TypeScript/JavaScript.
+* *Prioridade:* P1.
+* *Dependências:* <<base-01,BASE-01>>, <<safe-01,SAFE-01>> e <<edit-02,EDIT-02>>.
+* *Critérios de aceite:* qualificar um servidor de linguagem por ecossistema e as capacidades efetivamente anunciadas; navegar do diagnóstico ao arquivo e posição; aplicar renomeação/formatação com verificação de versões dos documentos e revisão quando afetar vários arquivos; tratar servidor ausente, crash, cancelamento e resposta obsoleta; iniciar sob demanda e liberar recursos ao encerrar o contexto.
+* *Estado inicial:* Planejada.
+
+[[rev-01]]
+=== REV-01 — Diffs e revisão visual
+
+* *Problema atendido:* o diff textual atual dificulta comparação detalhada e seleção parcial de mudanças.
+* *Resultado esperado:* visualização unificada e lado a lado, diferenças dentro das linhas, navegação entre alterações, rolagem sincronizada, contexto expansível e stage/unstage por trecho.
+* *Prioridade:* P1.
+* *Dependências:* <<base-01,BASE-01>> para modelo estruturado e <<safe-01,SAFE-01>> para aplicação concorrente; integração com o editor conforme <<edit-02,EDIT-02>>.
+* *Critérios de aceite:* alternar modos mantendo a alteração selecionada; expandir contexto e sincronizar rolagem em arquivos com inserções/remoções; stage/unstage apenas do trecho escolhido; detectar alteração do índice/worktree depois da prévia; representar renomeações, binários e arquivos grandes sem omissão silenciosa; diferenciar comparações somente leitura de operações sobre o índice atual.
+* *Estado inicial:* Planejada.
+
+[[git-01]]
+=== GIT-01 — Histórico visual e rastreabilidade
+
+* *Problema atendido:* uma lista de commits não mostra relações entre branches nem o contexto histórico de uma linha ou arquivo.
+* *Resultado esperado:* grafo de commits e branches, filtros, histórico por arquivo, blame, comparação entre commits/branches/tags e abertura de versões históricas.
+* *Prioridade:* P1.
+* *Dependências:* <<rev-01,REV-01>> e <<edit-02,EDIT-02>> para abertura das versões.
+* *Critérios de aceite:* navegar no grafo com paginação; filtrar histórico; acompanhar renomeações onde o Git fornecer essa informação; abrir blame e versão histórica identificando a revisão; comparar duas referências explícitas; navegar entre alteração, arquivo e conversa relacionada quando houver vínculo registrado; indicar a ausência desse vínculo sem inventar associação.
+* *Estado inicial:* Planejada.
+
+[[safe-02]]
+=== SAFE-02 — Resolução de conflitos e operações de desfazer
+
+* *Problema atendido:* conflitos e ações destrutivas podem confundir edição local, conteúdo versionado e histórico Git.
+* *Resultado esperado:* comparação de três versões, resultado editável e resolução assistida pelo Codex, com ações de desfazer semanticamente separadas.
+* *Prioridade:* P1.
+* *Dependências:* <<safe-01,SAFE-01>>, <<edit-02,EDIT-02>>, <<rev-01,REV-01>> e <<codex-01,CODEX-01>> para assistência.
+* *Critérios de aceite:* mostrar base, versão local e versão recebida com suas identidades; lidar explicitamente com base ausente, exclusão, renomeação ou binário; revisar o resultado antes de gravar/marcar resolução; rejeitar uma proposta obsoleta; distinguir desfazer edição, restaurar/reverter conteúdo e modificar histórico Git, apresentando os efeitos e confirmações apropriados; preservar hooks, assinatura e mudanças não selecionadas.
+* *Estado inicial:* Planejada.
+
+[[codex-02]]
+=== CODEX-02 — Experiência gráfica completa do Codex
+
+* *Problema atendido:* o adaptador inicial permite integração, mas não organiza toda a experiência de trabalho com agentes.
+* *Resultado esperado:* conversas próprias, histórico, retomada, ramificação, progresso, chamadas de ferramentas e aprovações contextualizadas.
+* *Prioridade:* P1.
+* *Dependências:* <<codex-01,CODEX-01>>; <<edit-02,EDIT-02>> e <<rev-01,REV-01>> para arquivos, seleções e diffs.
+* *Critérios de aceite:* criar, retomar e ramificar uma conversa pelo App Server; enviar arquivos, seleções e diffs com origem e versão claras; acompanhar eventos por tarefa; aprovar ou recusar vendo a operação e seu alcance; interromper e direcionar uma execução ativa conforme suporte; selecionar modelo e esforço entre opções disponíveis; recuperar desconexão sem duplicar execução nem considerar uma operação pendente como concluída.
+* *Estado inicial:* Planejada.
+
+[[dev-01]]
+=== DEV-01 — Busca global, build e testes
+
+* *Problema atendido:* o fluxo de desenvolvimento exige localizar símbolos/texto e executar comandos com resultados ligados ao código.
+* *Resultado esperado:* busca global no workspace, tarefas de build/teste, configurações de execução e lista de problemas navegáveis.
+* *Prioridade:* P1.
+* *Dependências:* <<base-01,BASE-01>>, <<safe-01,SAFE-01>> e <<edit-02,EDIT-02>>; reutilizar terminal e controle de processos existentes.
+* *Critérios de aceite:* buscar com filtros, exclusões, limite de resultados e cancelamento; abrir o arquivo na ocorrência; executar uma tarefa com comando e diretório visíveis; distinguir saída, erro e cancelamento; navegar de diagnóstico reconhecido ao código e apresentar saída não reconhecida sem fabricar posições; não iniciar comandos automaticamente ao abrir projeto não confiável.
+* *Estado inicial:* Planejada.
+
+[[avancado]]
+== Uso avançado e possibilidades posteriores
+
+[[codex-03]]
+=== CODEX-03 — Configuração avançada e múltiplas tarefas
+
+* *Problema atendido:* usuários avançados precisam compreender configurações e acompanhar trabalhos independentes sem misturar contexto.
+* *Resultado esperado:* gestão das skills, instruções, perfis, configurações e integrações suportadas; indicação de consumo quando disponível; tarefas com contexto claro e worktrees para trabalhos independentes.
+* *Prioridade:* P2.
+* *Dependências:* <<codex-02,CODEX-02>>, <<safe-01,SAFE-01>> e proteções de worktrees existentes.
+* *Critérios de aceite:* mostrar origem e escopo das configurações e instruções; revisar alterações antes de gravar; diferenciar disponibilidade, permissão e instalação; exibir dados de consumo apenas quando fornecidos, com indisponibilidade explícita; associar cada tarefa ao workspace/branch/worktree correto; preservar isolamento e impedir remoção de worktree ocupada ou suja; identificar recursos experimentais individualmente e permitir desativá-los.
+* *Estado inicial:* Planejada.
+
+[[dev-02]]
+=== DEV-02 — Depuração por DAP
+
+* *Problema atendido:* build e testes não permitem inspecionar uma execução pausada.
+* *Resultado esperado:* configurações de depuração, breakpoints, pilha, variáveis e controle da execução via adaptadores DAP qualificados.
+* *Prioridade:* P2.
+* *Dependências:* <<dev-01,DEV-01>> e <<edit-03,EDIT-03>>.
+* *Critérios de aceite:* qualificar os adaptadores escolhidos por linguagem e plataforma; iniciar/parar uma sessão explicitamente; navegar por pilha e breakpoints; inspecionar variáveis sem expor segredos nos logs; tratar capacidades ausentes e encerramento inesperado; aplicar as mesmas permissões às ações capazes de executar código.
+* *Estado inicial:* Planejada.
+
+[[mcp-04]]
+=== MCP-04 — Contexto de editor e alterações propostas por MCP
+
+* *Problema atendido:* o servidor inicial não conhece todos os estados de edição e diagnósticos da futura IDE.
+* *Resultado esperado:* ampliar a exposição autorizada para documentos/buffers, seleções, diagnósticos e propostas de alteração revisáveis.
+* *Prioridade:* P2.
+* *Dependências:* <<mcp-03,MCP-03>>, <<edit-02,EDIT-02>>, <<edit-03,EDIT-03>>, <<rev-01,REV-01>> e <<safe-01,SAFE-01>>.
+* *Critérios de aceite:* distinguir conteúdo salvo de buffer modificado e obter permissão para expor ambos; indicar versão e origem do diagnóstico; receber proposta com base identificada; mostrar diff e confirmar a aplicação conforme os controles comuns; detectar concorrência posterior à aprovação; recusar capacidades revogadas sem manipular widgets diretamente.
+* *Estado inicial:* Planejada.
+
+[[ext-01]]
+=== EXT-01 — Ambientes remotos, SSH e containers
+
+* *Problema atendido:* alguns projetos exigem execução fora da máquina local.
+* *Resultado esperado:* proposta posterior de ambientes remotos, incluindo SSH, containers e eventual exposição remota do Tabryo.
+* *Prioridade:* P3.
+* *Dependências:* estabilização de <<mcp-03,MCP-03>>, <<codex-03,CODEX-03>> e <<dev-01,DEV-01>>; revisão própria de arquitetura e segurança.
+* *Critérios de aceite:* antes de implementar, definir identidade do host, autenticação, transporte protegido, escopo de arquivos, permissões, ciclo de vida, comportamento em desconexão e separação de segredos; qualificar cada modalidade anunciada; demonstrar que um ambiente remoto não amplia a autorização local; manter a ativação remota explícita e separada da exposição local padrão.
+* *Estado inicial:* Planejada.
+
+[[ext-02]]
+=== EXT-02 — Integrações de revisão em provedores Git
+
+* *Problema atendido:* decisões de revisão podem depender de pull/merge requests e comentários no provedor.
+* *Resultado esperado:* integração futura com provedores selecionados, vinculada aos diffs e conversas locais.
+* *Prioridade:* P3.
+* *Dependências:* <<git-01,GIT-01>>, <<rev-01,REV-01>> e <<codex-02,CODEX-02>>.
+* *Critérios de aceite:* definir provedores e escopos de autenticação; abrir revisão na referência correta; sinalizar diff desatualizado; revisar conteúdo e destino antes de publicar comentários ou decisões; distinguir revisão local de publicação no provedor; revogar acesso pela interface.
+* *Estado inicial:* Planejada.
+
+[[ext-03]]
+=== EXT-03 — Extensibilidade do Tabryo
+
+* *Problema atendido:* futuras integrações podem exigir expansão controlada além dos módulos entregues com o aplicativo.
+* *Resultado esperado:* proposta de extensão com contratos estáveis, propriedade definida e ciclo de vida controlado.
+* *Prioridade:* P3.
+* *Dependências:* estabilização de <<base-01,BASE-01>>, <<ui-01,UI-01>> e <<codex-03,CODEX-03>>.
+* *Critérios de aceite:* definir API, compatibilidade, isolamento, permissões, instalação/remoção e manutenção; demonstrar uma extensão sem dependência direta de widgets internos nem ampliação silenciosa de acesso; apresentar falha e desativação sem comprometer o workspace.
+* *Estado inicial:* Planejada.
+
+[[arquitetura]]
+== Arquitetura e invariantes de implementação
+
+=== Responsabilidades e interfaces
+
+Os nomes abaixo descrevem responsabilidades propostas; não representam classes já criadas nem fixam dependências de implementação.
+
+[cols="2,4,3",options="header"]
+|===
+|Contrato |Responsabilidade |Integração com a base
+|Integração Codex
+|Sessões, tarefas, eventos, aprovações, modelos/capacidades e interrupção pelo App Server.
+|Adaptador de infraestrutura próprio; preservar `CodexLauncher` e PTY como opção de terminal.
+|Registro e configuração MCP
+|Configuração por escopo, prévia, preservação de campos, autenticação referenciada e revisão concorrente.
+|Serviço comum ao Hub, Studio e integração Codex; evitar duas fontes divergentes de configuração efetiva.
+|Execução e inspeção MCP
+|Conexões, descoberta, chamadas, limites, logs sanitizados, cancelamento e encerramento.
+|Separar o cliente de inspeção das conexões pertencentes ao Codex; indicar quem possui cada processo e sessão.
+|Documentos editáveis
+|Conteúdo, versão, alterações pendentes, desfazer/refazer, recuperação e salvamento autorizado.
+|Evoluir a fronteira de `WorkspaceFiles`; manter prévia e edição com responsabilidades claras.
+|Serviços de linguagem
+|Documentos e diagnósticos versionados, navegação e edições propostas por LSP.
+|Adaptadores carregados sob demanda, sem estado de apresentação no domínio.
+|Diff estruturado
+|Arquivo, revisões, trechos, linhas, renomeações e conteúdo não textual.
+|Evoluir `GitReader` e `GitMutator` sem contornar serialização, hooks e confirmação.
+|Contexto e navegação
+|Consultar contexto autorizado e solicitar ações disponíveis no workspace.
+|Serviço de aplicação compartilhado por interface e servidor Tabryo; a apresentação decide como exibir a ação.
+|===
+
+A composição continua explícita em `lib/composition`, com injeção por construtor.
+ViewModels coordenam estado da apresentação; regras de permissão, concorrência e execução pertencem aos serviços compartilhados.
+Objetos de SDK ficam nos adaptadores, sem atravessar livremente as fronteiras de domínio e apresentação.
+Uma chamada MCP deve percorrer autorização → serviço de aplicação → porta de domínio → adaptador, retornando um resultado tipado e limitado.
+
+=== Integridade de arquivos e decisões do usuário
+
+Antes de qualquer salvamento ou aplicação de patch, a base da proposta será confrontada com o documento e o arquivo atuais.
+O watcher é sinal de atualização, não prova suficiente de ausência de concorrência.
+Detectar divergência exige preservar a edição do usuário e reapresentar opções compreensíveis.
+Confirmações não tornam permanente uma base antiga: mudanças posteriores exigem nova comparação.
+
+Autorização de workspace, execução de comandos, acesso a rede e aprovação de uma alteração são decisões diferentes.
+Conteúdo de arquivos, mensagens de servidores e resultados de ferramentas são dados; não podem redefinir permissões do aplicativo.
+Permissões serão verificadas no momento da operação, incluindo cancelamento ou revogação após o início da sessão.
+Os controles devem proteger tanto a interface quanto os pontos de entrada MCP.
+
+=== Compatibilidade, limites e custo de recursos
+
+Capacidades serão negociadas e versões verificadas na conexão, com incompatibilidades visíveis e caminhos de recuperação.
+O aplicativo não presumirá que transporte, autenticação, prompts, recursos, cancelamento ou paginação são equivalentes entre SDKs e clientes.
+Uma capacidade experimental deve apresentar nome, versão qualificada, limitações e forma de desativação, sem habilitar outros experimentos implicitamente.
+
+Editor, servidores de linguagem, MCPs e sessões Codex serão carregados sob demanda.
+Cada componente terá limites explícitos de processos, buffers, filas, resultados, retenção e tempo de espera, além de encerramento definido.
+A avaliação de recursos deve separar aplicativo Flutter, servidores de linguagem, MCPs, shell e Codex, registrando plataforma e condições quando houver medição pertinente.
+Não derivar garantias de memória de análise estática, limites de cache ou observações de outro processo/sistema.
+
+[[aceitacao]]
+== Critérios transversais de qualidade e aceitação
+
+Os cenários abaixo são requisitos futuros. Eles não foram executados por esta entrega documental.
+As evidências devem permanecer nos testes nativos e no fluxo normal do repositório; não criar runners, harnesses ou relatórios por meta ou tentativa.
+
+[cols="2,4,3",options="header"]
+|===
+|Área |Cenário obrigatório |Evidência para aceite
+|Consumo MCP
+|Conectar STDIO local e HTTP remoto, autenticar, descobrir capacidades, chamar ferramenta no Codex, revogar e reconectar de forma explícita.
+|Testes nativos dos serviços e integração real Tabryo ↔ Codex ↔ servidor nos transportes anunciados.
+|Studio
+|Criar, ajustar, testar e registrar servidores Dart, Python e TypeScript; exercer ferramentas, recursos e prompts pelo inspetor e ferramentas pelo Codex.
+|Testes normais dos projetos gerados e fluxo completo nas três linguagens, com versões registradas.
+|Falhas MCP
+|Credencial ausente/expirada, autorização recusada, desconexão, timeout, cancelamento, crash e reinício.
+|Estado e próxima ação corretos; nenhum segredo exposto, processo próprio órfão ou mutação repetida sem resultado conhecido.
+|Servidor Tabryo
+|Acessar contexto permitido, navegar, tentar escapar da raiz e operar após revogação ou troca de workspace.
+|Cliente MCP exercitando fronteiras reais; acesso não autorizado recusado e listener/processo encerrado ao desativar.
+|Configuração
+|Editar opções existentes com campos desconhecidos, segredos referenciados e alteração concorrente por outro cliente Codex.
+|Prévia fiel, preservação de opções e detecção de conflito; configuração efetiva compreensível após reconexão.
+|Edição concorrente
+|Usuário com buffer modificado enquanto Codex/processo externo altera o disco; patch baseado em versão antiga; falha ao salvar e recuperação após crash.
+|Nenhuma sobrescrita silenciosa, buffer recuperável e escolha explícita de resolução.
+|Diffs e Git
+|Revisões históricas, branch/tag, renomeações, conflitos, binários, arquivos grandes e stage/unstage parcial com índice alterado após a prévia.
+|Comparação com referências identificadas, tratamento explícito dos limites e preservação de alterações não selecionadas.
+|Layouts e acessibilidade
+|Trocar Desenvolver/Conversar/Revisar com tarefa ativa e edição pendente; operar com teclado, escalas de tela e temas diferentes.
+|Contexto/foco preservados, semântica e contraste verificáveis, ações disponíveis e mensagens úteis.
+|Codex gráfico
+|Criar, retomar, ramificar, enviar contexto, aprovar/recusar, interromper, direcionar e recuperar desconexão.
+|Interações reais com a versão qualificada; nenhum aceite baseado apenas na TUI ou em substitutos de protocolo.
+|Windows e Linux
+|Testes nativos, integração desktop e interações relevantes com Codex em ambos os sistemas.
+|Resultados separados por sistema, versão e tipo de teste; Xvfb não substitui a validação real das interações que exigem usuário/autenticação.
+|Recursos
+|Abrir/fechar componentes sob demanda, exceder limites e encerrar sessões.
+|Limites exercitados por testes pertinentes; medições, quando necessárias, distinguem processos e ambiente e não geram garantias universais.
+|===
+
+Para o aplicativo, usar o framework Flutter existente em `test/` e `integration_test/`, além de análise e verificação arquitetural quando os arquivos afetados justificarem.
+Preferir testes focados por comportamento e reutilizar evidência verde quando código, argumentos, toolchain e ambiente relevantes não mudarem.
+Não tratar ausência de teste real, indisponibilidade de plataforma ou limitação conhecida como resultado aprovado.
+
+[[rastreabilidade]]
+== Rastreabilidade do plano de origem
+
+Esta tabela liga as cinco partes do plano recebido ao conteúdo deste documento.
+Os identificadores das metas são estáveis e não devem ser renumerados quando a ordem de execução mudar.
+
+[cols="2,5",options="header"]
+|===
+|Parte do plano |Cobertura neste documento
+|1. Documento e direção do produto
+|<<visao>>, <<baseline>>, <<prioridades>>; sumário navegável, seções numeradas, metas com problema, resultado, prioridade, dependências, aceite e estado Planejada.
+|2. Primeira prioridade: MCP completo
+|<<mcp-01,MCP-01>>, <<mcp-02,MCP-02>>, <<mcp-03,MCP-03>>, <<matriz-mcp>>, <<safe-01,SAFE-01>> e <<codex-01,CODEX-01>>; configuração, segredos, inspeção e exposição local.
+|3. Evolução funcional após MCP
+|<<ide>> e <<avancado>>; UI/UX, editor/LSP, diffs, Git, conflitos, Codex gráfico/avançado, busca/build/teste/DAP, ambientes remotos, provedores Git e extensibilidade.
+|4. Arquitetura, compatibilidade e qualidade
+|<<fundacoes>>, <<arquitetura>> e <<aceitacao>>; Flutter/Dartitect/MVVM, serviços compartilhados, interfaces, concorrência, negociação, recursos e validação Windows/Linux.
+|5. Entrega do AsciiDoc
+|Este arquivo centraliza visão, base, metas, ordem, dependências, aceites, limitações e <<fontes>>. A implementação funcional começa por MCP; o editor do Studio é incremental.
+|===
+
+A revisão documental deve conferir delimitadores e níveis AsciiDoc, âncoras e referências internas, destinos locais, fontes externas, prioridades e ausência de dependências circulares.
+Também deve verificar que todas as metas tenham os campos exigidos e que nenhuma capacidade planejada apareça como já entregue.
+Atualizações futuras devem modificar este documento central, preservando IDs e separando propostas de evidências de implementação.
+
+[[fontes]]
+== Referências
+
+As fontes externas refletem o conteúdo consultado na elaboração deste documento e devem ser verificadas novamente antes da escolha de versões e dependências.
+As fontes locais referem-se à base indicada em <<baseline>>; links relativos permitem navegação no repositório.
+
+[[fonte-readme]]
+=== Produto existente
+
+link:README.md[README do Tabryo] — uso, limites, plataformas, arquitetura e relato das validações anteriores.
+
+[[fonte-versao]]
+=== Versão e dependências atuais
+
+link:pubspec.yaml[Manifesto do aplicativo] e link:pubspec.lock[Dependências resolvidas] — versão 0.1.0 e dependências atuais.
+
+[[fonte-arquitetura]]
+=== Arquitetura local
+
+link:dartitect.json[Configuração Dartitect] e link:lib/composition/dependencies.dart[Composição de dependências] — perfil `native_strict`, camadas e composição explícita.
+
+[[fonte-interfaces]]
+=== Interfaces e implementação da base
+
+* link:lib/features/files/domain/workspace_files.dart[WorkspaceFiles] e link:lib/features/files/infrastructure/local_workspace_files.dart[Arquivos locais] — raiz autorizada, listagem, prévia e monitoramento.
+* link:lib/features/git/domain/git_ports.dart[GitReader e GitMutator] — consultas, operações Git e worktrees.
+* link:lib/features/terminals/domain/terminal_ports.dart[CodexLauncher e PTY] — lançamento de processos e terminal.
+* link:lib/features/preferences/domain/preferences.dart[Preferências] e link:lib/main.dart[Aplicativo Flutter] — temas e persistência opcional.
+
+[[fonte-codex-mcp]]
+=== MCP no Codex
+
+https://learn.chatgpt.com/docs/extend/mcp[Documentação oficial de MCP no Codex] — transportes, autenticação e configuração por usuário/projeto.
+
+[[fonte-app-server]]
+=== Integração gráfica Codex
+
+https://learn.chatgpt.com/docs/app-server[Codex App Server] — integração de clientes, eventos, aprovações, ciclo de vida, transporte e capacidades experimentais.
+
+[[fonte-dart-mcp]]
+=== Candidato Dart MCP
+
+https://pub.dev/packages/dart_mcp[Pacote dart_mcp] — capacidades declaradas e limitações da versão 0.5.2 consultada; não representa qualificação do Tabryo.
+
+[[fonte-sdks]]
+=== SDKs do protocolo MCP
+
+https://modelcontextprotocol.io/docs/sdk[SDKs oficiais do Model Context Protocol] — ponto de partida para qualificar os SDKs Python e TypeScript por versão e capacidade.

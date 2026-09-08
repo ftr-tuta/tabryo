@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:dartitect_flutter/dartitect_flutter.dart';
 
 import 'composition/dependencies.dart';
+import 'composition/collaboration_service.dart';
 import 'features/preferences/domain/preferences.dart';
 import 'features/workspaces/presentation/workbench_view_model.dart';
 import 'features/workspaces/presentation/workbench_screen.dart';
 
-void main() => runApp(const TabryoApp());
+void main(List<String> arguments) {
+  if (arguments.contains('--collaboration-service')) {
+    runCollaborationService();
+  } else {
+    runApp(const TabryoApp());
+  }
+}
 
 final class TabryoApp extends StatelessWidget {
   const TabryoApp({this.createViewModel, super.key});

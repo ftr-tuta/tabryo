@@ -46,6 +46,8 @@ dependencies:
     path: packages/terminal_host
   xterm2: 5.2.0
   path: 1.9.1
+  sqlite3: ^3.5.2
+  crypto: ^3.0.7
 
 dev_dependencies:
   ffi: ^2.1.4
