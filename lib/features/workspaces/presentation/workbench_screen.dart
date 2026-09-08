@@ -831,14 +831,22 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
       'Close workspace?',
       'Its terminal sessions will be closed. Project files and worktrees remain on disk.',
       'Close',
-    ))
+    )) {
       return;
-    if (!mounted || model.workspace?.root != root) return;
+    }
+    if (!context.mounted) return;
+    if (model.workspace?.root != root) return;
     final editor = model.editor;
     if (editor != null &&
-        !await confirmDocumentClose(context, editor, editor.inWorkspace(root)))
+        !await confirmDocumentClose(
+          context,
+          editor,
+          editor.inWorkspace(root),
+        )) {
       return;
-    if (!mounted || model.workspace?.root != root) return;
+    }
+    if (!context.mounted) return;
+    if (model.workspace?.root != root) return;
     await model.closeWorkspace(discardEdits: true);
   }
 
