@@ -252,7 +252,8 @@ flutter build windows --release
 
 Use Node.js 22 or newer to bundle the pinned editor before Flutter builds.
 On Ubuntu install Flutter's Linux desktop dependencies plus `libwebkit2gtk-4.1-dev`, use `-d linux` and
-`flutter build linux --release`. Headless integration tests use `xvfb-run -a`.
+`flutter build linux --release`. Native editor keyboard tests also require
+`xdotool`; headless integration tests use `xvfb-run -a`.
 The Desktop workflow runs the native tests and packages the entire Release
 bundle on both operating systems. Distribute every file in the bundle, not just
 the executable. Builds are unsigned.
