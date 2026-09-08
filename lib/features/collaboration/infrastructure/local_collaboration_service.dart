@@ -605,18 +605,21 @@ final class LocalCollaborationService {
     }
   }
 
+  Future<void> _closeSessions() async {
+    try {
+      await broker.close();
+    } catch (_) {
+      // The process exits after done; its Windows job closes any remaining
+      // owned children even if an individual transport could not close cleanly.
+      return;
+    }
+  }
+
   Future<void> close() async {
     if (_stopping) return done;
     _stopping = true;
     _timer?.cancel();
-    try {
-      await broker.close();
-      // All remaining cleanup must run even if one transport failed.
-      // ignore: dartitect_empty_catch
-    } catch (_) {
-      // The process exits after done; its Windows job closes any remaining
-      // owned children even if an individual transport could not close cleanly.
-    }
+    await _closeSessions();
     while (_starting.isNotEmpty || _ticking || _requests > 0) {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }

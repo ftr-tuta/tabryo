@@ -1,10 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
-import '../domain/document_files.dart';
 import 'editor_view_model.dart';
 import 'monaco_editor.dart';
 
@@ -80,7 +77,9 @@ final class EditorPane extends StatelessWidget {
   }
 
   Future<void> _reload(BuildContext context, EditorBuffer buffer) async {
-    if (!await model.synchronizeBuffer(buffer) || !context.mounted) return;
+    final synchronized = await model.synchronizeBuffer(buffer);
+    if (!context.mounted) return;
+    if (!synchronized) return;
     if (buffer.dirty) {
       final accepted = await showDialog<bool>(
         context: context,
@@ -298,19 +297,7 @@ final class EditorPane extends StatelessWidget {
               smartDashesType: SmartDashesType.disabled,
               smartQuotesType: SmartQuotesType.disabled,
               keyboardType: TextInputType.multiline,
-              inputFormatters: [
-                // Flutter text input formatting is presentation, not application I/O.
-                // ignore: dartitect_dt3121, dartitect_dt3123
-                TextInputFormatter.withFunction((previous, next) {
-                  if (utf8.encode(next.text).length +
-                          (active.baseline.bom ? 3 : 0) >
-                      DocumentFiles.byteLimit) {
-                    model.rejectInput(active);
-                    return previous;
-                  }
-                  return next;
-                }),
-              ],
+              inputFormatters: [model.inputFormatter(active)],
               style: const TextStyle(
                 fontFamily: 'Consolas',
                 fontFamilyFallback: ['DejaVu Sans Mono', 'monospace'],

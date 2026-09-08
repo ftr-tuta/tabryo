@@ -2,7 +2,10 @@
 // mistakes Flutter's services/ source directory for application infrastructure.
 // ignore_for_file: dartitect_dt3121
 
+import 'dart:convert';
+
 import 'package:dartitect_flutter/dartitect_flutter.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
@@ -197,6 +200,35 @@ final class EditorViewModel extends DartitectViewModel {
     buffer.webCanRedo = canRedo;
     notifyListeners();
   }
+
+  void applyWebEdit(
+    EditorBuffer buffer,
+    String text,
+    int start,
+    int end,
+    bool canUndo,
+    bool canRedo,
+  ) {
+    if (!_buffers.contains(buffer)) return;
+    buffer.controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection(baseOffset: start, extentOffset: end),
+    );
+    webHistoryChanged(buffer, canUndo, canRedo);
+  }
+
+  TextInputFormatter inputFormatter(EditorBuffer buffer) =>
+      TextInputFormatter.withFunction((previous, next) {
+        if (utf8
+                    .encode(next.text.replaceAll('\n', buffer.baseline.newline))
+                    .length +
+                (buffer.baseline.bom ? 3 : 0) >
+            DocumentFiles.byteLimit) {
+          rejectInput(buffer);
+          return previous;
+        }
+        return next;
+      });
 
   void rejectInput(EditorBuffer buffer) {
     buffer.error = 'This edit exceeds 512 KiB and was not applied. The existing buffer is preserved.';

@@ -542,11 +542,11 @@ final class _CollaborationScreenState extends State<CollaborationScreen> {
                               'Create a group and connect participants to begin.',
                             ),
                           )
-                        : ListView(
+                        : ListView.builder(
                             padding: const EdgeInsets.all(16),
-                            children: model.participants
-                                .map(_participant)
-                                .toList(),
+                            itemCount: model.participants.length,
+                            itemBuilder: (_, index) =>
+                                _participant(model.participants[index]),
                           ),
                     ListView(
                       padding: const EdgeInsets.all(16),

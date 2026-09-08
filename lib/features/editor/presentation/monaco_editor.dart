@@ -327,14 +327,11 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       }
       doc.text = text;
       doc.sequence = value['sequence'] as int;
-      // Flutter's editor input value is presentation state, not filesystem I/O.
-      // ignore: dartitect_dt3121, dartitect_dt3123
-      buffer.controller.value = TextEditingValue(
-        text: text,
-        selection: TextSelection(baseOffset: start, extentOffset: end),
-      );
-      model.webHistoryChanged(
+      model.applyWebEdit(
         buffer,
+        text,
+        start,
+        end,
         value['canUndo'] == true,
         value['canRedo'] == true,
       );

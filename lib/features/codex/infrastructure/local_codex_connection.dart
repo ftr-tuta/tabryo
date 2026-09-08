@@ -20,6 +20,15 @@ final class LocalCodexConnection implements CodexConnection {
   @override
   Stream<CodexEvent> get events => _events.stream;
 
+  Future<void> _closeInput(Process process) async {
+    try {
+      await process.stdin.close().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // Child exit can close stdin first; the subsequent exitCode wait remains authoritative.
+      return;
+    }
+  }
+
   @override
   Future<void> connect(String workspace) async {
     await close();
@@ -61,13 +70,7 @@ final class LocalCodexConnection implements CodexConnection {
       input: process.stdout,
       send: process.stdin.add,
       closeTransport: () async {
-        try {
-          await process.stdin.close().timeout(const Duration(seconds: 2));
-          // Closing stdin can fail after child exit; exitCode below remains authoritative.
-          // ignore: dartitect_empty_catch
-        } catch (_) {
-          /* The process may already have closed its input. */
-        }
+        await _closeInput(process);
         try {
           await process.exitCode.timeout(const Duration(seconds: 3));
         } on TimeoutException {
