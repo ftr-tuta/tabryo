@@ -11,6 +11,9 @@ Bundled JavaScript also retains linked dependency license notices.
 The desktop adapter is webview_win_floating 3.0.3; its Flutter package notices
 are included in NOTICES.Z. Windows requires Microsoft's WebView2 Runtime;
 Ubuntu uses the system WebKitGTK 4.1 runtime.
+The Linux host in `linux/webview` is derived from that version, with corrected
+navigation decisions and WebKit object ownership. Its BSD-3-Clause license is
+retained in `linux/webview/LICENSE` and the upstream package's bundled notices.
 
 The terminal_host native implementation derives from flutter_pty 0.4.2 by xuty.
 Its MIT license is reproduced below. Dart dynamic API headers retain their

@@ -189,10 +189,14 @@ void main() {
         () => find.byType(WinWebViewWidget).evaluate().isNotEmpty,
       );
       final state = tester.state<MonacoEditorState>(find.byType(MonacoEditor));
+      debugPrint('Native editor: waiting for the embedded surface');
       final browser = tester
           .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
           .controller;
       await until(tester, () => state.surfaceVisible);
+      debugPrint(
+        'Native editor: surface ready; checking keyboard and clipboard',
+      );
       if (Platform.isWindows) {
         focusTestWindow();
       } else {
@@ -237,6 +241,9 @@ void main() {
         () => editor.active!.controller.text.contains('ação 🌱'),
       );
       final buffer = editor.active!;
+      debugPrint(
+        'Native editor: Unicode input received; checking save and history',
+      );
       final edited = buffer.controller.text;
       expect(buffer.webCanUndo, isTrue);
       if (Platform.isWindows) {
@@ -305,6 +312,9 @@ void main() {
       );
       // One physical file can belong to two authorized, nested workspace roots.
       final nestedRoot = await nested.resolveSymbolicLinks();
+      debugPrint(
+        'Native editor: diff verified; checking workspace isolation and navigation',
+      );
       editor.selectWorkspace(nestedRoot);
       await editor.open(nestedRoot, file.path);
       await expectWeb(
@@ -329,6 +339,7 @@ void main() {
       expect(state.ready, isTrue);
       await expectWeb(tester, browser, "location.protocol === 'http:'", true);
       final retained = buffer.controller.text;
+      debugPrint('Native editor: navigation denied; checking reconnect');
       await browser.runJavaScript(
         "setTimeout(() => { throw new Error('Fixture editor failure'); }, 0)",
       );
