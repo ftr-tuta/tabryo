@@ -269,6 +269,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
     loading = true;
     notifyListeners();
     try {
+      await editor?.refreshOpenFiles();
+      cancellation.check();
       if (sidebar == SidebarPage.files) {
         final page = await files.list(
           current.root,

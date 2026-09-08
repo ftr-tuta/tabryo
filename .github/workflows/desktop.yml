@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool gdb
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -73,7 +73,7 @@ jobs:
         timeout-minutes: 5
         run: |
           flutter build linux --release -t integration_test/editor_test.dart
-          xvfb-run -a build/linux/x64/release/bundle/tabryo
+          xvfb-run -a gdb --batch --return-child-result -ex run -ex 'thread apply all bt' --args build/linux/x64/release/bundle/tabryo
       - name: Build Release integration entrypoint for memory observation
         run: flutter build ${{ matrix.device }} --release -t integration_test/workbench_test.dart
       - name: Windows Release integration and memory
