@@ -141,6 +141,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
     } catch (_) {
       // Disposal still completes if native initialization eventually returns.
       // A stopped native surface must not prevent a new connection attempt.
+      if (!mounted) return;
     }
     if (mounted) await _open();
   }
