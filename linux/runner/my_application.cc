@@ -68,8 +68,9 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
-  gtk_widget_realize(GTK_WIDGET(view));
-
+  // Plugins install the native surface container while FlView is unrealized.
+  // Reparenting an already rendering FlView recreates its compositor and can
+  // strand the GTK thread waiting for a frame from the previous compositor.
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
   // Map the GTK window before waiting for Dart to paint. A hidden window can
