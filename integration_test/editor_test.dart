@@ -214,7 +214,26 @@ void main() {
       final browser = tester
           .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
           .controller;
-      await until(tester, () => state.surfaceVisible);
+      try {
+        await until(tester, () => state.surfaceVisible);
+      } catch (_) {
+        // Keep the readiness requirement while identifying which native
+        // startup stage failed on an isolated desktop runner.
+        try {
+          final details = await browser
+              .runJavaScriptReturningResult('''
+            JSON.stringify({document: document.readyState,
+              channel: typeof TabryoEditor,
+              receiver: typeof window.tabryoReceive,
+              failures: window.editorFailures ?? []})
+          ''')
+              .timeout(const Duration(seconds: 3));
+          debugPrint('Native editor startup: $details');
+        } catch (_) {
+          debugPrint('Native editor startup: the WebView did not respond.');
+        }
+        rethrow;
+      }
       debugPrint(
         'Native editor: surface ready; checking keyboard and clipboard',
       );

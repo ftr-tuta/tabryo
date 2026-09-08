@@ -300,6 +300,74 @@ void main() {
   });
 
   test(
+    'concurrent starts in different projects keep the four-task limit',
+    () async {
+      final projects = ProjectsViewModel(LocalProjectEnvironment());
+      final tasks = TasksViewModel(
+        MemoryTaskFiles(),
+        windows: Platform.isWindows,
+      );
+      final host = MemoryHost();
+      final git = NoGit();
+      final model = WorkbenchViewModel(
+        host: host,
+        launcher: MemoryLauncher(),
+        files: MemoryFiles(),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: MemoryPreferences(),
+        projects: projects,
+        tasks: tasks,
+      );
+      addTearDown(model.disposeAsync);
+      await model.openWorkspace(root);
+      final tools = ToolchainSelection({
+        ProjectTool.python: Platform.resolvedExecutable,
+      });
+      final pending = <ProjectTask>[];
+      for (var index = 0; index < 5; index++) {
+        final child = await Directory(p.join(root, 'project$index')).create();
+        final project = DevelopmentProject(
+          workspace: root,
+          directory: child.path,
+          name: 'project$index',
+          kind: ProjectKind.python,
+        );
+        projects.selections[project.id] = tools;
+        final task = await tasks.prepare(
+          project,
+          tools,
+          ProjectTaskKind.analyze,
+        );
+        if (index < 3) {
+          await model.runTask(task);
+        } else {
+          pending.add(task);
+        }
+      }
+      Future<Object?> start(ProjectTask task) async {
+        try {
+          await model.runTask(task);
+          return null;
+        } catch (error) {
+          return error;
+        }
+      }
+
+      final outcomes = await Future.wait(pending.map(start));
+      expect(outcomes.whereType<ProjectFailure>(), hasLength(1));
+      expect(host.specs, hasLength(4));
+      expect(
+        tasks.runs.where((t) => t.status == TaskStatus.running),
+        hasLength(4),
+      );
+      for (final task in pending) {
+        await tasks.discard(task);
+      }
+    },
+  );
+
+  test(
     'missing reports cannot pass and cleanup preserves unexpected files',
     () async {
       final files = LocalTaskFiles();

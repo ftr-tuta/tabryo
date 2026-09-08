@@ -510,6 +510,14 @@ final class WorkbenchViewModel extends DartitectViewModel {
           'The workspace or tool selection changed. Review again.',
         );
       }
+      // Other projects may have started while path and buffer checks awaited.
+      // Admission and started() must share this synchronous boundary.
+      if (tasks!.runs.where((t) => t.status == TaskStatus.running).length >=
+          4) {
+        throw const ProjectFailure(
+          'Stop a running task before starting more (limit: 4).',
+        );
+      }
       late final TerminalSession session;
       session = _start(
         owner,
