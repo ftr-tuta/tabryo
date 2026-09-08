@@ -121,7 +121,7 @@ final class TasksViewModel extends DartitectViewModel {
 
   Future<void> finished(ProjectTask task, int? exitCode) async {
     task.exitCode = exitCode;
-    task.status = task.stopRequested
+    var status = task.stopRequested
         ? TaskStatus.cancelled
         : exitCode == 0
         ? TaskStatus.passed
@@ -138,11 +138,11 @@ final class TasksViewModel extends DartitectViewModel {
                     TestOutcome.incomplete,
                   ].contains(v.outcome),
                 ))) {
-          task.status = TaskStatus.failed;
+          status = TaskStatus.failed;
           task.error = 'Test results contain failures or are incomplete. Inspect the terminal.';
         }
       } catch (error) {
-        if (!task.stopRequested) task.status = TaskStatus.failed;
+        if (!task.stopRequested) status = TaskStatus.failed;
         task.error = '$error';
       } finally {
         try {
@@ -153,6 +153,7 @@ final class TasksViewModel extends DartitectViewModel {
         }
       }
     }
+    task.status = task.stopRequested ? TaskStatus.cancelled : status;
     if (!_closed) notifyListeners();
   }
 

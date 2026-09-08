@@ -26,6 +26,7 @@ import 'workbench_test.dart'
 final class MemoryTaskFiles implements TaskFiles {
   int discarded = 0;
   Completer<void>? validation;
+  Completer<TestResults>? reading;
   @override
   Future<TaskReport> createReport({required bool python}) async => TaskReport(
     Directory.systemTemp.path,
@@ -52,7 +53,7 @@ final class MemoryTaskFiles implements TaskFiles {
   Future<TestResults> readReport(
     TaskReport report,
     DevelopmentProject project,
-  ) async => const TestResults([], complete: true);
+  ) async => await reading?.future ?? const TestResults([], complete: true);
 }
 
 void main() {
@@ -401,6 +402,27 @@ void main() {
       model.started(failed, 2);
       await model.finished(failed, 0);
       expect(failed.status, TaskStatus.failed);
+    },
+  );
+
+  test(
+    'a zero exit remains pending until its report has been validated',
+    () async {
+      final files = MemoryTaskFiles()..reading = Completer<TestResults>();
+      final model = TasksViewModel(files, windows: Platform.isWindows);
+      addTearDown(model.disposeAsync);
+      final task = await model.prepare(
+        project,
+        ToolchainSelection({ProjectTool.python: Platform.resolvedExecutable}),
+        ProjectTaskKind.test,
+      );
+      model.started(task, 1);
+      final finishing = model.finished(task, 0);
+      expect(task.status, TaskStatus.running);
+      files.reading!.complete(const TestResults([], complete: false));
+      await finishing;
+      expect(task.status, TaskStatus.failed);
+      expect(files.discarded, 1);
     },
   );
 
