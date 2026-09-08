@@ -141,6 +141,36 @@ nested workspaces isolated. Selected paths remain local and persist only with
 **Remember appearance, editor and monitoring preferences**. Clearing a selection
 disables its formatter; detection never replaces an explicit choice.
 
+**Prepare environment** shows one native command at a time, including its
+directory, arguments and environment overrides. Review and run it to open an
+owned terminal; no next step runs automatically. Unsaved project documents and
+overlapping setup commands are refused. Closing the terminal stops its owned
+process tree. Dart/Flutter offer dependency installation. Python offers local
+`.venv` creation, uv synchronization, Poetry installation or pip requirements,
+and optional development-tool installation. The detected manager is the default
+and can be changed explicitly. Installations target the project `.venv`, refuse
+linked environment directories, and can download packages and run build code.
+uv synchronization may remove packages not declared in its lock. With no uv
+installed, create `.venv` with Python, install uv there, scan and select it.
+Official installation guides are available for missing SDKs and managers.
+
+**Create project** previews the official Dart, Flutter or uv generator, with a
+new lowercase project name and selected tool paths. Preview reserves an empty
+temporary folder. Execution generates there and publishes the requested folder
+only after success; existing destinations are refused. Cancel removes an empty
+preview, while failed generator output remains at the reported path for recovery.
+Dart and Flutter use `--no-pub`; Python uses uv without modifying a parent
+workspace or initializing Git. Install dependencies as a separate reviewed step.
+Language servers, test exploration, DAP, Flutter execution and DevTools remain
+pending; installing development packages does not enable these integrations.
+
+The native project tests exercise Dart/Flutter generation, Python environment
+creation, uv **0.8.22**, Poetry **2.2.1**, and pip with Python **3.12.10**.
+Set `TABRYO_TEST_PROJECT_SETUP=1` to include the external-tool cases in
+`flutter test test/projects_test.dart`. Python, uv and Poetry are discovered on
+PATH, or supplied with `TABRYO_TEST_PYTHON`, `TABRYO_TEST_UV` and
+`TABRYO_TEST_POETRY`. The Desktop workflow installs those tools for both platforms.
+
 ## MCP Hub
 
 Open a workspace and choose **MCP Hub** from the toolbar or command palette.

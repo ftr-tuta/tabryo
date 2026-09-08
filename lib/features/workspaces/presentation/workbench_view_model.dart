@@ -55,6 +55,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final CollaborationViewModel? collaboration;
   bool editing = false;
   final _studioRuns = <String, int>{};
+  final _projectRuns = <String, int>{};
   void _editorChanged() {
     if (!_shutdown) notifyListeners();
   }
@@ -372,6 +373,136 @@ final class WorkbenchViewModel extends DartitectViewModel {
     await studio!.studio.storage.validateProject(project);
     await openWorkspace(project.path);
     await openFile(p.join(project.path, studio!.studio.entryFile(project)));
+  }
+
+  void _reserveProjectCommand(String directory) {
+    if (_projectRuns.keys.any(
+      (path) =>
+          p.equals(path, directory) ||
+          p.isWithin(path, directory) ||
+          p.isWithin(directory, path),
+    )) {
+      throw const ProjectFailure(
+        'A setup command is already running here. Finish it or close its terminal.',
+      );
+    }
+    _projectRuns[directory] = -1;
+  }
+
+  Future<void> _checkProjectDocuments(String directory) async {
+    if (editor?.opening == true) {
+      throw const ProjectFailure('Wait for pending documents to open.');
+    }
+    final buffers =
+        editor?.buffers.where((b) => p.isWithin(directory, b.path)).toList() ??
+        [];
+    for (final buffer in buffers) {
+      if (!await editor!.synchronizeBuffer(buffer)) {
+        throw const ProjectFailure(
+          'Reconnect the editor before running setup.',
+        );
+      }
+    }
+    if (buffers.any((b) => b.dirty || b.saving)) {
+      throw const ProjectFailure(
+        'Save project documents before running setup.',
+      );
+    }
+  }
+
+  Future<void> runProjectCommand(
+    DevelopmentProject project,
+    ProjectCommand command,
+  ) async {
+    final owner = workspace;
+    if (_shutdown ||
+        projects == null ||
+        owner == null ||
+        !p.equals(owner.root, project.workspace)) {
+      throw const ProjectFailure(
+        'Open the owning workspace before running setup.',
+      );
+    }
+    _reserveProjectCommand(project.directory);
+    try {
+      await projects!.environment.validateCommand(project, command);
+      await _checkProjectDocuments(project.directory);
+      if (_shutdown || !workspaces.contains(owner)) {
+        throw const ProjectFailure('The workspace closed.');
+      }
+      final session = _start(
+        owner,
+        command.spec,
+        command.title,
+        onFinished: () async {
+          _projectRuns.remove(project.directory);
+          if (!_shutdown && projects?.workspace == owner.root) {
+            await projects!.scan(owner.root);
+          }
+        },
+      );
+      _projectRuns[project.directory] = session.id;
+    } finally {
+      if (_projectRuns[project.directory] == -1) {
+        _projectRuns.remove(project.directory);
+      }
+    }
+  }
+
+  Future<void> runProjectCreation(ProjectCreation creation) async {
+    final owner = workspace;
+    if (_shutdown ||
+        projects == null ||
+        owner == null ||
+        !p.equals(owner.root, creation.target.workspace)) {
+      throw const ProjectFailure(
+        'Open the owning workspace before creating the project.',
+      );
+    }
+    final key = creation.target.destination;
+    _reserveProjectCommand(key);
+    try {
+      await projects!.environment.validateProject(
+        DevelopmentProject(
+          workspace: owner.root,
+          directory: creation.target.staging,
+          name: 'creation',
+          kind: creation.kind,
+        ),
+      );
+      if (_shutdown || !workspaces.contains(owner)) {
+        throw const ProjectFailure('The workspace closed.');
+      }
+      late final TerminalSession session;
+      session = _start(
+        owner,
+        creation.command.spec,
+        creation.command.title,
+        onFinished: () async {
+          try {
+            final succeeded =
+                session.exitCode == 0 && session.status == SessionStatus.exited;
+            await projects!.environment.finishCreation(
+              creation,
+              publish: succeeded,
+            );
+            if (!_shutdown) {
+              message = succeeded
+                  ? 'Project created at $key. Open it from Projects and toolchains.'
+                  : 'Project creation stopped before completion.';
+              if (projects?.workspace == owner.root) {
+                await projects!.scan(owner.root);
+              }
+            }
+          } finally {
+            _projectRuns.remove(key);
+          }
+        },
+      );
+      _projectRuns[key] = session.id;
+    } finally {
+      if (_projectRuns[key] == -1) _projectRuns.remove(key);
+    }
   }
 
   Future<void> runStudioCommand(
@@ -775,11 +906,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
     final formatters = {...preferences.dartFormatters};
     if (project.kind != ProjectKind.python) {
       final dart = selected[ProjectTool.dart];
-      if (dart == null) {
-        formatters.remove(project.directory);
-      } else {
-        formatters[project.directory] = dart;
-      }
+      // An explicit empty choice also suppresses an ancestor workspace default.
+      formatters[project.directory] = dart ?? '';
     }
     await updatePreferences(
       preferences.copyWith(

@@ -14,6 +14,7 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
   }) : environment = Map.unmodifiable(environment ?? Platform.environment);
   final Map<String, String> environment;
   final int directoryLimit;
+  final _creations = <ProjectDestination>{};
   @override
   bool get windows => Platform.isWindows;
   static const _excluded = {
@@ -315,6 +316,18 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       ),
       'Project .venv',
     );
+    for (final tool in [ProjectTool.uv, ProjectTool.poetry]) {
+      await add(
+        tool,
+        p.join(
+          root,
+          '.venv',
+          windows ? 'Scripts' : 'bin',
+          windows ? '${tool.name}.exe' : tool.name,
+        ),
+        'Project .venv',
+      );
+    }
     final version = (await _text(root, '.python-version'))?.trim();
     final user = environment[windows ? 'USERPROFILE' : 'HOME'];
     final pyenvRoot =
@@ -464,6 +477,93 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
           ).exists()) {
         throw const ProjectFailure(
           'Create a project-local .venv before installing dependencies.',
+        );
+      }
+    }
+  }
+
+  @override
+  Future<ProjectDestination> reserveDestination(
+    String workspace,
+    String name,
+  ) async {
+    if (!RegExp(r'^[a-z][a-z0-9_]{0,49}$').hasMatch(name) ||
+        !p.isAbsolute(workspace) ||
+        !p.equals(
+          await Directory(workspace).resolveSymbolicLinks(),
+          workspace,
+        )) {
+      throw const ProjectFailure(
+        'Choose a current workspace and a lowercase project name (letters, digits, underscores).',
+      );
+    }
+    final destination = p.join(workspace, name);
+    if (await FileSystemEntity.type(destination, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      throw const ProjectFailure(
+        'The destination already exists. Choose a new name.',
+      );
+    }
+    final staging = await Directory(workspace).createTemp('.tabryo-create-');
+    final target = ProjectDestination(
+      workspace: workspace,
+      staging: staging.path,
+      source: p.join(staging.path, name),
+      destination: destination,
+    );
+    _creations.add(target);
+    return target;
+  }
+
+  @override
+  Future<void> finishCreation(
+    ProjectCreation creation, {
+    required bool publish,
+  }) async {
+    final target = creation.target;
+    if (!_creations.remove(target)) {
+      throw const ProjectFailure('This project creation is no longer active.');
+    }
+    if (!p.equals(
+          await Directory(target.workspace).resolveSymbolicLinks(),
+          target.workspace,
+        ) ||
+        !p.equals(
+          await Directory(target.staging).resolveSymbolicLinks(),
+          target.staging,
+        )) {
+      throw const ProjectFailure(
+        'The creation directory moved. Generated files were retained.',
+      );
+    }
+    if (publish) {
+      final manifest = creation.kind == ProjectKind.python
+          ? 'pyproject.toml'
+          : 'pubspec.yaml';
+      if (!p.equals(
+            await Directory(target.source).resolveSymbolicLinks(),
+            target.source,
+          ) ||
+          await FileSystemEntity.type(
+                p.join(target.source, manifest),
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.file ||
+          await FileSystemEntity.type(target.destination, followLinks: false) !=
+              FileSystemEntityType.notFound) {
+        throw ProjectFailure(
+          'The generated project could not be published without overwriting existing content. Files remain at ${target.source}.',
+        );
+      }
+      await Directory(target.source).rename(target.destination);
+    }
+    // Empty cancelled previews can be removed. Failed generator output is kept.
+    try {
+      await Directory(target.staging).delete();
+    } on FileSystemException {
+      if (!publish) {
+        throw ProjectFailure(
+          'Creation did not finish. Generated files remain at ${target.staging}.',
         );
       }
     }

@@ -3,10 +3,12 @@ import 'package:path/path.dart' as p;
 
 import '../../../core/cancellation.dart';
 import '../domain/project.dart';
+import '../application/project_setup.dart';
 
 final class ProjectsViewModel extends DartitectViewModel {
   ProjectsViewModel(this.environment);
   final ProjectEnvironment environment;
+  ProjectSetup get setup => ProjectSetup(environment);
   ProjectDiscovery discovery = const ProjectDiscovery([]);
   String? workspace;
   DevelopmentProject? selected;
@@ -29,6 +31,7 @@ final class ProjectsViewModel extends DartitectViewModel {
     _selectionEpoch++;
     workspace = root;
     scanning = true;
+    selecting = false;
     selected = null;
     hints = const ToolchainHints({});
     discovery = const ProjectDiscovery([]);
@@ -44,7 +47,20 @@ final class ProjectsViewModel extends DartitectViewModel {
               .where((v) => v.id == activeProjects[root])
               .firstOrNull ??
           discovery.projects.firstOrNull;
-      if (project != null) await select(project);
+      if (project != null) {
+        await select(project);
+      } else {
+        final result = await environment.toolchains(
+          DevelopmentProject(
+            workspace: root,
+            directory: root,
+            name: p.basename(root),
+            kind: ProjectKind.dart,
+          ),
+        );
+        cancellation.check();
+        if (!_closed) hints = result;
+      }
     } on Cancelled {
       return;
     } catch (error) {

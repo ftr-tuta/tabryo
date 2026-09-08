@@ -96,7 +96,32 @@ final class ProjectFailure implements Exception {
   String toString() => message;
 }
 
+final class ProjectDestination {
+  const ProjectDestination({
+    required this.workspace,
+    required this.staging,
+    required this.source,
+    required this.destination,
+  });
+  final String workspace;
+  final String staging;
+  final String source;
+  final String destination;
+}
+
+final class ProjectCreation {
+  const ProjectCreation(this.target, this.kind, this.command);
+  final ProjectDestination target;
+  final ProjectKind kind;
+  final ProjectCommand command;
+}
+
 abstract interface class ProjectEnvironment {
+  Future<ProjectDestination> reserveDestination(String workspace, String name);
+  Future<void> finishCreation(
+    ProjectCreation creation, {
+    required bool publish,
+  });
   bool get windows;
   Future<ProjectDiscovery> discover(String root, Cancellation cancellation);
   Future<ToolchainHints> toolchains(DevelopmentProject project);

@@ -126,10 +126,15 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     await showDialog<void>(
       context: context,
       useSafeArea: false,
-      builder: (_) => Dialog.fullscreen(
+      builder: (dialogContext) => Dialog.fullscreen(
         child: ProjectsScreen(
           model: projects,
           onApply: model.applyProjectToolchains,
+          onRun: (project, command) async {
+            await model.runProjectCommand(project, command);
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+          onCreate: model.runProjectCreation,
         ),
       ),
     );

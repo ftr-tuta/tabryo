@@ -2,11 +2,20 @@ import 'package:flutter/material.dart';
 
 import '../domain/project.dart';
 import 'projects_view_model.dart';
+import 'project_setup_panel.dart';
 
 final class ProjectsScreen extends StatelessWidget {
-  const ProjectsScreen({required this.model, required this.onApply, super.key});
+  const ProjectsScreen({
+    required this.model,
+    required this.onApply,
+    this.onRun,
+    this.onCreate,
+    super.key,
+  });
   final ProjectsViewModel model;
   final Future<void> Function(DevelopmentProject, ToolchainSelection) onApply;
+  final Future<void> Function(DevelopmentProject, ProjectCommand)? onRun;
+  final Future<void> Function(ProjectCreation)? onCreate;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -15,6 +24,25 @@ final class ProjectsScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Projects and toolchains'),
         actions: [
+          TextButton.icon(
+            onPressed: onCreate == null || model.workspace == null
+                ? null
+                : () async {
+                    final started = await showDialog<bool>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => ProjectCreationDialog(
+                        model: model,
+                        onCreate: onCreate!,
+                      ),
+                    );
+                    if (started == true && context.mounted) {
+                      Navigator.pop(context);
+                    }
+                  },
+            icon: const Icon(Icons.add),
+            label: const Text('Create project'),
+          ),
           IconButton(
             tooltip: 'Scan workspace',
             onPressed:
@@ -86,11 +114,23 @@ final class ProjectsScreen extends StatelessWidget {
                         Expanded(
                           child: SingleChildScrollView(
                             padding: const EdgeInsets.all(24),
-                            child: _ToolchainForm(
-                              key: ValueKey('${project.id}:${model.selecting}'),
-                              project: project,
-                              model: model,
-                              onApply: onApply,
+                            child: Column(
+                              children: [
+                                _ToolchainForm(
+                                  key: ValueKey(
+                                    '${project.id}:${model.selecting}',
+                                  ),
+                                  project: project,
+                                  model: model,
+                                  onApply: onApply,
+                                ),
+                                ProjectSetupPanel(
+                                  key: ValueKey(project.id),
+                                  model: model,
+                                  project: project,
+                                  onRun: onRun,
+                                ),
+                              ],
                             ),
                           ),
                         ),

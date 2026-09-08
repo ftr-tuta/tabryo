@@ -417,8 +417,20 @@ edições locais; mudanças em trânsito exigem revisão explícita antes de sal
 Formatação Dart ao salvar usa o SDK escolhido explicitamente por workspace e stdin,
 preserva seleção principal, histórico e codificação, verifica versões e mantém os buffers
 em falha, com nova tentativa ou salvamento sem formatar pela interface.
-Recuperação após crash, descoberta de toolchains, serviços de linguagem, DAP e DevTools
-continuam pendentes no mesmo PR; esta fundação não conclui a matriz Python/Dart/Flutter.
+Recuperação após crash está implementada como opção independente: cópias locais
+flushed, isolamento entre instâncias por locks do sistema, prévia mesmo com fonte
+ausente e restauração em buffer após comparação com o disco. O teste nativo encerra
+um processo proprietário e recupera seu texto; alteração externa exige escolha explícita.
+Histórico de undo e digitação ainda não transmitida/persistida não sobrevivem ao crash.
+Descoberta limitada de projetos mistos/aninhados e seleção explícita de SDKs por
+projeto estão implementadas, incluindo FVM, `.venv`, uv, Poetry e pyenv.
+A preparação oferece comandos revisados em terminais próprios, ambientes Python
+locais, dependências e criação por geradores oficiais com publicação após sucesso.
+Os testes existentes em `test/projects_test.dart` e `integration_test/workbench_test.dart`
+cobrem esses fluxos; o workflow Desktop inclui Python 3.12.10, uv 0.8.22 e Poetry 2.2.1.
+Serviços de linguagem, LSP/formatação Python, tarefas/testes, DAP, execução Flutter,
+DevTools, perfis Django/FastAPI e contexto IDE/Codex continuam pendentes no mesmo PR;
+esta entrega não conclui a matriz Python/Dart/Flutter nem os aceites IME/DPI.
 
 * *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.
 * *Resultado esperado:* editor com abas, destaque de sintaxe, busca/substituição, desfazer/refazer, seleção múltipla, salvamento confiável e recuperação de alterações.

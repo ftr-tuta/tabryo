@@ -19,6 +19,8 @@ import 'package:tabryo/features/mcp_studio/presentation/mcp_studio_view_model.da
 import 'package:tabryo/features/files/infrastructure/local_workspace_files.dart';
 import 'package:tabryo/features/git/infrastructure/local_git.dart';
 import 'package:tabryo/features/preferences/infrastructure/local_preferences.dart';
+import 'package:tabryo/features/projects/infrastructure/local_project_environment.dart';
+import 'package:tabryo/features/projects/presentation/projects_view_model.dart';
 import 'package:tabryo/features/terminals/domain/terminal_ports.dart';
 import 'package:tabryo/features/terminals/infrastructure/native_terminal.dart';
 import 'package:tabryo/features/terminals/infrastructure/local_text_clipboard.dart';
@@ -125,6 +127,96 @@ void main() {
   if (kReleaseMode) {
     binding.allTestsPassed.future.then((passed) => exit(passed ? 0 : 1));
   }
+  testWidgets(
+    'project creation reviews the native Flutter command and publishes its result',
+    (tester) async {
+      final temporary = await Directory.systemTemp.createTemp(
+        'tabryo-project-ui-',
+      );
+      final directory = await Directory(
+        p.join(temporary.path, 'workspace ação & test'),
+      ).create();
+      final root = await directory.resolveSymbolicLinks();
+      await File(p.join(root, 'pubspec.yaml'))
+          .writeAsString('name: workspace_app\nflutter:\n');
+      final cache = PreviewCache();
+      final git = LocalGit(
+        executable: findExecutable(['git.exe', 'git'])!,
+        cache: cache,
+      );
+      final host = CountingHost();
+      final projects = ProjectsViewModel(LocalProjectEnvironment());
+      final model = WorkbenchViewModel(
+        host: host,
+        launcher: InteractiveLauncher(),
+        files: LocalWorkspaceFiles(cache),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: LocalPreferencesStore(
+          File(p.join(temporary.path, 'preferences.json')),
+        ),
+        projects: projects,
+      );
+      addTearDown(() async {
+        await model.shutdown();
+        await temporary.delete(recursive: true);
+      });
+      await tester.pumpWidget(TabryoApp(createViewModel: () => model));
+      await model.openWorkspace(root);
+      await tester.pumpAndSettle();
+      expect(host.starts, 0);
+      await tester.tap(find.byTooltip('Projects and toolchains'));
+      await until(tester, () => !projects.scanning && !projects.selecting);
+      await tester.pumpAndSettle();
+      expect(host.starts, 0);
+      await tester.tap(find.text('Create project'));
+      await tester.pumpAndSettle();
+      final nameField = find.descendant(
+        of: find.widgetWithText(TextFormField, 'New project name'),
+        matching: find.byType(EditableText),
+      );
+      tester
+          .state<EditableTextState>(nameField)
+          .updateEditingValue(const TextEditingValue(text: 'sample_app'));
+      await tester.tap(find.text('Preview creation'));
+      await until(
+        tester,
+        () => find.text('Run reviewed creation').evaluate().isNotEmpty,
+      );
+      await tester.pumpAndSettle();
+      expect(host.starts, 0);
+      expect(await Directory(p.join(root, 'sample_app')).exists(), isFalse);
+      expect(find.textContaining('--no-pub'), findsOneWidget);
+      await tester.tap(find.text('Run reviewed creation'));
+      await until(tester, () => model.activeSession != null);
+      final session = model.activeSession!;
+      await until(
+        tester,
+        () => session.status == SessionStatus.exited,
+        timeout: const Duration(seconds: 60),
+      );
+      await session.finished;
+      await tester.pumpAndSettle();
+      expect(session.exitCode, 0, reason: terminalText(session));
+      expect(session.message, isNull);
+      expect(host.starts, 1);
+      expect(
+        await File(p.join(root, 'sample_app', 'lib', 'main.dart')).exists(),
+        isTrue,
+      );
+      expect(
+        await directory
+            .list()
+            .where((v) => p.basename(v.path).startsWith('.tabryo-create-'))
+            .isEmpty,
+        isTrue,
+      );
+      expect(find.text('Run reviewed creation'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
   testWidgets('desktop gestures, Unicode paste, splits, and real Git PTY commands', (
     tester,
   ) async {

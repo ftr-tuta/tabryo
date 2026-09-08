@@ -209,7 +209,7 @@ final class EditorViewModel extends DartitectViewModel {
             )
             .toList()
           ..sort((a, b) => b.length.compareTo(a.length));
-    if (roots.isEmpty) return null;
+    if (roots.isEmpty || dartFormatters[roots.first]!.isEmpty) return null;
     return (root: roots.first, executable: dartFormatters[roots.first]!);
   }
 
