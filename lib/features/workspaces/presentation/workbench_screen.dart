@@ -834,7 +834,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     )) {
       return;
     }
-    if (!context.mounted) return;
+    if (!mounted) return;
     if (model.workspace?.root != root) return;
     final editor = model.editor;
     if (editor != null &&
@@ -845,7 +845,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
         )) {
       return;
     }
-    if (!context.mounted) return;
+    if (!mounted) return;
     if (model.workspace?.root != root) return;
     await model.closeWorkspace(discardEdits: true);
   }

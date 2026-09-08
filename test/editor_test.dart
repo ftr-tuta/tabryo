@@ -252,6 +252,36 @@ void main() {
     }
   });
 
+  testWidgets('a close confirmation cannot close a newly selected workspace', (
+    tester,
+  ) async {
+    final git = NoGit();
+    final model = WorkbenchViewModel(
+      host: MemoryHost(),
+      launcher: MemoryLauncher(),
+      files: MemoryFiles(),
+      gitReader: git,
+      gitMutator: git,
+      preferencesStore: MemoryPreferences(),
+      editor: editor,
+    );
+    await tester.pumpWidget(TabryoApp(createViewModel: () => model));
+    await tester.pumpAndSettle();
+    await model.openWorkspace(root);
+    await model.openWorkspace(p.join(root, 'other'));
+    await model.selectWorkspace(0);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Close workspace'));
+    await tester.pumpAndSettle();
+    await model.selectWorkspace(1);
+    await tester.tap(find.widgetWithText(FilledButton, 'Close'));
+    await tester.pumpAndSettle();
+    expect(model.workspaces, hasLength(2));
+    expect(model.workspace!.root, p.join(root, 'other'));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await model.shutdown();
+  });
+
   testWidgets(
     'reload and unsaved close require explicit choices and failed save stays open',
     (tester) async {
