@@ -70,6 +70,20 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
       model.activityLayout['maximized'] != true &&
       (_previewVisible || model.devToolsVisible);
 
+  Future<void> _openChatLink(String href) async {
+    final uri = Uri.tryParse(href);
+    final root = model.workspace?.root;
+    if (root == null) return;
+    if (uri?.scheme == 'file' || uri?.scheme.isEmpty == true) {
+      final path = uri?.scheme == 'file'
+          ? uri!.toFilePath()
+          : p.normalize(p.join(root, href));
+      if (p.isWithin(root, path)) await model.openFile(path);
+    } else {
+      await model.writeClipboard(href);
+    }
+  }
+
   Future<String?> _captureChatContext() async {
     final buffer = model.editor?.active;
     final diff = model.review?.diff;
@@ -1301,22 +1315,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                     workspace: model.workspace?.root,
                                     copy: model.writeClipboard,
                                     saveDrafts: model.saveChatDrafts,
-                                    openLink: (href) async {
-                                      final uri = Uri.tryParse(href);
-                                      final root = model.workspace?.root;
-                                      if (root == null) return;
-                                      if (uri?.scheme == 'file' ||
-                                          uri?.scheme.isEmpty == true) {
-                                        final path = uri?.scheme == 'file'
-                                            ? uri!.toFilePath()
-                                            : p.normalize(p.join(root, href));
-                                        if (p.isWithin(root, path)) {
-                                          await model.openFile(path);
-                                        }
-                                      } else {
-                                        await model.writeClipboard(href);
-                                      }
-                                    },
+                                    openLink: _openChatLink,
                                     captureContext: _captureChatContext,
                                   )
                                 else

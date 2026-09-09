@@ -160,6 +160,7 @@ final class _GitReviewPanelState extends State<GitReviewPanel> {
     title: const Text('History filters'),
     children: [
       DropdownButtonFormField<String>(
+        isExpanded: true,
         initialValue: _branch,
         decoration: const InputDecoration(labelText: 'Branch / reference'),
         items: [
@@ -167,7 +168,7 @@ final class _GitReviewPanelState extends State<GitReviewPanel> {
           for (final reference in model.references)
             DropdownMenuItem(
               value: reference.name,
-              child: Text(reference.name),
+              child: Text(reference.name, overflow: TextOverflow.ellipsis),
             ),
         ],
         onChanged: (value) => _branch = value ?? 'HEAD',
@@ -230,6 +231,7 @@ final class _GitReviewPanelState extends State<GitReviewPanel> {
         ),
         if (commit != null && commit.parents.length > 1)
           DropdownButton<int>(
+            isExpanded: true,
             value: model.parent,
             items: [
               for (var i = 0; i < commit.parents.length; i++)
@@ -308,114 +310,140 @@ final class _GitReviewPanelState extends State<GitReviewPanel> {
               TextButton(onPressed: widget.push, child: const Text('Push')),
             ],
           ),
-          if (model.loading) const LinearProgressIndicator(),
-          if (model.error != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                model.error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-          if (model.stale)
-            const Text('Comparison is outdated · reload to update'),
-          if (_page == 'Changes') ...[
-            SwitchListTile(
-              dense: true,
-              title: const Text('Folder tree'),
-              value: _tree,
-              onChanged: (value) => setState(() => _tree = value),
-            ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: rows.length,
-                itemBuilder: (context, i) => rows[i](context),
-              ),
-            ),
-          ] else if (_page == 'History') ...[
-            Flexible(
-              flex: 0,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 300),
-                child: SingleChildScrollView(child: _historyFilters()),
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                itemCount:
-                    model.commits.length + (model.nextOffset == null ? 0 : 1),
-                itemBuilder: (context, i) {
-                  if (i == model.commits.length) {
-                    return TextButton(
-                      onPressed: model.loading
-                          ? null
-                          : () => model.history(model.query, more: true),
-                      child: const Text('Load more commits'),
-                    );
-                  }
-                  final commit = model.commits[i];
-                  final graph = graphs[i];
-                  return SizedBox(
-                    height: 72,
-                    child: Row(
-                      children: [
-                        Tooltip(
-                          message: graph.outside
-                              ? 'Ancestry continues outside the loaded or filtered history'
-                              : 'Commit ancestry',
-                          child: CustomPaint(
-                            size: Size(
-                              graph.width.clamp(1, 10) * 12.0 + 12,
-                              72,
-                            ),
-                            painter: _GraphPainter(
-                              graph,
-                              Theme.of(context).colorScheme,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: ListTile(
-                            selected: model.commit?.hash == commit.hash,
-                            title: Text(
-                              commit.subject,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              '${commit.hash.substring(0, 8)} · ${commit.author}\n${commit.references.join(', ')}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: () => model.selectCommit(commit),
-                          ),
-                        ),
-                      ],
+          Expanded(
+            child: Column(
+              children: [
+                if (model.loading) const LinearProgressIndicator(),
+                if (model.error != null)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(
+                      model.error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                if (model.stale)
+                  const Text('Comparison is outdated · reload to update'),
+                if (_page == 'Changes') ...[
+                  SwitchListTile(
+                    dense: true,
+                    title: const Text('Folder tree'),
+                    value: _tree,
+                    onChanged: (value) => setState(() => _tree = value),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: rows.length,
+                      itemBuilder: (context, i) => rows[i](context),
+                    ),
+                  ),
+                ] else if (_page == 'History') ...[
+                  Flexible(
+                    flex: 2,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 300),
+                      child: SingleChildScrollView(child: _historyFilters()),
+                    ),
+                  ),
+                  Expanded(
+                    flex: 3,
+                    child: ListView.builder(
+                      itemCount:
+                          model.commits.length +
+                          (model.nextOffset == null ? 0 : 1),
+                      itemBuilder: (context, i) {
+                        if (i == model.commits.length) {
+                          return TextButton(
+                            onPressed: model.loading
+                                ? null
+                                : () => model.history(model.query, more: true),
+                            child: const Text('Load more commits'),
+                          );
+                        }
+                        final commit = model.commits[i];
+                        final graph = graphs[i];
+                        return SizedBox(
+                          height: 72,
+                          child: Row(
+                            children: [
+                              Tooltip(
+                                message: graph.outside
+                                    ? 'Ancestry continues outside the loaded or filtered history'
+                                    : 'Commit ancestry',
+                                child: CustomPaint(
+                                  size: Size(
+                                    graph.width.clamp(1, 10) * 12.0 + 12,
+                                    72,
+                                  ),
+                                  painter: _GraphPainter(
+                                    graph,
+                                    Theme.of(context).colorScheme,
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: ListTile(
+                                  selected: model.commit?.hash == commit.hash,
+                                  title: Text(
+                                    commit.subject,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    '${commit.hash.substring(0, 8)} · ${commit.author}\n${commit.references.join(', ')}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onTap: () => model.selectCommit(commit),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ] else ...[
+                  Flexible(
+                    flex: 2,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          TextFormField(
+                            initialValue: _base,
+                            decoration: const InputDecoration(
+                              labelText: 'Base reference',
+                            ),
+                            onChanged: (v) => _base = v,
+                          ),
+                          TextFormField(
+                            initialValue: _target,
+                            decoration: const InputDecoration(
+                              labelText: 'Target reference',
+                            ),
+                            onChanged: (v) => _target = v,
+                          ),
+                          TextButton(
+                            onPressed: model.repository == null
+                                ? null
+                                : () => model.compareReferences(_base, _target),
+                            child: const Text('Compare references'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                if (model.comparison != null)
+                  Flexible(
+                    flex: 3,
+                    child: SingleChildScrollView(child: _commitFiles()),
+                  ),
+              ],
             ),
-          ] else ...[
-            TextFormField(
-              initialValue: _base,
-              decoration: const InputDecoration(labelText: 'Base reference'),
-              onChanged: (v) => _base = v,
-            ),
-            TextFormField(
-              initialValue: _target,
-              decoration: const InputDecoration(labelText: 'Target reference'),
-              onChanged: (v) => _target = v,
-            ),
-            TextButton(
-              onPressed: model.repository == null
-                  ? null
-                  : () => model.compareReferences(_base, _target),
-              child: const Text('Compare references'),
-            ),
-            const Spacer(),
-          ],
-          if (model.comparison != null) _commitFiles(),
+          ),
         ],
       );
     },

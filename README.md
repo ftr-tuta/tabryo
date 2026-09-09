@@ -867,7 +867,8 @@ flutter build windows --release
 Use Node.js 22 or newer to bundle the pinned editor before Flutter builds.
 On Ubuntu install Flutter's Linux desktop dependencies plus `libwebkit2gtk-4.1-dev`, use `-d linux` and
 `flutter build linux --release`. Native editor keyboard tests also require
-`xdotool`; headless integration tests use `xvfb-run -a`.
+`xdotool`; headless integration tests use `xvfb-run -a` and Openbox for native
+focus, minimization and shared-window behavior.
 The Desktop workflow runs the native tests and packages the entire Release
 bundle on both operating systems. Distribute every file in the bundle, not just
 the executable. Builds are unsigned.
@@ -906,7 +907,7 @@ Native input is limited to 256 KiB per session and 2 MiB across sessions;
 a rejected paste is reported without silently truncating it. File previews stop
 at 512 KiB; the shared file/Git preview cache is limited to 24 MiB. Git reads are
 bounded and cancellable, with two readers globally and one writer per common Git
-directory. History retains one page of 100 commits. Per-tab splits are limited
+directory. History loads 100 commits per page and retains at most 2,000. Per-tab splits are limited
 to four panes. Working-set targets require measurement on Release builds and
 are not guarantees derived from these bounds.
 

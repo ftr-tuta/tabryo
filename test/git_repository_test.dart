@@ -1,11 +1,14 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/cancellation.dart';
 import 'package:tabryo/core/preview_cache.dart';
 import 'package:tabryo/features/git/domain/git_ports.dart';
 import 'package:tabryo/features/git/infrastructure/local_git.dart';
+import 'package:tabryo/features/git/presentation/git_review_panel.dart';
+import 'package:tabryo/features/git/presentation/git_review_view_model.dart';
 import 'package:tabryo/features/terminals/infrastructure/native_terminal.dart';
 
 void main() {
@@ -66,6 +69,64 @@ void main() {
   });
   tearDown(() async {
     await temporary.delete(recursive: true);
+  });
+
+  testWidgets('Git history and details remain reachable in a small panel', (
+    tester,
+  ) async {
+    final model = GitReviewViewModel(git, git, git)
+      ..panelPage = 'History'
+      ..commit = const GitCommit(
+        '123456789abcdef',
+        'Test Author',
+        '2026-09-09',
+        'A merge with details',
+        parents: ['abcdef123456789', '987654321abcdef'],
+      )
+      ..comparison = const GitComparison(
+        target: '123456789abcdef',
+        base: 'abcdef123456789',
+        files: [
+          GitFileChange('lib/main.dart', 'M', additions: 2, deletions: 1),
+        ],
+      );
+    addTearDown(model.disposeAsync);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 320,
+              height: 330,
+              child: GitReviewPanel(
+                model: model,
+                root: null,
+                commit: () {},
+                fetch: () {},
+                push: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('History filters'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('Apply filters'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('A merge with details'));
+    await tester.tap(find.text('A merge with details'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('lib/main.dart'));
+    await tester.tap(find.text('Compare').first);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('Compare references'));
+    await tester.pumpWidget(const SizedBox());
   });
 
   test(
