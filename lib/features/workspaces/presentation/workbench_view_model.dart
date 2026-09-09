@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dartitect_flutter/dartitect_flutter.dart';
 import 'package:path/path.dart' as p;
@@ -8,6 +9,7 @@ import '../../collaboration/presentation/collaboration_view_model.dart';
 import '../../collaboration/domain/collaboration.dart';
 import '../../editor/presentation/editor_view_model.dart';
 import '../../editor/domain/document_files.dart';
+import '../../editor_context/domain/editor_context.dart';
 import '../../mcp_studio/domain/studio_project.dart';
 import '../../mcp_studio/presentation/mcp_studio_view_model.dart';
 import '../../files/domain/workspace_files.dart';
@@ -46,6 +48,12 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.debugger,
     this.devToolsProfileDirectory,
   }) {
+    editor?.captureProjectContext = _captureProjectContext;
+    editor?.captureTaskCatalog = _captureTaskCatalog;
+    editor?.prepareTaskRequest = _prepareTaskRequest;
+    editor?.runTaskRequest = (request, task) => runTask(task, request: request);
+    editor?.discardTaskRequest = (task) async => tasks?.discard(task);
+    tasks?.addListener(_taskContextChanged);
     debugger?.onInspectorSource = (location) =>
         openDebugSource(location.path, location.line, location.column);
     editor?.addListener(_editorChanged);
@@ -91,6 +99,226 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final TasksViewModel? tasks;
   final DebugService? debugger;
   final String? devToolsProfileDirectory;
+  void _taskContextChanged() {
+    if (!_shutdown) editor?.contextSharing?.refreshTaskStatus();
+  }
+
+  Future<EditorTaskCatalog> _captureTaskCatalog(
+    String root,
+    String path,
+  ) async {
+    final projectRoot = _captureProjectContext(
+      root,
+      path,
+      tests: false,
+      sessions: false,
+    ).root;
+    final project = projects!.discovery.projects
+        .where(
+          (project) =>
+              project.directory == projectRoot && project.workspace == root,
+        )
+        .firstOrNull;
+    final tools = projects!.selections[project?.id];
+    if (project == null || tools == null || tasks == null) {
+      throw const EditorContextFailure(
+        'Apply the owning project toolchain before sharing its registered tasks.',
+      );
+    }
+    await projects!.environment.validateProject(project);
+    final config = await tasks!.files.readConfiguration(project);
+    if (config.tasks.isEmpty) {
+      throw const EditorContextFailure(
+        'Register at least one task in .tabryo/project.json before sharing task requests.',
+      );
+    }
+    if (_shutdown ||
+        workspace?.root != root ||
+        !identical(tools, projects!.selections[project.id])) {
+      throw const EditorContextFailure(
+        'The workspace or toolchain changed. Capture tasks again.',
+      );
+    }
+    return EditorTaskCatalog(project, tools, config);
+  }
+
+  bool _ownsTaskRequest(EditorTaskRequest request) =>
+      !_shutdown &&
+      editor?.contextSharing?.ownsTaskRequest(request) == true &&
+      request.decision == 'reviewing' &&
+      workspace?.root == request.snapshot.workspace;
+
+  Future<ProjectTask> _prepareTaskRequest(EditorTaskRequest request) async {
+    if (!_ownsTaskRequest(request) || request.task != null || tasks == null) {
+      throw const EditorContextFailure(
+        'This registered task request is no longer available.',
+      );
+    }
+    final catalog = request.snapshot.taskCatalog!;
+    final preset = catalog.configuration.tasks.singleWhere(
+      (task) => task.name == request.name,
+    );
+    final task = await tasks!.prepare(
+      catalog.project,
+      catalog.tools,
+      preset.kind,
+      target: preset.target == null
+          ? null
+          : p.joinAll([
+              catalog.project.directory,
+              ...preset.target!.split('/'),
+            ]),
+      filter: preset.filter,
+      buildTarget: preset.buildTarget,
+      arguments: preset.arguments,
+      coverage: preset.coverage,
+      configuration: catalog.configuration,
+    );
+    if (!_ownsTaskRequest(request)) {
+      await tasks!.discard(task);
+      throw const EditorContextFailure(
+        'The task grant was revoked during preparation.',
+      );
+    }
+    request.task = task;
+    return task;
+  }
+
+  EditorProjectContext _captureProjectContext(
+    String root,
+    String path, {
+    required bool tests,
+    required bool sessions,
+  }) {
+    if (_shutdown || workspace?.root != root) {
+      throw const EditorContextFailure('The workspace changed.');
+    }
+    final config = debugger?.configuration;
+    final candidates =
+        [...?projects?.discovery.projects, if (config != null) config.project]
+            .where(
+              (project) =>
+                  project.workspace == root &&
+                  p.isWithin(project.directory, path),
+            )
+            .toList()
+          ..sort((a, b) => b.directory.length.compareTo(a.directory.length));
+    final project = candidates.firstOrNull;
+    if (project == null) {
+      throw const EditorContextFailure(
+        'Scan the project owning this document before including test or session context.',
+      );
+    }
+    final runs =
+        tasks?.runs
+            .where(
+              (run) =>
+                  run.project.id == project.id && run.project.workspace == root,
+            )
+            .toList() ??
+        <ProjectTask>[];
+    var limited = false;
+    var bytes = 0;
+    final testRuns = <EditorTestContext>[];
+    if (tests) {
+      for (final run in runs.reversed.where(
+        (run) =>
+            run.kind == ProjectTaskKind.test &&
+            run.status != TaskStatus.prepared,
+      )) {
+        if (testRuns.length == 5) {
+          limited = true;
+          break;
+        }
+        final counts = {
+          for (final outcome in TestOutcome.values) outcome.name: 0,
+        };
+        final failures = <EditorTestFailure>[];
+        for (final item in run.results?.cases ?? <TestCaseResult>[]) {
+          counts[item.outcome.name] = counts[item.outcome.name]! + 1;
+          if (item.outcome != TestOutcome.failed &&
+              item.outcome != TestOutcome.incomplete) {
+            continue;
+          }
+          final failure = EditorTestFailure(
+            name: String.fromCharCodes(item.name.runes.take(512)),
+            outcome: item.outcome.name,
+            details: String.fromCharCodes(item.details.runes.take(4096)),
+            path: item.path != null && p.isWithin(project.directory, item.path!)
+                ? item.path
+                : null,
+            line: item.line,
+          );
+          final size = utf8.encode(jsonEncode(failure.toJson())).length;
+          if (failures.length == 20 || bytes + size > 64 * 1024) {
+            limited = true;
+            continue;
+          }
+          bytes += size;
+          if (failure.name != item.name || failure.details != item.details) {
+            limited = true;
+          }
+          failures.add(failure);
+        }
+        testRuns.add(
+          EditorTestContext(
+            status: run.status.name,
+            complete: run.results?.complete == true,
+            successful:
+                run.status == TaskStatus.passed &&
+                run.results?.successful == true &&
+                run.results?.complete == true &&
+                run.exitCode == 0,
+            target: run.target,
+            exitCode: run.exitCode,
+            error: run.error == null
+                ? null
+                : String.fromCharCodes(run.error!.runes.take(2048)),
+            counts: counts,
+            failures: failures,
+          ),
+        );
+      }
+    }
+    final running = <EditorSessionContext>[];
+    if (sessions) {
+      if (config?.project.id == project.id && debugger?.active == true) {
+        running.add(
+          EditorSessionContext(
+            kind: config!.project.kind.name,
+            status: debugger!.status.name,
+            program: config.program,
+            attach: config.isAttach,
+            noDebug: config.noDebug,
+          ),
+        );
+      }
+      for (final run in runs.where((run) => run.status == TaskStatus.running)) {
+        if (running.length == 8) {
+          limited = true;
+          break;
+        }
+        running.add(
+          EditorSessionContext(
+            kind: 'task.${run.kind.name}',
+            status: run.status.name,
+            program: run.target ?? run.command.title,
+            attach: false,
+            noDebug: true,
+          ),
+        );
+      }
+    }
+    return EditorProjectContext(
+      root: project.directory,
+      includesTests: tests,
+      includesSessions: sessions,
+      limited: limited,
+      tests: testRuns,
+      sessions: running,
+    );
+  }
+
   Future<McpServerDraft> dartFlutterMcpDraft() async {
     final manager = projects;
     final config = debugger?.active == true ? debugger?.configuration : null;
@@ -591,7 +819,17 @@ final class WorkbenchViewModel extends DartitectViewModel {
     }
   }
 
-  Future<void> runTask(ProjectTask task) async {
+  Future<void> runTask(ProjectTask task, {EditorTaskRequest? request}) async {
+    void checkGrant() {
+      if (request != null &&
+          (!_ownsTaskRequest(request) || !identical(request.task, task))) {
+        throw const EditorContextFailure(
+          'This task grant was revoked or replaced before execution.',
+        );
+      }
+    }
+
+    checkGrant();
     final owner = workspace;
     final project = task.project;
     if (_shutdown ||
@@ -662,6 +900,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
           'Stop a running task before starting more (limit: 4).',
         );
       }
+      checkGrant();
       late final TerminalSession session;
       session = _start(
         owner,
@@ -1425,7 +1664,13 @@ final class WorkbenchViewModel extends DartitectViewModel {
   Future<void>? _shutdownFuture;
   Future<void> shutdown() => _shutdownFuture ??= () async {
     _shutdown = true;
+    tasks?.removeListener(_taskContextChanged);
     editor?.onSaved = null;
+    editor?.captureProjectContext = null;
+    editor?.captureTaskCatalog = null;
+    editor?.prepareTaskRequest = null;
+    editor?.runTaskRequest = null;
+    editor?.discardTaskRequest = null;
     debugger?.onInspectorSource = null;
     await debugger?.dispose();
     await _debugChanges?.cancel();

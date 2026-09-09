@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../editor_context/domain/editor_context.dart';
+import '../../tasks/domain/project_task.dart';
+import '../../tasks/presentation/tasks_panel.dart';
 import 'editor_view_model.dart';
 
 final class EditorContextDialog extends StatefulWidget {
@@ -17,6 +19,9 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
   final client = TextEditingController(text: 'Codex');
   bool whole = false;
   bool diagnostics = false;
+  bool tests = false;
+  bool sessions = false;
+  bool registeredTasks = false;
   bool busy = false;
   String? error;
   @override
@@ -67,6 +72,9 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
     final snapshot = await widget.model.prepareContext(
       wholeDocument: whole,
       includeDiagnostics: diagnostics,
+      includeTests: tests,
+      includeSessions: sessions,
+      includeTasks: registeredTasks,
     );
     if (!mounted) return;
     final approved = await _review(
@@ -94,6 +102,26 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
                 for (final diagnostic in snapshot.diagnostics)
                   diagnostic.toJson(),
               ]),
+            ),
+          ],
+          if (snapshot.projectContext != null) ...[
+            const Divider(),
+            const Text(
+              'Captured project results and sessions. Later changes are not streamed. Review failure details, which can include application output. Session metadata does not add environment values or VM connection credentials.',
+            ),
+            SelectableText(
+              const JsonEncoder.withIndent('  ')
+                  .convert(snapshot.projectContext!.toJson()),
+            ),
+          ],
+          if (snapshot.taskCatalog != null) ...[
+            const Divider(),
+            const Text(
+              'MCP clients can request these registered tasks. Each request waits for command review here. Changes to the configuration or toolchain require a fresh review.',
+            ),
+            SelectableText(
+              const JsonEncoder.withIndent('  ')
+                  .convert(snapshot.taskCatalog!.toJson()),
             ),
           ],
         ],
@@ -132,6 +160,37 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
       ClipboardData(text: const JsonEncoder.withIndent('  ').convert(value)),
     );
   }
+
+  Future<void> _task(EditorTaskRequest request) => _act(() async {
+    final service = widget.model.contextSharing!;
+    final prepare = widget.model.prepareTaskRequest;
+    final run = widget.model.runTaskRequest;
+    final discard = widget.model.discardTaskRequest;
+    if (prepare == null || run == null || discard == null) {
+      throw const EditorContextFailure('The task executor is unavailable.');
+    }
+    service.taskDecided(request, 'reviewing');
+    ProjectTask? task;
+    var decision = 'pending';
+    try {
+      task = await prepare(request);
+      if (!mounted) return;
+      final approved = await reviewProjectTask(context, task);
+      if (approved && mounted) await run(request, task);
+    } catch (_) {
+      decision = 'failed';
+      rethrow;
+    } finally {
+      try {
+        if (task != null) await discard(task);
+      } finally {
+        if (task?.status == TaskStatus.prepared) request.task = null;
+        if (service.ownsTaskRequest(request) && request.task == null) {
+          service.taskDecided(request, decision);
+        }
+      }
+    }
+  });
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -179,6 +238,32 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
                         : (value) => setState(() => diagnostics = value!),
                     title: const Text('Include captured diagnostics'),
                   ),
+                  if (widget.model.captureProjectContext != null) ...[
+                    CheckboxListTile(
+                      value: tests,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => tests = value!),
+                      title: const Text('Include captured test results'),
+                    ),
+                    CheckboxListTile(
+                      value: sessions,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => sessions = value!),
+                      title: const Text('Include running debug/task sessions'),
+                    ),
+                  ],
+                  if (widget.model.captureTaskCatalog != null)
+                    CheckboxListTile(
+                      value: registeredTasks,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => registeredTasks = value!),
+                      title: const Text(
+                        'Allow requests for registered project tasks',
+                      ),
+                    ),
                   FilledButton(
                     onPressed: busy ? null : _publish,
                     child: const Text('Review editor context'),
@@ -217,6 +302,43 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
                     ],
                   ),
                   const Divider(),
+                  if (snapshot.taskCatalog != null) ...[
+                    const Text(
+                      'Registered task requests · open Tasks to stop a running command',
+                    ),
+                    if (service.taskRequests.isEmpty)
+                      const Text('No task requests received.'),
+                    for (final request in service.taskRequests.values)
+                      ListTile(
+                        title: Text(request.name),
+                        subtitle: Text(
+                          '${request.id} · ${request.status}${request.task?.exitCode == null ? '' : ' · exit ${request.task!.exitCode}'}',
+                        ),
+                        trailing: request.status != 'pending'
+                            ? null
+                            : Wrap(
+                                spacing: 8,
+                                children: [
+                                  OutlinedButton(
+                                    onPressed: busy
+                                        ? null
+                                        : () => _task(request),
+                                    child: const Text('Review task request'),
+                                  ),
+                                  TextButton(
+                                    onPressed: busy
+                                        ? null
+                                        : () => service.taskDecided(
+                                            request,
+                                            'rejected',
+                                          ),
+                                    child: const Text('Reject task request'),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    const Divider(),
+                  ],
                   if (service.proposals.isEmpty)
                     const Text('No replacement proposals received.'),
                   for (final proposal in service.proposals.values)

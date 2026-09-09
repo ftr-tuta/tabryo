@@ -18,6 +18,7 @@ import '../../language/application/language_service.dart';
 import '../../language/domain/language_server.dart';
 import '../../editor_context/application/editor_context_service.dart';
 import '../../editor_context/domain/editor_context.dart';
+import '../../tasks/domain/project_task.dart';
 import '../../../core/cancellation.dart';
 
 final class LanguageBufferEdit {
@@ -77,6 +78,18 @@ final class EditorViewModel extends DartitectViewModel {
     });
   }
   final EditorContextService? contextSharing;
+  Future<EditorTaskCatalog> Function(String workspace, String path)?
+  captureTaskCatalog;
+  Future<ProjectTask> Function(EditorTaskRequest)? prepareTaskRequest;
+  Future<void> Function(EditorTaskRequest, ProjectTask)? runTaskRequest;
+  Future<void> Function(ProjectTask)? discardTaskRequest;
+  EditorProjectContext Function(
+    String workspace,
+    String path, {
+    required bool tests,
+    required bool sessions,
+  })?
+  captureProjectContext;
   void Function(DocumentSnapshot)? onSaved;
   StreamSubscription<void>? _contextEvents;
   int _nextContext = 0;
@@ -86,6 +99,9 @@ final class EditorViewModel extends DartitectViewModel {
   Future<EditorContextSnapshot> prepareContext({
     required bool wholeDocument,
     bool includeDiagnostics = false,
+    bool includeTests = false,
+    bool includeSessions = false,
+    bool includeTasks = false,
   }) async {
     final buffer = active;
     if (_closed ||
@@ -100,6 +116,17 @@ final class EditorViewModel extends DartitectViewModel {
       throw const Cancelled();
     }
     final text = buffer.controller.text;
+    final version = buffer.version;
+    if (includeTasks && captureTaskCatalog == null) {
+      throw const EditorContextFailure(
+        'Registered task sharing is unavailable.',
+      );
+    }
+    if ((includeTests || includeSessions) && captureProjectContext == null) {
+      throw const EditorContextFailure(
+        'Project test/session context is unavailable.',
+      );
+    }
     final selection = buffer.controller.selection;
     final start = wholeDocument ? 0 : selection.start;
     final end = wholeDocument ? text.length : selection.end;
@@ -151,11 +178,23 @@ final class EditorViewModel extends DartitectViewModel {
         }
       }
     }
+    final catalog = includeTasks
+        ? await captureTaskCatalog!(buffer.root, buffer.path)
+        : null;
+    if (_closed ||
+        !identical(buffer, active) ||
+        buffer.root != workspace ||
+        buffer.version != version ||
+        buffer.controller.text != text) {
+      throw const EditorContextFailure(
+        'The document changed while capturing project context.',
+      );
+    }
     final snapshot = EditorContextSnapshot(
       id: '${DateTime.now().microsecondsSinceEpoch}-${++_nextContext}',
       workspace: buffer.root,
       path: buffer.path,
-      version: buffer.version,
+      version: version,
       start: start,
       end: end,
       text: text.substring(start, end),
@@ -164,6 +203,15 @@ final class EditorViewModel extends DartitectViewModel {
       includesDiagnostics: includeDiagnostics,
       diagnosticsLimited: limited,
       diagnostics: diagnostics,
+      taskCatalog: catalog,
+      projectContext: includeTests || includeSessions
+          ? captureProjectContext?.call(
+              buffer.root,
+              buffer.path,
+              tests: includeTests,
+              sessions: includeSessions,
+            )
+          : null,
     );
     _contextCapture = (snapshot: snapshot, buffer: buffer, before: text);
     return snapshot;
@@ -1254,6 +1302,11 @@ final class EditorViewModel extends DartitectViewModel {
     _recoveryTimer?.cancel();
     _closed = true;
     onSaved = null;
+    captureProjectContext = null;
+    captureTaskCatalog = null;
+    prepareTaskRequest = null;
+    runTaskRequest = null;
+    discardTaskRequest = null;
     await _languageEvents?.cancel();
     await language?.close();
     formatter?.close();

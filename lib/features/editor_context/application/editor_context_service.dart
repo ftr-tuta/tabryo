@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../../tasks/domain/project_task.dart';
 import '../domain/editor_context.dart';
 
 /// Owns one explicit grant and bounded proposals. The client never gets a file
@@ -13,6 +14,7 @@ final class EditorContextService {
   EditorContextConnection? connection;
   EditorContextSnapshot? snapshot;
   final proposals = <String, EditorProposal>{};
+  final taskRequests = <String, EditorTaskRequest>{};
   String? client;
   bool _starting = false;
   bool _closed = false;
@@ -122,6 +124,34 @@ final class EditorContextService {
       case 'tools/list':
         return {
           'tools': [
+            if (context.taskCatalog != null) ...[
+              _tool(
+                'request_task_run',
+                'Request one registered task for native review. Queuing does not start a command. Reuse client_id when retrying.',
+                {
+                  'client_id': {'type': 'string', 'maxLength': 80},
+                  'snapshot_id': {'type': 'string', 'maxLength': 100},
+                  'task': {
+                    'type': 'string',
+                    'enum': [
+                      for (final task
+                          in context.taskCatalog!.configuration.tasks)
+                        task.name,
+                    ],
+                  },
+                },
+                ['client_id', 'snapshot_id', 'task'],
+                readOnly: false,
+              ),
+              _tool(
+                'task_request_status',
+                'Read a registered task request and its native execution status.',
+                {
+                  'client_id': {'type': 'string', 'maxLength': 80},
+                },
+                ['client_id'],
+              ),
+            ],
             _tool(
               'editor_context',
               'Read the current explicitly shared excerpt and its version.',
@@ -197,6 +227,65 @@ final class EditorContextService {
     EditorContextSnapshot context,
   ) {
     if (name == 'editor_context' && args.isEmpty) return context.toJson();
+    if (name == 'request_task_run' || name == 'task_request_status') {
+      final catalog = context.taskCatalog;
+      final keys = name == 'request_task_run'
+          ? {'client_id', 'snapshot_id', 'task'}
+          : {'client_id'};
+      if (catalog == null ||
+          args.length != keys.length ||
+          args.keys.any((key) => !keys.contains(key)) ||
+          keys.any((key) => args[key] is! String)) {
+        throw const EditorContextFailure(
+          'Supply exactly the registered task arguments in an active grant.',
+        );
+      }
+      final id = args['client_id'] as String;
+      if (!RegExp(r'^[A-Za-z0-9._-]{1,80}$').hasMatch(id)) {
+        throw const EditorContextFailure('Invalid task request ID.');
+      }
+      if (name == 'request_task_run') {
+        if (args['snapshot_id'] != context.id ||
+            !catalog.configuration.tasks.any(
+              (task) => task.name == args['task'],
+            )) {
+          throw const EditorContextFailure(
+            'The snapshot or registered task is unavailable.',
+          );
+        }
+        final previous = taskRequests[id];
+        if (previous != null &&
+            (previous.snapshot != context || previous.name != args['task'])) {
+          throw const EditorContextFailure(
+            'This request ID was used for different content.',
+          );
+        }
+        if (previous == null) {
+          if (taskRequests.length >= 8) {
+            throw const EditorContextFailure(
+              'Task request limit reached. Publish a fresh context.',
+            );
+          }
+          taskRequests[id] = EditorTaskRequest(
+            id,
+            context,
+            args['task'] as String,
+          );
+          _changed();
+        }
+      }
+      final request = taskRequests[id];
+      if (request == null) {
+        throw const EditorContextFailure('Unknown task request.');
+      }
+      return {
+        'client_id': id,
+        'task': request.name,
+        'status': request.status,
+        'exitCode': request.task?.exitCode,
+        'sessionId': request.task?.sessionId,
+      };
+    }
     final keys = name == 'propose_replacement'
         ? {'client_id', 'snapshot_id', 'text'}
         : {'client_id'};
@@ -254,11 +343,40 @@ final class EditorContextService {
     _changed();
   }
 
+  bool ownsTaskRequest(EditorTaskRequest request) =>
+      !_closed &&
+      identical(snapshot, request.snapshot) &&
+      identical(taskRequests[request.id], request);
+
+  void taskDecided(EditorTaskRequest request, String decision) {
+    if (!ownsTaskRequest(request)) {
+      throw const EditorContextFailure('This task grant was revoked.');
+    }
+    final allowed = request.decision == 'pending'
+        ? const {'reviewing', 'rejected'}
+        : request.decision == 'reviewing'
+        ? const {'pending', 'failed'}
+        : const <String>{};
+    if (request.task != null && request.task!.status != TaskStatus.prepared ||
+        !allowed.contains(decision)) {
+      throw const EditorContextFailure(
+        'This task request cannot change its review decision.',
+      );
+    }
+    request.decision = decision;
+    _changed();
+  }
+
+  void refreshTaskStatus() {
+    if (!_closed && taskRequests.isNotEmpty) _changed();
+  }
+
   Future<void> revoke() {
     ++_generation;
     snapshot = null;
     client = null;
     proposals.clear();
+    taskRequests.clear();
     final active = connection;
     final pending = _pending;
     connection = null;

@@ -8,6 +8,35 @@ import '../domain/project_task.dart';
 import '../application/shared_tasks.dart';
 import 'tasks_view_model.dart';
 
+Future<bool> reviewProjectTask(BuildContext context, ProjectTask task) async {
+  final command = task.command;
+  return await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Review project task'),
+          content: SizedBox(
+            width: 720,
+            child: SingleChildScrollView(
+              child: SelectableText(
+                '${command.description}\n\nDirectory: ${command.spec.workingDirectory}\nExecutable: ${command.spec.executable}\nArguments: ${jsonEncode(command.spec.arguments)}\nEnvironment overrides: ${jsonEncode(command.spec.environment)}\nRemoved inherited variables: ${command.spec.unsetEnvironment.join(', ')}',
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Run reviewed task'),
+            ),
+          ],
+        ),
+      ) ==
+      true;
+}
+
 final class TasksPanel extends StatefulWidget {
   const TasksPanel({
     required this.model,
@@ -124,32 +153,8 @@ final class _TasksPanelState extends State<TasksPanel> {
   Future<void> _approve(ProjectTask task) async {
     try {
       if (!mounted) return;
-      final command = task.command;
-      final approved = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Review project task'),
-          content: SizedBox(
-            width: 720,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                '${command.description}\n\nDirectory: ${command.spec.workingDirectory}\nExecutable: ${command.spec.executable}\nArguments: ${jsonEncode(command.spec.arguments)}\nEnvironment overrides: ${jsonEncode(command.spec.environment)}\nRemoved inherited variables: ${command.spec.unsetEnvironment.join(', ')}',
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Run reviewed task'),
-            ),
-          ],
-        ),
-      );
-      if (approved == true && mounted) await widget.onRun(task);
+      final approved = await reviewProjectTask(context, task);
+      if (approved && mounted) await widget.onRun(task);
     } finally {
       await widget.model.discard(task);
     }

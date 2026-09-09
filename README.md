@@ -422,6 +422,18 @@ before/after review is required to apply it to the unsaved buffer; saving remain
 explicit. Changed buffers, disk contents, document versions or grants invalidate
 the proposal. Up to eight proposals are retained per share.
 
+Optional **Include captured test results** and **Include running debug/task
+sessions** add a bounded, immutable snapshot from the document's project.
+Review test failure details before sharing. Session metadata excludes environment
+values, debug console output and VM connection credentials.
+**Allow requests for registered project tasks** exposes the names in the
+reviewed `.tabryo/project.json`. `request_task_run` queues a request with a stable
+client ID; `task_request_status` reports its review and native execution status.
+Review each command here before it runs. Configuration, toolchain, saved files
+and the active grant are checked again before execution. Cancelling or rejecting
+runs nothing; at most eight requests are kept per share. Revoking context does
+not stop an already approved command; use its normal Tasks stop control.
+
 **Revoke editor context**, closing the source document, changing workspace and
 closing Tabryo revoke the endpoint. Clients cannot browse arbitrary files or
 apply edits through MCP. The endpoint is local and temporary; remote exposure and
@@ -501,6 +513,14 @@ run/Inspector/source navigation/reload/restart case, which requires the platform
 session. Desktop CI runs both on Windows and Ubuntu.
 
 ## Tasks and tests
+
+Editor context sharing can optionally include captured test results and running
+debug/task session metadata for the document's project. The review shows the
+captured values; later runs and session changes are not streamed. At most five
+test runs, 20 failure details per run and 64 KiB of failure data are included,
+with visible truncation. Session metadata omits environment values, console
+output and VM credentials. Review failure details before sharing, since tests
+can include application output. Nested projects retain separate context.
 
 Open **Projects and toolchains → Tasks and tests** after applying the selected
 project's SDK/interpreter. **Discover test files** lists `*_test.dart`,

@@ -509,8 +509,19 @@ Teste nativo com Codex instalado conecta o MCP oficial Dart/Flutter a esse DTD,
 lista a aplicação e desconecta sem turno de modelo ou URI persistida no TOML.
 O Hub oferece registro revisado do SDK selecionado e conexão revisada à sessão,
 recusando configuração diferente e respostas após encerramento/troca da sessão.
-Contexto de testes/sessões e
-aceites físicos IME/DPI continuam pendentes na matriz Python/Dart/Flutter.
+Contexto opcional de testes/sessões captura resultados limitados e metadados de
+sessões do projeto do documento, com revisão e isolamento de projetos aninhados.
+Resultados posteriores não alteram o retrato publicado; ambiente, console da
+depuração e credenciais da VM não integram os metadados de sessão.
+Solicitações MCP de tarefas cadastradas reutilizam a revisão nativa de comandos,
+com revalidação de configuração, SDK, buffers salvos e concessão imediatamente
+antes da execução; fila limitada e IDs idempotentes preservam cancelamento e
+rejeição sem execução. Testes cobrem revogação durante validação e status nativo.
+A CI de `f6c30ca` passou integralmente no Windows e abriu DevTools no Linux com
+locale `C`; o teste a 200% revelou dupla escala na conversão do clique nativo.
+`8143487` corrige o mapeamento pelas dimensões reais da superfície, em validação.
+Envio de contexto à sessão Codex, descoberta contínua via Flutter daemon,
+perfis compartilháveis e aceites físicos IME/DPI continuam pendentes na matriz.
 Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
 seu planejamento independente permanece em CODEX-02. Operações de arquivo em
 refatorações continuam recusadas de forma explícita.
