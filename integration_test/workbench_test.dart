@@ -979,11 +979,20 @@ void main() {
 
       await tester.tap(find.text('Web preview'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byType(TextField),
-        'http://127.0.0.1:${server.port}/',
-      );
+      // Deliver through the actual client, also when Release disables the
+      // synthetic test input client -1. Native clipboard input is tested below.
+      tester
+          .state<EditableTextState>(find.byType(EditableText))
+          .updateEditingValue(
+            TextEditingValue(text: 'http://127.0.0.1:${server.port}/'),
+          );
       await tester.pump();
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Open'))
+            .onPressed,
+        isNotNull,
+      );
       await tester.tap(find.widgetWithText(FilledButton, 'Open'));
       await until(
         tester,
@@ -1067,6 +1076,8 @@ void main() {
           'document.getElementById("value").value === "ação preserved"',
         ),
         isTrue,
+        reason:
+            'Preview input after theme: ${await browser.runJavaScriptReturningResult('document.getElementById("value").value')}',
       );
       expect(
         await browser.runJavaScriptReturningResult(
