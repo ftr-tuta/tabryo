@@ -461,6 +461,25 @@ uses its SDK adapter and an explicitly discovered/selected device. Python uses
 `debugpy` installed in the chosen interpreter. No adapter or device scan starts
 when the panel opens. Running without debugging is an explicit checkbox.
 
+**Discover Flutter devices** starts the selected SDK's daemon and keeps the
+device list current as devices arrive or disappear. **Stop device discovery**,
+closing the project panel or replacing its SDK closes that owned daemon.
+Application launch remains owned by the debug adapter.
+
+**Load shared launch profiles** reads optional `launches` from
+`.tabryo/project.json`, alongside `tasks`. For example:
+
+```json
+{"version":1,"launches":[{"name":"Staging","program":"lib/main_staging.dart","profile":"Script","flavor":"staging","flutterMode":"debug"}]}
+```
+
+Profiles support `Script`, `Django` and `FastAPI`, relative `program` and
+`directory`, `arguments`, `toolArguments`, `noDebug`, Flutter `flavor`/`flutterMode`
+and backend `port`. Use a profile to fill the form, choose a device when needed,
+then review the session. Loading resets prior launch environment overrides and
+breakpoints. SDK paths, device IDs, attach endpoints and environment values stay
+local. Changed configuration files require loading and reviewing again.
+
 The panel shows verified/pending breakpoints, stack frames, scopes, variables,
 console output and continue/pause/step controls. Stack source links use the
 editor's project and read-only dependency boundaries. Evaluation is an explicit
@@ -520,8 +539,13 @@ are also available as separately reviewed tasks using the project's manage.py.
 Native tests exercise Dart 3.13.2, Flutter 3.47.2, debugpy 1.8.21, Django 6.1.1,
 FastAPI 0.140.6 and uvicorn 0.52.4. `TABRYO_TEST_DEBUG_PYTHON=1` enables the Python
 adapter/framework cases; `TABRYO_TEST_FLUTTER_DEBUG=1` enables the desktop Flutter
-run/Inspector/source navigation/reload/restart case, which requires the platform build tools and a graphical
-session. Desktop CI runs both on Windows and Ubuntu.
+run/Inspector/source navigation/reload/restart and attach case, which requires
+the platform build tools and a graphical session. Attach is exercised against
+a separately running Flutter application, with a verified source breakpoint
+and continued VM availability after disconnect. Backend cases also run native
+pytest tests through the Tasks service. Desktop CI runs these on Windows and
+Ubuntu, plus Codex CLI 0.147.0 context delivery and MCP integration with disposable
+configuration and a local simulated provider, without model calls.
 
 ## Tasks and tests
 

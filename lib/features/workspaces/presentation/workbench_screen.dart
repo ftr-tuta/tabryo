@@ -212,6 +212,8 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                         service: model.debugger!,
                         project: project,
                         tools: selection,
+                        onLoadProfiles: () =>
+                            model.tasks!.files.readConfiguration(project),
                         onStart: model.startDebugger,
                         onStop: model.debugger!.stop,
                         onControl: model.controlDebugger,

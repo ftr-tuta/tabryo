@@ -419,7 +419,8 @@ inicialização/encerramento dos pacotes extraídos. A sincronização espera o 
 composição IME e preserva entrada concorrente para revisão; eventos de composição
 no navegador passam no teste nativo Windows. As dimensões GTK agora convertem
 pixels físicos para coordenadas lógicas, com caso de CI em escala 200%.
-Janelas candidatas de IME físico e troca entre monitores ainda exigem aceite.
+Janelas candidatas de IME físico e troca entre monitores não foram exercitadas;
+os testes automatizados de composição e escala não representam esse aceite manual.
 Monitoramento opcional e F5 atualizam documentos abertos sem substituir
 edições locais; mudanças em trânsito exigem revisão explícita antes de salvar.
 Formatação Dart ao salvar usa o SDK escolhido explicitamente por workspace e stdin,
@@ -519,13 +520,24 @@ antes da execução; fila limitada e IDs idempotentes preservam cancelamento e
 rejeição sem execução. Testes cobrem revogação durante validação e status nativo.
 A CI de `f6c30ca` passou integralmente no Windows e abriu DevTools no Linux com
 locale `C`; o teste a 200% revelou dupla escala na conversão do clique nativo.
-`8143487` corrige o mapeamento pelas dimensões reais da superfície, em validação.
+`8143487` corrigiu o mapeamento pelas dimensões reais da superfície e passou
+integralmente na CI Windows/Ubuntu, incluindo Release, pacotes e Linux a 200%.
 Ações de explicar seleção, corrigir diagnóstico e investigar teste selecionam
 uma sessão Codex do workspace e revisam objetivo, permissão e mensagem limitada.
 O controle nativo persiste antes de encaminhar pelo App Server, preservando IDs
 em retries e resultados incertos; MCPs de participantes não podem forjar esse
-envio explícito do usuário. Descoberta contínua via Flutter daemon, perfis
-compartilháveis e aceites físicos IME/DPI continuam pendentes na matriz.
+envio explícito do usuário. Flutter daemon fornece descoberta contínua sob ação
+explícita, com cancelamento, eventos limitados e encerramento ao trocar SDK ou
+fechar o painel. Perfis opcionais `launches` compartilham entrypoint, argumentos,
+flavor/modo e configuração de backend, mantendo SDK, dispositivos, endpoints e
+ambiente local. Alterações no arquivo bloqueiam o início após revisão.
+Testes nativos Windows ampliados passaram para attach Flutter com breakpoint
+e VM preservada após desconexão, além de pytest para Django/FastAPI pelo serviço
+de tarefas. A rodada agregada passou 63 casos; cenários opcionais Flutter/Codex
+têm execução separada. Análise e Dartitect passaram. O workflow exige os cenários
+Flutter/backend e envio de contexto/MCP pelo Codex instalado nos dois sistemas,
+com configuração descartável e sem chamada a modelos. Os gates finais do HEAD
+são acompanhados no PR; validação física de IME e troca de monitor não é anunciada.
 Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
 seu planejamento independente permanece em CODEX-02. Operações de arquivo em
 refatorações continuam recusadas de forma explícita.

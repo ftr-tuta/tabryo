@@ -332,6 +332,71 @@ void main() {
     },
   );
 
+  test('shared launch profiles retain portable choices and reject local credentials and escaping paths', () {
+    final valid = {
+      'name': 'Staging',
+      'program': 'lib/main_staging.dart',
+      'directory': '.',
+      'flavor': 'staging',
+      'flutterMode': 'profile',
+      'arguments': ['a & b', r'$value'],
+      'toolArguments': ['--dart-define=MODE=staging'],
+    };
+    final parsed = SharedTasks.parse(
+      jsonEncode({
+        'version': 1,
+        'launches': [valid],
+      }),
+    );
+    expect(parsed.tasks, isEmpty);
+    expect(parsed.launches.single.flavor, 'staging');
+    expect(parsed.launches.single.arguments, ['a & b', r'$value']);
+    expect(
+      () => parsed.launches.single.arguments.add('changed'),
+      throwsUnsupportedError,
+    );
+    for (final changed in [
+      {'program': '../other.dart'},
+      {'program': r'C:\other.dart'},
+      {'directory': '/tmp'},
+      {'directory': 'nested/../other'},
+      {
+        'environment': {'TOKEN': 'secret'},
+      },
+      {'device': 'private-device'},
+      {'sdk': '/local/sdk'},
+      {'attachUri': 'http://127.0.0.1:1/token'},
+      {'flutterMode': 'other'},
+      {'noDebug': 'yes'},
+      {'port': 0},
+      {'flavor': '--unsafe'},
+      {
+        'arguments': [1],
+      },
+    ]) {
+      expect(
+        () => SharedTasks.parse(
+          jsonEncode({
+            'version': 1,
+            'launches': [
+              {...valid, ...changed},
+            ],
+          }),
+        ),
+        throwsFormatException,
+      );
+    }
+    expect(
+      () => SharedTasks.parse(
+        jsonEncode({
+          'version': 1,
+          'launches': [valid, valid],
+        }),
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('coverage merges native line hits and rejects inconsistent incomplete or escaping reports', () {
     final report = NativeCoverage.parse(
       'SF:lib/example.dart\nDA:1,2\nDA:2,0\nLF:2\nLH:1\nend_of_record\n'

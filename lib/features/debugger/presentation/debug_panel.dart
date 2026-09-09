@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../projects/domain/project.dart';
+import '../../tasks/domain/project_task.dart';
+import '../../../core/cancellation.dart';
 import '../application/debug_service.dart';
 import '../application/debug_profiles.dart';
 import '../domain/debug_session.dart';
@@ -18,6 +21,7 @@ final class DebugPanel extends StatefulWidget {
     required this.onControl,
     required this.onSource,
     this.onDevTools,
+    this.onLoadProfiles,
     super.key,
   });
   final DebugService service;
@@ -28,6 +32,7 @@ final class DebugPanel extends StatefulWidget {
   final Future<void> Function(String) onControl;
   final Future<void> Function(String, int, int) onSource;
   final Future<void> Function()? onDevTools;
+  final Future<TaskConfiguration> Function()? onLoadProfiles;
   @override
   State<DebugPanel> createState() => _DebugPanelState();
 }
@@ -53,14 +58,140 @@ final class _DebugPanelState extends State<DebugPanel> {
   String profile = 'Script';
   String? device;
   List<FlutterDevice> devices = [];
+  FlutterDeviceDiscovery? _discovery;
+  Future<FlutterDeviceDiscovery>? _pendingDiscovery;
+  Cancellation? _discovering;
+  StreamSubscription<void>? _deviceEvents;
+  Future<void> _stopDiscovery() async {
+    _discovering?.cancel();
+    _discovering = null;
+    final events = _deviceEvents;
+    _deviceEvents = null;
+    final discovery = _discovery;
+    _discovery = null;
+    final pending = _pendingDiscovery;
+    _pendingDiscovery = null;
+    devices = [];
+    device = null;
+    // Retire native ownership immediately. Queued notifications already fail
+    // the identity check and do not need to drain before the child is stopped.
+    final stopped = discovery?.close();
+    await events?.cancel();
+    await stopped;
+    if (pending != null) {
+      try {
+        await (await pending).close();
+      } catch (_) {
+        /* Cancelled startup reaps its child. */
+      }
+    }
+  }
+
+  Future<void> _discoverDevices() async {
+    final project = widget.project;
+    final tools = widget.tools;
+    await _stopDiscovery();
+    if (!mounted ||
+        !identical(project, widget.project) ||
+        !identical(tools, widget.tools)) {
+      return;
+    }
+    final cancellation = _discovering = Cancellation();
+    final pending = _pendingDiscovery = widget.service.adapters.watchDevices(
+      project,
+      tools,
+      cancellation,
+    );
+    late final FlutterDeviceDiscovery discovery;
+    try {
+      discovery = await pending;
+    } finally {
+      if (identical(_pendingDiscovery, pending)) _pendingDiscovery = null;
+    }
+    if (!mounted ||
+        cancellation.isCancelled ||
+        !identical(tools, widget.tools) ||
+        !identical(project, widget.project)) {
+      await discovery.close();
+      return;
+    }
+    _discovery = discovery;
+    void update() {
+      if (!mounted || !identical(_discovery, discovery)) return;
+      setState(() {
+        devices = discovery.devices;
+        if (!devices.any((current) => current.id == device)) device = null;
+        if (discovery.error != null) error = discovery.error;
+      });
+    }
+
+    _deviceEvents = discovery.changes.listen((_) => update());
+    update();
+  }
+
+  @override
+  void didUpdateWidget(DebugPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.project, widget.project) ||
+        !identical(oldWidget.tools, widget.tools)) {
+      unawaited(_stopDiscovery());
+    }
+  }
+
   bool busy = false;
   bool noDebug = false;
+  TaskConfiguration? sharedProfiles;
+  String? sharedProfileName;
+  Future<void> _loadProfiles() async {
+    final project = widget.project;
+    final tools = widget.tools;
+    final configuration = await widget.onLoadProfiles!();
+    if (!mounted ||
+        !identical(project, widget.project) ||
+        !identical(tools, widget.tools)) {
+      return;
+    }
+    setState(() {
+      sharedProfiles = configuration;
+      sharedProfileName = null;
+    });
+  }
+
+  void _useProfile(ProjectLaunchProfile launch) {
+    if (launch.profile != 'Script' &&
+            widget.project.kind != ProjectKind.python ||
+        widget.project.kind != ProjectKind.flutter &&
+            (launch.flavor != null || launch.flutterMode != 'debug')) {
+      throw const DebugFailure(
+        'This launch profile does not match the selected project type.',
+      );
+    }
+    setState(() {
+      sharedProfileName = launch.name;
+      program.text = launch.program;
+      directory.text = launch.directory;
+      arguments.text = jsonEncode(launch.arguments);
+      toolArguments.text = jsonEncode(launch.toolArguments);
+      profile = launch.profile;
+      flavor.text = launch.flavor ?? '';
+      flutterMode = launch.flutterMode;
+      port.text = '${launch.port}';
+      noDebug = launch.noDebug;
+      attach = false;
+      attachEndpoint.clear();
+      environment.text = '{}';
+      breakpoints.clear();
+      conditions.text = '{}';
+    });
+  }
+
   String? error;
   String? evaluation;
   int? evaluationStop;
   int? evaluationFrame;
   @override
   void dispose() {
+    unawaited(_stopDiscovery());
     program.dispose();
     arguments.dispose();
     breakpoints.dispose();
@@ -147,6 +278,9 @@ final class _DebugPanelState extends State<DebugPanel> {
       toolArguments: toolArgs.cast<String>(),
       flavor: flavor.text.trim().isEmpty ? null : flavor.text.trim(),
       flutterMode: flutterMode,
+      sharedConfigurationSource: sharedProfileName == null
+          ? null
+          : sharedProfiles?.source,
       breakpoints: lines.isEmpty
           ? {}
           : {
@@ -205,6 +339,29 @@ final class _DebugPanelState extends State<DebugPanel> {
               error!,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
+          if (widget.onLoadProfiles != null) ...[
+            OutlinedButton(
+              onPressed: busy || service.active
+                  ? null
+                  : () => _act(_loadProfiles),
+              child: const Text('Load shared launch profiles'),
+            ),
+            if (sharedProfiles != null) ...[
+              if (sharedProfiles!.launches.isEmpty)
+                const Text('No launch profiles in .tabryo/project.json.'),
+              for (final launch in sharedProfiles!.launches)
+                TextButton(
+                  onPressed: busy || service.active
+                      ? null
+                      : () => _act(() async => _useProfile(launch)),
+                  child: Text('Use ${launch.name}'),
+                ),
+            ],
+            if (sharedProfileName != null)
+              Text(
+                'Loaded profile: $sharedProfileName · review before starting',
+              ),
+          ],
           if (widget.project.kind == ProjectKind.python)
             DropdownButton<String>(
               value: profile,
@@ -348,24 +505,14 @@ final class _DebugPanelState extends State<DebugPanel> {
               onChanged: (value) => service.setReloadOnSave(value!),
             ),
             OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () => _act(() async {
-                      final result = await service.adapters.devices(
-                        widget.project,
-                        widget.tools,
-                      );
-                      if (mounted) {
-                        setState(() {
-                          devices = result;
-                          if (!devices.any((d) => d.id == device)) {
-                            device = null;
-                          }
-                        });
-                      }
-                    }),
+              onPressed: busy ? null : () => _act(_discoverDevices),
               child: const Text('Discover Flutter devices'),
             ),
+            if (_discovery != null || _discovering != null)
+              TextButton(
+                onPressed: () => _act(_stopDiscovery),
+                child: const Text('Stop device discovery'),
+              ),
             if (devices.isNotEmpty)
               DropdownButton<String>(
                 value: device,

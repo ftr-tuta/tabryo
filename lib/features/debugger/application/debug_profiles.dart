@@ -18,6 +18,7 @@ DebugConfiguration debugProfile({
   Uri? attachUri,
   String? flavor,
   String flutterMode = 'debug',
+  String? sharedConfigurationSource,
   Map<String, List<DebugBreakpoint>> breakpoints = const {},
 }) {
   if (!['Script', 'Django', 'FastAPI'].contains(profile) ||
@@ -73,6 +74,7 @@ DebugConfiguration debugProfile({
     toolArguments: toolArguments,
     flavor: flavor,
     flutterMode: flutterMode,
+    sharedConfigurationSource: sharedConfigurationSource,
     breakpoints: breakpoints,
   );
 }

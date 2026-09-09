@@ -216,7 +216,8 @@ final class DebugService {
       }
     else if (config.isAttach)
       'vmServiceUri': config.attachUri.toString(),
-    if (!config.isAttach && config.pythonModule == null)
+    if ((!config.isAttach || config.project.kind == ProjectKind.flutter) &&
+        config.pythonModule == null)
       'program': config.program
     else if (!config.isAttach)
       'module': config.pythonModule,

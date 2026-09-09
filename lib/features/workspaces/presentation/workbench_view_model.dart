@@ -1035,6 +1035,14 @@ final class WorkbenchViewModel extends DartitectViewModel {
       await projects!.environment.validateProject(config.project);
       await projects!.environment.validateSelection(config.tools);
       await _checkProjectDocuments(config.project.directory);
+      if (config.sharedConfigurationSource != null &&
+          (tasks == null ||
+              (await tasks!.files.readConfiguration(config.project)).source !=
+                  config.sharedConfigurationSource)) {
+        throw const DebugFailure(
+          'The shared launch configuration changed. Load and review the profile again.',
+        );
+      }
       if (_shutdown ||
           !workspaces.contains(owner) ||
           !identical(chosen, projects!.selections[config.project.id])) {

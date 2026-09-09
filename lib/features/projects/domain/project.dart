@@ -100,6 +100,32 @@ final class ProjectCommand {
   final bool createsEnvironment;
 }
 
+/// Portable launch choices. SDK paths, device IDs and secrets stay local.
+final class ProjectLaunchProfile {
+  const ProjectLaunchProfile({
+    required this.name,
+    required this.program,
+    this.profile = 'Script',
+    this.directory = '.',
+    this.arguments = const [],
+    this.toolArguments = const [],
+    this.flavor,
+    this.flutterMode = 'debug',
+    this.noDebug = false,
+    this.port = 8000,
+  });
+  final String name;
+  final String program;
+  final String profile;
+  final String directory;
+  final List<String> arguments;
+  final List<String> toolArguments;
+  final String? flavor;
+  final String flutterMode;
+  final bool noDebug;
+  final int port;
+}
+
 final class ProjectFailure implements Exception {
   const ProjectFailure(this.message);
   final String message;

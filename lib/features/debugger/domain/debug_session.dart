@@ -31,6 +31,7 @@ final class DebugConfiguration {
     this.workingDirectory,
     this.flavor,
     this.flutterMode = 'debug',
+    this.sharedConfigurationSource,
     List<String> arguments = const [],
     List<String> toolArguments = const [],
     Map<String, String> environment = const {},
@@ -57,6 +58,7 @@ final class DebugConfiguration {
   String get directory => workingDirectory ?? project.directory;
   final String? flavor;
   final String flutterMode;
+  final String? sharedConfigurationSource;
   final List<String> arguments;
   final List<String> toolArguments;
   final Map<String, String> environment;
@@ -96,11 +98,23 @@ final class FlutterDevice {
   final String platform;
 }
 
+abstract interface class FlutterDeviceDiscovery {
+  List<FlutterDevice> get devices;
+  String? get error;
+  Stream<void> get changes;
+  Future<void> close();
+}
+
 abstract interface class DebugAdapters {
   Future<DebugConnection> start(DebugConfiguration configuration);
   Future<List<FlutterDevice>> devices(
     DevelopmentProject project,
     ToolchainSelection tools,
+  );
+  Future<FlutterDeviceDiscovery> watchDevices(
+    DevelopmentProject project,
+    ToolchainSelection tools,
+    Cancellation cancellation,
   );
   Future<DebugTools> devTools(
     DebugConfiguration configuration,

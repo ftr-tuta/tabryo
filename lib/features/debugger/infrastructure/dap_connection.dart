@@ -10,6 +10,7 @@ import '../../../core/cancellation.dart';
 import '../domain/debug_session.dart';
 import 'debug_process.dart';
 import 'local_devtools.dart';
+import 'local_flutter_devices.dart';
 
 final class DapFramer {
   static const limit = 4 * 1024 * 1024;
@@ -427,50 +428,45 @@ final class LocalDebugAdapters implements DebugAdapters {
     DevelopmentProject project,
     ToolchainSelection tools,
   ) async {
+    final discovery = await watchDevices(project, tools, Cancellation());
+    try {
+      return discovery.devices;
+    } finally {
+      await discovery.close();
+    }
+  }
+
+  @override
+  Future<FlutterDeviceDiscovery> watchDevices(
+    DevelopmentProject project,
+    ToolchainSelection tools,
+    Cancellation cancellation,
+  ) async {
     if (project.kind != ProjectKind.flutter) {
       throw const DebugFailure('Device discovery requires Flutter.');
     }
-    final launch = command(project, tools, 'devices');
+    cancellation.check();
+    final launch = command(project, tools, 'daemon');
     await _validate(project, launch.executable);
-    final child = await DebugProcess.start(launch.executable, [
-      ...launch.arguments,
-      '--machine',
-    ], project.directory);
-    final errors = child.process.stderr.listen((_) {});
+    cancellation.check();
+    final child = await DebugProcess.start(
+      launch.executable,
+      launch.arguments,
+      project.directory,
+    );
+    final discovery = LocalFlutterDevices(
+      child.process.stdout,
+      child.process.stdin.add,
+      child.close,
+      errors: child.process.stderr,
+    );
+    unawaited(child.process.stdin.done.catchError((Object _) {}));
     try {
-      final bytes = <int>[];
-      await for (final chunk in child.process.stdout.timeout(
-        const Duration(seconds: 60),
-      )) {
-        bytes.addAll(chunk);
-        if (bytes.length > 512 * 1024) {
-          throw const DebugFailure('Device discovery output limit.');
-        }
-      }
-      if (await child.process.exitCode != 0) {
-        throw const DebugFailure(
-          'Flutter device discovery failed. Check the selected SDK.',
-        );
-      }
-      final value = jsonDecode(utf8.decode(bytes));
-      if (value is! List || value.length > 100) {
-        throw const DebugFailure('Invalid Flutter device list.');
-      }
-      return [
-        for (final item in value)
-          if (item is Map &&
-              item['id'] is String &&
-              item['name'] is String &&
-              item['isSupported'] != false)
-            FlutterDevice(
-              item['id'] as String,
-              item['name'] as String,
-              '${item['targetPlatform'] ?? ''}',
-            ),
-      ];
-    } finally {
-      await child.close();
-      await errors.cancel();
+      await discovery.initialize(cancellation);
+      return discovery;
+    } catch (_) {
+      await discovery.close();
+      rethrow;
     }
   }
 }

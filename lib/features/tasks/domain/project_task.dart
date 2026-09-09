@@ -90,9 +90,10 @@ final class SharedTask {
 }
 
 final class TaskConfiguration {
-  const TaskConfiguration(this.source, this.tasks);
+  const TaskConfiguration(this.source, this.tasks, {this.launches = const []});
   final String source;
   final List<SharedTask> tasks;
+  final List<ProjectLaunchProfile> launches;
 }
 
 final class ProjectTask {

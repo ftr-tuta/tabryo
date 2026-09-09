@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import 'package:dtd/dtd.dart';
 import 'package:vm_service/vm_service_io.dart';
 import 'package:path/path.dart' as p;
@@ -19,12 +20,387 @@ import 'package:tabryo/features/debugger/application/debug_profiles.dart';
 import 'package:tabryo/features/debugger/domain/debug_session.dart';
 import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
 import 'package:tabryo/features/debugger/infrastructure/debug_process.dart';
+import 'package:tabryo/features/debugger/infrastructure/local_flutter_devices.dart';
+import 'package:tabryo/features/debugger/presentation/debug_panel.dart';
 import 'package:tabryo/features/projects/domain/project.dart';
+import 'package:tabryo/features/tasks/application/shared_tasks.dart';
+import 'package:tabryo/features/tasks/infrastructure/local_task_files.dart';
+import 'package:tabryo/features/tasks/presentation/tasks_view_model.dart';
+import 'package:tabryo/features/tasks/domain/project_task.dart';
 
 import 'workbench_test.dart'
     show MemoryHost, MemoryLauncher, MemoryFiles, NoGit, MemoryPreferences;
+import 'projects_test.dart' show runSetupCommand;
 
 void main() {
+  // This suite exercises real loopback servers as well as widgets. Widget
+  // binding initialization installs a global HTTP mock; native protocols must
+  // use dart:io transport even when those widget tests are filtered out.
+  setUp(() {
+    HttpOverrides.global = null;
+  });
+  test(
+    'changed shared launch configuration blocks the adapter before execution',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('tabryo_launch_');
+      addTearDown(() => directory.delete(recursive: true));
+      final root = await directory.resolveSymbolicLinks();
+      await File(p.join(root, 'pubspec.yaml'))
+          .writeAsString('name: launch_example\n');
+      final source = await File(p.join(root, 'main.dart'))
+          .writeAsString('void main() {}');
+      final config = File(p.join(root, '.tabryo', 'project.json'));
+      await config.parent.create();
+      final text = jsonEncode({
+        'version': 1,
+        'launches': [
+          {'name': 'Application', 'program': 'main.dart'},
+        ],
+      });
+      await config.writeAsString(text);
+      final project = DevelopmentProject(
+        workspace: root,
+        directory: root,
+        name: 'Launch',
+        kind: ProjectKind.dart,
+      );
+      final tools = ToolchainSelection({
+        ProjectTool.dart: p.join(
+          Platform.environment['FLUTTER_ROOT']!,
+          'bin',
+          'cache',
+          'dart-sdk',
+          'bin',
+          Platform.isWindows ? 'dart.exe' : 'dart',
+        ),
+      });
+      final files = LocalTaskFiles();
+      final captured = await files.readConfiguration(project);
+      final projects = ProjectsViewModel(LocalProjectEnvironment());
+      final adapters = MemoryAdapters();
+      final service = DebugService(adapters);
+      final git = NoGit();
+      final workbench = WorkbenchViewModel(
+        host: MemoryHost(),
+        launcher: MemoryLauncher(),
+        files: MemoryFiles(),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: MemoryPreferences(),
+        projects: projects,
+        debugger: service,
+        tasks: TasksViewModel(files, windows: Platform.isWindows),
+      );
+      addTearDown(workbench.shutdown);
+      await workbench.openWorkspace(root);
+      projects.selections[project.id] = tools;
+      final launch = debugProfile(
+        project: project,
+        tools: tools,
+        program: source.path,
+        sharedConfigurationSource: captured.source,
+      );
+      await config.writeAsString('$text\n');
+      await expectLater(
+        workbench.startDebugger(launch),
+        throwsA(isA<DebugFailure>()),
+      );
+      expect(adapters.starts, 0);
+      await config.writeAsString(text);
+      await workbench.startDebugger(launch);
+      expect(adapters.starts, 1);
+    },
+  );
+
+  testWidgets(
+    'shared launch profiles load explicitly and require native launch review',
+    (tester) async {
+      final service = (await tester.runAsync(
+        () async => DebugService(MemoryAdapters()),
+      ))!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(service.dispose);
+      });
+      final root = p.absolute('launch_ui');
+      final project = DevelopmentProject(
+        workspace: root,
+        directory: root,
+        name: 'Backend',
+        kind: ProjectKind.python,
+      );
+      final starts = <DebugConfiguration>[];
+      var loads = 0;
+      final profiles = SharedTasks.parse(
+        jsonEncode({
+          'version': 1,
+          'launches': [
+            {
+              'name': 'Django local',
+              'profile': 'Django',
+              'program': 'manage.py',
+              'directory': '.',
+              'port': 8123,
+            },
+          ],
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: DebugPanel(
+                service: service,
+                project: project,
+                tools: ToolchainSelection(),
+                onStart: (config) async => starts.add(config),
+                onStop: () async {},
+                onControl: (_) async {},
+                onSource: (_, _, _) async {},
+                onLoadProfiles: () async {
+                  loads++;
+                  return profiles;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(loads, 0);
+      expect(starts, isEmpty);
+      await tester.ensureVisible(find.text('Load shared launch profiles'));
+      await tester.tap(find.text('Load shared launch profiles'));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+      await tester.tap(find.text('Use Django local'));
+      await tester.pumpAndSettle();
+      expect(find.text('manage.py'), findsOneWidget);
+      expect(starts, isEmpty);
+      await tester.ensureVisible(find.text('Review run / debug'));
+      await tester.tap(find.text('Review run / debug'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('8123'), findsWidgets);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(starts, isEmpty);
+      await tester.ensureVisible(find.text('Review run / debug'));
+      await tester.tap(find.text('Review run / debug'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start reviewed session'));
+      await tester.pumpAndSettle();
+      expect(starts.single.arguments, [
+        'runserver',
+        '127.0.0.1:8123',
+        '--noreload',
+      ]);
+      expect(starts.single.sharedConfigurationSource, profiles.source);
+    },
+  );
+
+  test('Flutter daemon applies fragmented device events after the initial snapshot and reaps disconnects', () async {
+    final output = StreamController<List<int>>();
+    final requests = <Map>[];
+    var closes = 0;
+    final discovery = LocalFlutterDevices(
+      output.stream,
+      (bytes) {
+        final request = (jsonDecode(utf8.decode(bytes)) as List).single as Map;
+        requests.add(request);
+        if (request['method'] == 'device.enable') {
+          output.add(
+            utf8.encode(
+              '${jsonEncode([
+                {'id': request['id'], 'result': null},
+              ])}\n',
+            ),
+          );
+        }
+      },
+      () async {
+        closes++;
+      },
+    );
+    addTearDown(() async {
+      await discovery.close();
+      await output.close();
+    });
+    final initialized = discovery.initialize(Cancellation());
+    await _until(() => requests.length == 2);
+    final removed = {'id': 'old', 'name': 'Old', 'platform': 'windows'};
+    final added = {'id': 'new', 'name': 'ação 🌱', 'platform': 'linux'};
+    final messages = utf8.encode(
+      'SDK startup notice\n${jsonEncode([
+        {'event': 'device.removed', 'params': removed},
+        {'event': 'device.added', 'params': added},
+        {
+          'id': requests.last['id'],
+          'result': [removed],
+        },
+      ])}\n',
+    );
+    for (final byte in messages) {
+      output.add([byte]);
+    }
+    await initialized;
+    expect(requests.map((request) => request['method']), [
+      'device.enable',
+      'device.getDevices',
+    ]);
+    expect(discovery.devices.single.name, 'ação 🌱');
+    final change = discovery.changes.first;
+    output.add(
+      utf8.encode(
+        '${jsonEncode([
+          {
+            'event': 'device.removed',
+            'params': {'id': 'new'},
+          },
+        ])}\n',
+      ),
+    );
+    await change;
+    expect(discovery.devices, isEmpty);
+    final closed = discovery.changes.drain<void>();
+    output.add(utf8.encode('${'x' * (512 * 1024 + 1)}\n'));
+    await closed;
+    expect(discovery.error, contains('excessive'));
+    expect(closes, 1);
+  });
+
+  test('Flutter daemon cancellation drains startup and ignores late device messages', () async {
+    final output = StreamController<List<int>>();
+    var closes = 0;
+    final discovery = LocalFlutterDevices(output.stream, (_) {}, () async {
+      closes++;
+    });
+    addTearDown(() async {
+      await discovery.close();
+      await output.close();
+    });
+    final cancellation = Cancellation();
+    final rejected = expectLater(
+      discovery.initialize(cancellation),
+      throwsA(isA<DebugFailure>()),
+    );
+    cancellation.cancel();
+    await rejected;
+    expect(closes, 1);
+    output.add(
+      utf8.encode(
+        '[{"event":"device.added","params":{"id":"late","name":"Late","platform":"linux"}}]\n',
+      ),
+    );
+    expect(discovery.devices, isEmpty);
+  });
+
+  test('installed Flutter daemon discovers the desktop host and stops its owned connection', () async {
+    final directory = await Directory.systemTemp.createTemp('tabryo_devices_');
+    addTearDown(() => directory.delete(recursive: true));
+    final root = await directory.resolveSymbolicLinks();
+    final project = DevelopmentProject(
+      workspace: root,
+      directory: root,
+      name: 'Devices',
+      kind: ProjectKind.flutter,
+    );
+    final discovery = await LocalDebugAdapters().watchDevices(
+      project,
+      ToolchainSelection({
+        ProjectTool.flutter: Platform.environment['FLUTTER_ROOT']!,
+      }),
+      Cancellation(),
+    );
+    addTearDown(discovery.close);
+    expect(
+      discovery.devices.any(
+        (device) => device.id == (Platform.isWindows ? 'windows' : 'linux'),
+      ),
+      isTrue,
+    );
+    expect(discovery.error, isNull);
+    final closed = discovery.changes.drain<void>();
+    await discovery.close();
+    await closed;
+    expect(discovery.devices, isEmpty);
+  });
+
+  testWidgets(
+    'Flutter discovery is explicit, follows device changes and retires on SDK replacement',
+    (tester) async {
+      // Native service futures are created outside the widget fake clock, as
+      // they are in desktop composition. Their shutdown is real async work.
+      final adapters = (await tester.runAsync(() async => MemoryAdapters()))!;
+      final service = (await tester.runAsync(
+        () async => DebugService(adapters),
+      ))!;
+      final discovery = (await tester.runAsync(
+        () async => MemoryDeviceDiscovery(),
+      ))!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(() async {
+          await service.dispose();
+          await discovery.close();
+        });
+      });
+      adapters.deviceDiscovery = Future.value(discovery);
+      final project = DevelopmentProject(
+        workspace: p.absolute('devices'),
+        directory: p.absolute('devices'),
+        name: 'Devices',
+        kind: ProjectKind.flutter,
+      );
+      final tools = ToolchainSelection();
+      Future<void> show(ToolchainSelection selected) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: DebugPanel(
+                service: service,
+                project: project,
+                tools: selected,
+                onStart: (_) async {},
+                onStop: () async {},
+                onControl: (_) async {},
+                onSource: (_, _, _) async {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await show(tools);
+      expect(adapters.discoveries, 0);
+      await tester.ensureVisible(find.text('Discover Flutter devices'));
+      await tester.tap(find.text('Discover Flutter devices'));
+      await tester.pumpAndSettle();
+      expect(adapters.discoveries, 1);
+      discovery.devices = [const FlutterDevice('desktop', 'Desktop', 'linux')];
+      discovery.events.add(null);
+      await tester.pumpAndSettle();
+      final dropdown = find.byWidgetPredicate(
+        (widget) =>
+            widget is DropdownButton<String> &&
+            widget.items?.any((item) => item.value == 'desktop') == true,
+      );
+      expect(dropdown, findsOneWidget);
+      await tester.ensureVisible(dropdown);
+      await tester.tap(dropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Desktop · linux').last);
+      await tester.pumpAndSettle();
+      discovery.devices = [];
+      discovery.events.add(null);
+      await tester.pumpAndSettle();
+      expect(find.text('Desktop · linux'), findsNothing);
+      await show(ToolchainSelection({ProjectTool.flutter: '/new-sdk'}));
+      await tester.pumpAndSettle();
+      expect(discovery.closed, isTrue);
+      expect(adapters.devicesCancellation!.isCancelled, isTrue);
+      expect(find.text('Stop device discovery'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   test(
     'Inspector source locations reject remote, malformed and encoded NUL paths',
     () {
@@ -478,6 +854,95 @@ void main() {
       expect(service.active, isFalse);
       expect(service.dtdUri, isNull);
       await daemon.done.timeout(const Duration(seconds: 10));
+      final existing = await DebugProcess.start(dart, [
+        p.join(sdk, 'bin', 'cache', 'flutter_tools.snapshot'),
+        'run',
+        '--machine',
+        '--no-pub',
+        '-d',
+        platform,
+      ], root);
+      final endpoint = Completer<Uri>();
+      var existingExited = false;
+      unawaited(
+        existing.process.exitCode.then((_) {
+          existingExited = true;
+        }),
+      );
+      final errors = existing.process.stderr.listen((_) {});
+      final messages = existing.process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+            if (!RegExp(r'^\[\s*\{').hasMatch(line)) return;
+            final batch = jsonDecode(line);
+            if (batch is! List) return;
+            for (final event in batch.cast<Map>()) {
+              if (event['event'] == 'app.debugPort' && !endpoint.isCompleted) {
+                endpoint.complete(
+                  Uri.parse((event['params'] as Map)['wsUri'] as String),
+                );
+              }
+            }
+          });
+      try {
+        final uri = await endpoint.future.timeout(const Duration(minutes: 2));
+        final breakpoint =
+            (await source.readAsLines()).indexWhere(
+              (line) => line.contains("print('RELOADED_READY')"),
+            ) +
+            1;
+        expect(breakpoint, greaterThan(0));
+        await workbench.startDebugger(
+          debugProfile(
+            project: project,
+            tools: tools,
+            program: source.path,
+            attachUri: uri,
+            breakpoints: {
+              source.path: [DebugBreakpoint(breakpoint)],
+            },
+          ),
+        );
+        await _until(
+          () =>
+              service.vmService != null &&
+              service.status == DebugStatus.running &&
+              service.appStarted,
+          describe: () =>
+              'Flutter attach: ${service.status}, appStarted=${service.appStarted}, ${service.error}\n${service.output}',
+        );
+        // An idle isolate can legitimately have no stack. Exercise a verified
+        // project breakpoint during rebuild instead of expecting an idle stack.
+        final reloaded = service.control('hotReload');
+        await _until(
+          () =>
+              service.status == DebugStatus.paused && service.frames.isNotEmpty,
+          describe: () =>
+              'Flutter attach breakpoint: ${service.status}, ${service.stopReason}, ${service.error}, ${service.verifiedBreakpoints}',
+        );
+        expect(service.frames.first['source']['path'], source.path);
+        await service.control('continue');
+        await reloaded;
+        await service.stop();
+        expect(
+          existingExited,
+          isFalse,
+          reason: 'Detaching must preserve the externally owned Flutter app.',
+        );
+        final stillRunning = await vmServiceConnectUri(uri.toString())
+            .timeout(const Duration(seconds: 10));
+        try {
+          expect((await stillRunning.getVM()).isolates, isNotEmpty);
+        } finally {
+          await stillRunning.dispose();
+        }
+      } finally {
+        await service.stop();
+        await existing.close();
+        await messages.cancel();
+        await errors.cancel();
+      }
     },
     skip: Platform.environment['TABRYO_TEST_FLUTTER_DEBUG'] != '1',
     timeout: const Timeout(Duration(minutes: 5)),
@@ -591,6 +1056,42 @@ void main() {
         });
         await service.stop();
         expect(service.active, isFalse);
+        final testFile = await File(p.join(backend.path, 'test_api.py'))
+            .writeAsString(
+              profile == 'Django'
+                  ? 'import os, json, django\nos.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")\ndjango.setup()\n'
+                        'from django.test import RequestFactory\nfrom app.views import index\n'
+                        'def test_index(monkeypatch):\n    monkeypatch.setenv("BACKEND_SETTING", "configured")\n'
+                        '    result = index(RequestFactory().get("/"))\n'
+                        '    assert json.loads(result.content) == {"answer": 42, "setting": "configured", "directory": "backend"}\n'
+                  : 'import asyncio\nfrom main import index\n'
+                        'def test_index(monkeypatch):\n    monkeypatch.setenv("BACKEND_SETTING", "configured")\n'
+                        '    assert asyncio.run(index()) == {"answer": 42, "setting": "configured", "directory": "backend"}\n',
+            );
+        final tests = TasksViewModel(
+          LocalTaskFiles(),
+          windows: Platform.isWindows,
+        );
+        try {
+          final task = await tests.prepare(
+            DevelopmentProject(
+              workspace: root,
+              directory: backend.path,
+              name: profile,
+              kind: ProjectKind.python,
+            ),
+            tools,
+            ProjectTaskKind.test,
+            target: testFile.path,
+          );
+          tests.started(task, 1);
+          await runSetupCommand(task.command);
+          await tests.finished(task, 0);
+          expect(task.status, TaskStatus.passed);
+          expect(task.results!.cases.single.name, contains('test_index'));
+        } finally {
+          await tests.disposeAsync();
+        }
       },
       skip: Platform.environment['TABRYO_TEST_DEBUG_PYTHON'] != '1',
       timeout: const Timeout(Duration(minutes: 2)),
@@ -1063,7 +1564,27 @@ DebugConfiguration memoryConfiguration() => DebugConfiguration(
   program: '/workspace/main.dart',
 );
 
+final class MemoryDeviceDiscovery implements FlutterDeviceDiscovery {
+  @override
+  List<FlutterDevice> devices = [];
+  @override
+  String? error;
+  final events = StreamController<void>.broadcast();
+  @override
+  Stream<void> get changes => events.stream;
+  bool closed = false;
+  @override
+  Future<void> close() async {
+    if (closed) return;
+    closed = true;
+    await events.close();
+  }
+}
+
 final class MemoryAdapters implements DebugAdapters {
+  Future<FlutterDeviceDiscovery>? deviceDiscovery;
+  int discoveries = 0;
+  Cancellation? devicesCancellation;
   final connection = MemoryDebugConnection();
   final tools = MemoryDebugTools();
   final toolsReady = Completer<DebugTools>();
@@ -1081,6 +1602,20 @@ final class MemoryAdapters implements DebugAdapters {
     DevelopmentProject project,
     ToolchainSelection tools,
   ) async => [];
+  @override
+  Future<FlutterDeviceDiscovery> watchDevices(
+    DevelopmentProject project,
+    ToolchainSelection tools,
+    Cancellation cancellation,
+  ) async {
+    discoveries++;
+    devicesCancellation = cancellation;
+    return await (deviceDiscovery ??
+        Future.error(
+          const DebugFailure('No Flutter device discovery configured.'),
+        ));
+  }
+
   @override
   Future<DebugTools> devTools(
     DebugConfiguration configuration,
