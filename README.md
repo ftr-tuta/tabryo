@@ -1,7 +1,7 @@
 # Tabryo
 
 A local desktop workbench for shells, the installed Codex CLI, files, Git and
-worktrees. Target platforms: Windows 11 x64 and Ubuntu 24.04 x64.
+worktrees. Target platforms: Windows 11 x64, Ubuntu 24.04 x64 and Arch Linux x64.
 
 ## Install
 
@@ -18,6 +18,8 @@ Ubuntu 24.04 requires a graphical session and the GTK/OpenGL runtime:
 `sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libstdc++6 libgl1`.
 The [Ubuntu GTK package](https://packages.ubuntu.com/noble/libgtk-3-0t64)
 provides its dependent desktop libraries. Git and Codex are separate installations.
+Arch Linux uses the same Linux archive with `gtk3`, `webkit2gtk-4.1` and `mesa`
+from its official repositories (`sudo pacman -Syu gtk3 webkit2gtk-4.1 mesa`).
 
 Compare `Get-FileHash <archive> -Algorithm SHA256` on Windows or run
 `sha256sum --check SHA256SUMS` after downloading both archives on Linux.
@@ -61,16 +63,19 @@ ship inside the application and are served on a private loopback endpoint;
 editing needs no CDN or internet connection. The embedded surface hides during
 Flutter dialogs and inactive activities. Language intelligence can be started
 explicitly from **Projects and toolchains → Language intelligence**.
-The native editor scenario passes in Debug and Release on Windows and Ubuntu
-24.04, including reconnection and Dart formatting. The
-[desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/runs/34247734251)
-also passes terminal/workbench integration, packaging and extracted-bundle startup
-and shutdown on both platforms. Composition-aware synchronization waits for IME
+The [desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/workflows/desktop.yml)
+exercises the native editor in Debug and Release on Windows and Ubuntu 24.04,
+including reconnection and Dart formatting, terminal/workbench integration,
+packaging and extracted-bundle startup and shutdown. An Arch Linux container
+runs the same Linux Release editor, workbench and distribution binaries with
+current signed Arch packages, as an ordinary desktop user.
+Composition-aware synchronization waits for IME
 commit and preserves composing text when a host replacement arrives. Native
 tests exercise browser composition events and viewport dimensions. Linux GTK
 bounds convert physical pixels to logical coordinates, with a dedicated 200%
-scale CI case. Physical IME candidate windows and moving between monitors with
-different scales still need desktop acceptance; the full IDE matrix is unfinished.
+scale CI case. Automated composition and 100%/150%/200% geometry checks cover the
+input and positioning contracts. Physical IME candidate windows and moving
+between real monitors remain additional coverage, not prerequisites for release.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare
@@ -870,8 +875,11 @@ On Ubuntu install Flutter's Linux desktop dependencies plus `libwebkit2gtk-4.1-d
 `xdotool`; headless integration tests use `xvfb-run -a` and Openbox for native
 focus, minimization and shared-window behavior.
 The Desktop workflow runs the native tests and packages the entire Release
-bundle on both operating systems. Distribute every file in the bundle, not just
-the executable. Builds are unsigned.
+bundle on Windows and Ubuntu. Arch Linux then runs those Linux Release
+integration binaries at 100% and 200%, followed by the extracted distribution;
+this checks compatibility of the archive actually distributed. Its GTK/WebKit
+versions are recorded in the job output. Distribute every file in the bundle,
+not just the executable. Builds are unsigned.
 
 ## Limits and release status
 
@@ -884,7 +892,8 @@ startup of extracted bundles without child processes. See the
 
 Real Codex CLI interaction was accepted on Windows 11: TUI, accented input,
 resizing, an approval interaction and Ctrl+C. Linux validation is automated on
-Ubuntu 24.04 with Xvfb; it is not manual desktop or authenticated Codex acceptance.
+Ubuntu 24.04 and Arch Linux with Xvfb. These checks qualify the automated release
+matrix without claiming manual desktop or authenticated Codex acceptance.
 
 Release observations on Windows 11 (Flutter 3.47.2, September 2026): the actual
 empty app used 104.7 MiB working set. The Release desktop integration entrypoint

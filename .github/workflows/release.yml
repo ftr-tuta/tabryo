@@ -34,7 +34,7 @@ jobs:
           git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"
           run_id="$(gh run list --workflow Desktop --branch main --event push --commit "$candidate" --status success --json databaseId --jq '.[0].databaseId')"
           test -n "$run_id" && test "$run_id" != null
-          gh run download "$run_id" --dir "$RUNNER_TEMP/bundles"
+          gh run download "$run_id" --name "tabryo-windows-$candidate" --name "tabryo-linux-$candidate" --dir "$RUNNER_TEMP/bundles"
           mkdir "$RUNNER_TEMP/release"
           cp "$RUNNER_TEMP/bundles/tabryo-windows-$candidate/tabryo-0.1.0-windows-x64.zip" "$RUNNER_TEMP/release/"
           cp "$RUNNER_TEMP/bundles/tabryo-linux-$candidate/tabryo-0.1.0-linux-x64.tar.gz" "$RUNNER_TEMP/release/"
