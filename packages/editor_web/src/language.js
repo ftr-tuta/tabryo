@@ -21,7 +21,7 @@ export function installLanguage(editor, documents, emit, snapshot) {
   });
   function request(model, method, params = {}, cancellation, stillValid) {
     const doc = docFor(model);
-    if (!doc || !doc.languageEnabled || pending.size >= 32 || cancellation?.isCancellationRequested) return Promise.resolve(null);
+    if (!doc || doc.composition || doc.repair || !doc.languageEnabled || pending.size >= 32 || cancellation?.isCancellationRequested) return Promise.resolve(null);
     emit(snapshot(doc));
     const request = ++sequence;
     return new Promise(resolve => {

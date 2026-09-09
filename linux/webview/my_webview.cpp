@@ -277,11 +277,15 @@ MyWebView::~MyWebView() {
 }
 
 void MyWebView::updateBounds(RECT& bounds) {
-    //g_print("=====> updateBounds: (%d, %d), %d x %d\n", bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
-    int width = bounds.right - bounds.left;
-    int height = bounds.bottom - bounds.top;
-    gtk_fixed_move(GTK_FIXED(m_container), m_webview, bounds.left, bounds.top); // left-top
-    gtk_widget_set_size_request(m_webview, width, height); // width-height
+    // The Flutter plugin sends device pixels; GTK positions and allocations use
+    // window coordinates. Convert at every update, including monitor changes.
+    const int scale = MAX(1, gtk_widget_get_scale_factor(m_container));
+    const int left = bounds.left / scale;
+    const int top = bounds.top / scale;
+    const int width = MAX(0, bounds.right / scale - left);
+    const int height = MAX(0, bounds.bottom / scale - top);
+    gtk_fixed_move(GTK_FIXED(m_container), m_webview, left, top);
+    gtk_widget_set_size_request(m_webview, width, height);
 }
 
 void MyWebView::enableJavascript(bool bEnable) {

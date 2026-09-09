@@ -65,8 +65,12 @@ The native editor scenario passes in Debug and Release on Windows and Ubuntu
 24.04, including reconnection and Dart formatting. The
 [desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/runs/34247734251)
 also passes terminal/workbench integration, packaging and extracted-bundle startup
-and shutdown on both platforms. IME/DPI acceptance and the remaining IDE
-integrations are still open; the complete Python/Dart/Flutter matrix is unfinished.
+and shutdown on both platforms. Composition-aware synchronization waits for IME
+commit and preserves composing text when a host replacement arrives. Native
+tests exercise browser composition events and viewport dimensions. Linux GTK
+bounds convert physical pixels to logical coordinates, with a dedicated 200%
+scale CI case. Physical IME candidate windows and moving between monitors with
+different scales still need desktop acceptance; the full IDE matrix is unfinished.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare
@@ -406,6 +410,10 @@ and saved/unsaved state. Publishing creates a temporary loopback Streamable HTTP
 endpoint with a unique bearer credential. **Copy MCP connection** copies its URL
 and Authorization header; **Copy context for Codex** copies the reviewed snapshot
 for explicit pasting. Later typing is not transmitted automatically.
+**Include captured diagnostics** adds up to 50 diagnostics (64 KiB), restricted
+to ranges fully inside the excerpt. Review their messages, server/source, codes
+and document versions with the text. A null diagnostic version means the server
+did not report one; these captured results are not a live diagnostic feed.
 
 MCP clients can read `tabryo://editor/context` or call `editor_context`, submit
 `propose_replacement` with the snapshot ID and a retry-safe client ID, and inspect
@@ -416,8 +424,8 @@ the proposal. Up to eight proposals are retained per share.
 
 **Revoke editor context**, closing the source document, changing workspace and
 closing Tabryo revoke the endpoint. Clients cannot browse arbitrary files or
-apply edits through MCP. The endpoint is local and temporary; remote exposure,
-diagnostic sharing and graphical agent conversations remain outside this slice.
+apply edits through MCP. The endpoint is local and temporary; remote exposure and
+graphical agent conversations remain outside this slice.
 Native tests cover authentication, revocation, stale edits, real Codex MCP calls
 and Monaco review/undo without invoking a model.
 

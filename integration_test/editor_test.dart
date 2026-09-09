@@ -231,7 +231,7 @@ void main() {
               .runJavaScriptReturningResult('''
             JSON.stringify({document: document.readyState,
               channel: typeof window.tabryoBridge,
-              page: location.href.split('#')[0],
+              origin: location.origin,
               receiver: typeof window.tabryoReceive,
               failures: window.editorFailures ?? []})
           ''')
@@ -245,19 +245,17 @@ void main() {
       debugPrint(
         'Native editor: surface ready; checking keyboard and clipboard',
       );
-      if (Platform.isWindows) {
-        // The page owns its WebView2 bridge; reloading must keep the native
-        // callback working without waiting for injected document scripts.
-        await browser.runJavaScript(
-          'window.editorBeforeReload = true; location.reload()',
-        );
-        await expectWeb(
-          tester,
-          browser,
-          "!window.editorBeforeReload && typeof window.tabryoBridge?.postMessage === 'function' && (document.querySelector('.view-lines')?.textContent.includes('main') ?? false)",
-          true,
-        );
-        await until(tester, () => state.surfaceVisible);
+      final surfaceSize = tester.getSize(find.byType(WinWebViewWidget));
+      final pixelRatio = tester.view.devicePixelRatio;
+      await expectWeb(
+        tester,
+        browser,
+        'Math.abs(innerWidth * devicePixelRatio - ${surfaceSize.width * pixelRatio}) <= 3 && '
+        'Math.abs(innerHeight * devicePixelRatio - ${surfaceSize.height * pixelRatio}) <= 3',
+        true,
+      );
+      if (Platform.environment['GDK_SCALE'] == '2') {
+        expect(pixelRatio, 2);
       }
       if (Platform.isWindows) {
         focusTestWindow();
@@ -327,6 +325,65 @@ void main() {
       editor.undoBuffer(buffer);
       await until(tester, () => buffer.controller.text != edited);
       editor.redoBuffer(buffer);
+      await until(tester, () => buffer.controller.text == edited);
+      debugPrint(
+        'Native editor: composing text defers synchronization until commit',
+      );
+      await browser.runJavaScript("""
+        (() => {
+          const input = document.querySelector('textarea');
+          input.focus();
+          input.dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+          input.dispatchEvent(new CompositionEvent('compositionupdate', {bubbles: true, data: '日本語'}));
+        })();
+      """);
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.view-lines')?.textContent.includes('日本語') ?? false",
+        true,
+      );
+      expect(buffer.controller.text, edited);
+      var flushedComposition = false;
+      final compositionFlush = editor.synchronizeBuffer(buffer).then((value) {
+        flushedComposition = value;
+        return value;
+      });
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(flushedComposition, isFalse);
+      await browser.runJavaScript(
+        "document.querySelector('textarea').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: '日本語'}));",
+      );
+      expect(await compositionFlush, isTrue);
+      expect(buffer.controller.text, contains('日本語'));
+      editor.undoBuffer(buffer);
+      await until(tester, () => buffer.controller.text == edited);
+      await browser.runJavaScript("""
+        (() => {
+          const input = document.querySelector('textarea');
+          input.focus();
+          input.dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+          input.dispatchEvent(new CompositionEvent('compositionupdate', {bubbles: true, data: '字'}));
+        })();
+      """);
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.view-lines')?.textContent.includes('字') ?? false",
+        true,
+      );
+      buffer.controller.text = 'replacement during composition';
+      editor.select(buffer);
+      await tester.pump(const Duration(milliseconds: 100));
+      await browser.runJavaScript(
+        "document.querySelector('textarea').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: '字'}));",
+      );
+      await until(tester, () => buffer.reviewRequired);
+      expect(buffer.controller.text, contains('字'));
+      expect(buffer.controller.text, isNot('replacement during composition'));
+      expect(await editor.save(buffer), isFalse);
+      editor.keepLocalEdits(buffer);
+      editor.undoBuffer(buffer);
       await until(tester, () => buffer.controller.text == edited);
       debugPrint('Native editor: reviewing an MCP excerpt and replacement');
       await tester.tap(find.byTooltip('Document actions'));

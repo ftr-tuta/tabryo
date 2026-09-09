@@ -34,6 +34,7 @@ final class EditorContextService {
       );
     }
     if (utf8.encode(value.text).length > 512 * 1024 ||
+        utf8.encode(jsonEncode(value.toJson())).length > 4 * 1024 * 1024 ||
         utf8.decode(utf8.encode(value.text)) != value.text ||
         value.end - value.start != value.text.length) {
       throw const EditorContextFailure(

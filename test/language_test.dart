@@ -3,15 +3,19 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart' show TextSelection;
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/cancellation.dart';
 import 'package:tabryo/core/preview_cache.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
+import 'package:tabryo/features/editor_context/application/editor_context_service.dart';
 import 'package:tabryo/features/language/application/language_service.dart';
 import 'package:tabryo/features/language/domain/language_server.dart';
 import 'package:tabryo/features/language/infrastructure/lsp_connection.dart';
 import 'package:tabryo/features/language/infrastructure/local_language_sources.dart';
+
+import 'editor_context_test.dart' show MemoryContextTransport;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -315,6 +319,7 @@ void main() {
       final editor = EditorViewModel(
         LocalDocumentFiles(PreviewCache()),
         language: service,
+        contextSharing: EditorContextService(MemoryContextTransport()),
         languageSources: LocalLanguageSources(
           LocalDocumentFiles(PreviewCache()),
         ),
@@ -341,6 +346,29 @@ void main() {
           (d) => '${d.diagnostic['message']}'.contains('missingName'),
         ),
       );
+      final plainContext = await editor.prepareContext(wholeDocument: true);
+      expect(plainContext.toJson().containsKey('diagnostics'), isFalse);
+      final diagnosticContext = await editor.prepareContext(
+        wholeDocument: true,
+        includeDiagnostics: true,
+      );
+      final diagnostic = diagnosticContext.diagnostics.firstWhere(
+        (d) => d.message.contains('missingName'),
+      );
+      expect(diagnostic.server, startsWith('dart:'));
+      expect(diagnostic.code, isNotEmpty);
+      expect(diagnostic.version, anyOf(isNull, buffer.version));
+      expect(diagnosticContext.toJson()['diagnostics'], isNotEmpty);
+      buffer.controller.selection = const TextSelection(
+        baseOffset: 0,
+        extentOffset: 14,
+      );
+      final selectedContext = await editor.prepareContext(
+        wholeDocument: false,
+        includeDiagnostics: true,
+      );
+      expect(selectedContext.diagnostics, isEmpty);
+      expect(diagnosticContext.diagnostics, contains(diagnostic));
       expect(await file.readAsString(), 'void main() {}\n');
       final version = buffer.version;
       final definition = await editor.languageRequest(

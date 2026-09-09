@@ -88,6 +88,13 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded
+      - name: Linux HiDPI editor integration
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: xvfb-run -a -s '-screen 0 2560x1600x24' flutter test integration_test/editor_test.dart -d linux --reporter expanded
+        env:
+          GDK_SCALE: '2'
+          GDK_DPI_SCALE: '0.5'
       - name: Linux Release editor integration
         if: runner.os == 'Linux'
         timeout-minutes: 5

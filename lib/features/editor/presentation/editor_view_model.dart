@@ -84,6 +84,7 @@ final class EditorViewModel extends DartitectViewModel {
 
   Future<EditorContextSnapshot> prepareContext({
     required bool wholeDocument,
+    bool includeDiagnostics = false,
   }) async {
     final buffer = active;
     if (_closed ||
@@ -106,6 +107,49 @@ final class EditorViewModel extends DartitectViewModel {
         'Select text, or choose to share the whole document.',
       );
     }
+    final diagnostics = <EditorContextDiagnostic>[];
+    var diagnosticBytes = 0;
+    var limited = false;
+    if (includeDiagnostics) {
+      for (final problem in language?.problems ?? <LanguageProblem>[]) {
+        if (problem.workspace != buffer.root ||
+            problem.path != buffer.path ||
+            (problem.version != null && problem.version != buffer.version)) {
+          continue;
+        }
+        try {
+          final value = problem.diagnostic;
+          final range = value['range'] as Map;
+          final from = languageOffset(text, range['start'] as Map);
+          final to = languageOffset(text, range['end'] as Map);
+          if (from < start || to > end || to < from) continue;
+          final diagnostic = EditorContextDiagnostic(
+            server: problem.server,
+            source: value['source'] is String
+                ? value['source'] as String
+                : null,
+            code: value['code'] is String || value['code'] is int
+                ? value['code'].toString()
+                : null,
+            message: value['message'] as String,
+            start: from,
+            end: to,
+            version: problem.version,
+            severity: value['severity'] as int?,
+          );
+          final bytes = utf8.encode(jsonEncode(diagnostic.toJson())).length;
+          if (diagnostics.length == 50 || diagnosticBytes + bytes > 64 * 1024) {
+            limited = true;
+            break;
+          }
+          diagnosticBytes += bytes;
+          diagnostics.add(diagnostic);
+        } on LanguageFailure {
+          // An unversioned diagnostic may refer to an older document range.
+          continue;
+        }
+      }
+    }
     final snapshot = EditorContextSnapshot(
       id: '${DateTime.now().microsecondsSinceEpoch}-${++_nextContext}',
       workspace: buffer.root,
@@ -116,6 +160,9 @@ final class EditorViewModel extends DartitectViewModel {
       text: text.substring(start, end),
       dirty: buffer.dirty,
       capturedAt: DateTime.now(),
+      includesDiagnostics: includeDiagnostics,
+      diagnosticsLimited: limited,
+      diagnostics: diagnostics,
     );
     _contextCapture = (snapshot: snapshot, buffer: buffer, before: text);
     return snapshot;

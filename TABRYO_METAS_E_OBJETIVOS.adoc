@@ -415,7 +415,11 @@ ser removido no descarte. Inicialização, edição, salvamento, diff, reconexã
 passaram em Debug e Release nos dois sistemas. A
 https://github.com/ftr-tuta/tabryo/actions/runs/34247734251[CI de qualificação desktop]
 também passou análise, Dartitect, testes unitários, terminal, workbench, empacotamento e
-inicialização/encerramento dos pacotes extraídos. IME e DPI seguem pendentes.
+inicialização/encerramento dos pacotes extraídos. A sincronização espera o fim da
+composição IME e preserva entrada concorrente para revisão; eventos de composição
+no navegador passam no teste nativo Windows. As dimensões GTK agora convertem
+pixels físicos para coordenadas lógicas, com caso de CI em escala 200%.
+Janelas candidatas de IME físico e troca entre monitores ainda exigem aceite.
 Monitoramento opcional e F5 atualizam documentos abertos sem substituir
 edições locais; mudanças em trânsito exigem revisão explícita antes de salvar.
 Formatação Dart ao salvar usa o SDK escolhido explicitamente por workspace e stdin,
@@ -465,7 +469,9 @@ local vinculado à sessão. Perfis Django/FastAPI e tarefas de gestão Django us
 o interpretador escolhido. Testes nativos Windows passaram para esses fluxos,
 incluindo requisições HTTP reais pausadas em breakpoints e encerramento de filhos.
 O workflow Desktop inclui os mesmos adaptadores e frameworks nos dois sistemas;
-a qualificação da revisão atual no Ubuntu ainda precisa da CI.
+a CI da revisão `3b4dec3` passou todos os gates Ubuntu, incluindo Release,
+empacotamento e execução do pacote extraído. Alterações posteriores seguem
+dependentes dos gates do respectivo HEAD.
 Contexto do editor oferece publicação revisada de seleção/documento, versão e
 estado salvo/modificado por MCP HTTP local autenticado, além de cópia explícita
 para Codex. Propostas têm base identificada, revisão antes/depois, aplicação
@@ -475,8 +481,10 @@ Testes nativos incluem o Codex instalado sem turno de modelo e revisão no Monac
 Extração Dart de variável e método/getter recebe seleção e nome, captura a
 proposta do servidor e exige revisão nativa antes de alterar o buffer; desfazer
 permanece no Monaco. Comandos cancelados não podem fornecer uma proposta tardia
-para outra revisão. Refatorações com operações de arquivo, exposição de
-diagnósticos, conversas gráficas Codex e aceites IME/DPI continuam pendentes;
+para outra revisão. A exposição opcional de diagnósticos captura somente faixas
+inteiramente contidas no trecho, limita quantidade/bytes e mostra origem, código
+e versão reportada, mantendo explícita a ausência de versão. Refatorações com
+operações de arquivo, conversas gráficas Codex e aceites físicos IME/DPI continuam pendentes;
 esta entrega não conclui a matriz Python/Dart/Flutter.
 
 * *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.

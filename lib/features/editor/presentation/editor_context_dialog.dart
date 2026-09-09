@@ -16,6 +16,7 @@ final class EditorContextDialog extends StatefulWidget {
 final class _EditorContextDialogState extends State<EditorContextDialog> {
   final client = TextEditingController(text: 'Codex');
   bool whole = false;
+  bool diagnostics = false;
   bool busy = false;
   String? error;
   @override
@@ -63,7 +64,10 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
       true;
 
   Future<void> _publish() => _act(() async {
-    final snapshot = await widget.model.prepareContext(wholeDocument: whole);
+    final snapshot = await widget.model.prepareContext(
+      wholeDocument: whole,
+      includeDiagnostics: diagnostics,
+    );
     if (!mounted) return;
     final approved = await _review(
       'Review shared editor context',
@@ -78,6 +82,20 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
           ),
           const Divider(),
           SelectableText(snapshot.text),
+          if (snapshot.includesDiagnostics) ...[
+            const Divider(),
+            const Text(
+              'Captured diagnostics · a null documentVersion means the server did not report a version. Only ranges fully inside the excerpt are included.',
+            ),
+            if (snapshot.diagnosticsLimited)
+              const Text('Diagnostic limit reached; this is a partial list.'),
+            SelectableText(
+              const JsonEncoder.withIndent('  ').convert([
+                for (final diagnostic in snapshot.diagnostics)
+                  diagnostic.toJson(),
+              ]),
+            ),
+          ],
         ],
       ),
       'Publish reviewed context',
@@ -153,6 +171,13 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
                         ? null
                         : (value) => setState(() => whole = value!),
                     title: const Text('Share the whole document'),
+                  ),
+                  CheckboxListTile(
+                    value: diagnostics,
+                    onChanged: busy
+                        ? null
+                        : (value) => setState(() => diagnostics = value!),
+                    title: const Text('Include captured diagnostics'),
                   ),
                   FilledButton(
                     onPressed: busy ? null : _publish,

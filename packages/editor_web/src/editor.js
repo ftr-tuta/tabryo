@@ -15,6 +15,7 @@ let changing = false;
 let diff = null;
 let diffVisible = false;
 let diskModel = null;
+let composing = null;
 const diffContainer = document.createElement('div');
 diffContainer.style.width = '100%';
 diffContainer.style.height = '100%';
@@ -57,10 +58,13 @@ container.addEventListener('paste', event => {
   if (active && event.clipboardData) rejectInsert(event, event.clipboardData.getData('text/plain'));
 }, true);
 container.addEventListener('beforeinput', event => {
+  // Composition data replaces the IME's own range, not necessarily the current
+  // caret selection. Validate the committed model when composition finishes.
+  if (event.isComposing || event.inputType === 'insertCompositionText' || active?.composition) return;
   if (active && event.inputType?.startsWith('insert') && typeof event.data === 'string') rejectInsert(event, event.data);
 }, true);
 function snapshot(doc, extra = {}) {
-  if (doc.repair || !validText(doc, doc.model.getValue())) return null;
+  if (doc.composition || doc.repair || !validText(doc, doc.model.getValue())) return null;
   const selection = active === doc ? editor.getSelection() : null;
   return {
     type: 'change', id: doc.id, generation: doc.generation,
@@ -71,7 +75,7 @@ function snapshot(doc, extra = {}) {
   };
 }
 function changed(doc, event) {
-  if (changing || doc.repair) return;
+  if (changing || doc.composition || doc.repair) return;
   const text = doc.model.getValue();
   if (!validText(doc, text)) {
     if (active === doc) editor.updateOptions({ readOnly: true });
@@ -119,6 +123,30 @@ function activate(doc) {
 
 const language = installLanguage(editor, documents, emit, snapshot);
 
+editor.onDidCompositionStart(() => {
+  if (!active || active.composition) return;
+  const doc = composing = active;
+  doc.composition = new Promise(resolve => { doc.finishComposition = resolve; });
+});
+editor.onDidCompositionEnd(() => {
+  const doc = composing;
+  composing = null;
+  if (!doc) return;
+  const finish = doc.finishComposition;
+  queueMicrotask(async () => {
+    doc.composition = null;
+    if (!doc.model.isDisposed()) {
+      changed(doc, { isUndoing: false });
+      await doc.repair;
+      if (doc.supersededComposition) {
+        doc.supersededComposition = false;
+        emit(snapshot(doc, { type: 'superseded' }));
+      }
+    }
+    finish();
+  });
+});
+
 window.tabryoReceive = (packet) => {
   if (packet.token !== token) return;
   changing = true;
@@ -144,6 +172,10 @@ window.tabryoReceive = (packet) => {
             documents.set(input.id, doc);
           } else if (doc.generation !== input.generation) {
             doc.generation = input.generation;
+            if (doc.composition) {
+              doc.supersededComposition = true;
+              continue;
+            }
             // Input may arrive after Flutter's last snapshot but before this
             // replacement crosses the native bridge. Keep that input and
             // report it in the new generation instead of overwriting it.
@@ -184,8 +216,9 @@ window.tabryoReceive = (packet) => {
       case 'flush': {
         const doc = documents.get(packet.id);
         if (doc) {
-          if (doc.repair) doc.repair.then(() => emit(snapshot(doc, { type: 'flushed', request: packet.request })));
-          else emit(snapshot(doc, { type: 'flushed', request: packet.request }));
+          Promise.resolve(doc.composition).then(() => doc.repair).then(() => {
+            if (!doc.model.isDisposed()) emit(snapshot(doc, { type: 'flushed', request: packet.request }));
+          });
         }
         break;
       }
