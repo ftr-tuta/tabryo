@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/preview_cache.dart';
+import 'package:tabryo/features/collaboration/domain/collaboration.dart';
+import 'package:tabryo/features/collaboration/presentation/collaboration_view_model.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/editor/presentation/editor_context_dialog.dart';
@@ -30,6 +32,189 @@ import 'workbench_test.dart'
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('Codex context dispatch verifies the selected session and preserves retry identity', () async {
+    final root = p.absolute('codex_context');
+    final path = p.join(root, 'main.dart');
+    final client = EditorCollaborationClient(root);
+    final transport = MemoryContextTransport();
+    final share = EditorContextService(transport);
+    final editor = EditorViewModel(
+      MemoryDocuments()..content[path] = 'original',
+      contextSharing: share,
+    );
+    final git = NoGit();
+    final workbench = WorkbenchViewModel(
+      host: MemoryHost(),
+      launcher: MemoryLauncher(),
+      files: MemoryFiles(),
+      gitReader: git,
+      gitMutator: git,
+      preferencesStore: MemoryPreferences(),
+      editor: editor,
+      collaboration: CollaborationViewModel(client),
+    );
+    addTearDown(workbench.shutdown);
+    await workbench.openWorkspace(root);
+    await editor.open(root, path);
+    editor.active!.controller.text = 'unsaved 🌱';
+    final snapshot = await editor.prepareContext(wholeDocument: true);
+    await editor.publishContext(snapshot, 'Codex');
+    final targets = await editor.loadCodexTargets!(snapshot);
+    expect(targets.map((target) => target.id), ['selected']);
+    final target = targets.single;
+    final text = editor.codexContextText(snapshot, EditorCodexAction.explain);
+    expect(jsonEncode(jsonDecode(text)['context']), contains('"unsaved":true'));
+    for (final action in [
+      EditorCodexAction.fixDiagnostic,
+      EditorCodexAction.investigateTest,
+    ]) {
+      expect(
+        () => editor.codexContextText(snapshot, action),
+        throwsA(isA<EditorContextFailure>()),
+      );
+    }
+    client.thread = 'replacement';
+    await expectLater(
+      editor.sendCodexContext!(
+        snapshot,
+        target,
+        EditorCodexAction.explain,
+        text,
+      ),
+      throwsA(isA<EditorContextFailure>()),
+    );
+    client.thread = target.thread;
+    await expectLater(
+      editor.sendCodexContext!(
+        snapshot,
+        target,
+        EditorCodexAction.explain,
+        '$text changed',
+      ),
+      throwsA(isA<EditorContextFailure>()),
+    );
+    expect(client.deliveries, isEmpty);
+    await editor.sendCodexContext!(
+      snapshot,
+      target,
+      EditorCodexAction.explain,
+      text,
+    );
+    await editor.sendCodexContext!(
+      snapshot,
+      target,
+      EditorCodexAction.explain,
+      text,
+    );
+    expect(client.deliveries, hasLength(2));
+    expect(client.deliveries.first, client.deliveries.last);
+    client.snapshotPending = Completer<Json>();
+    final refused = expectLater(
+      editor.sendCodexContext!(
+        snapshot,
+        target,
+        EditorCodexAction.explain,
+        text,
+      ),
+      throwsA(isA<EditorContextFailure>()),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await editor.revokeContext();
+    client.snapshotPending!.complete(client.snapshot);
+    await refused;
+    expect(client.deliveries, hasLength(2));
+  });
+
+  testWidgets(
+    'Codex context requires destination selection and an explicit message review',
+    (tester) async {
+      final root = p.absolute('codex_context_ui');
+      final path = p.join(root, 'main.dart');
+      final share = EditorContextService(MemoryContextTransport());
+      final editor = EditorViewModel(
+        MemoryDocuments()..content[path] = 'original',
+        contextSharing: share,
+      );
+      editor.selectWorkspace(root);
+      await editor.open(root, path);
+      editor.active!.controller.text = 'captured unsaved text';
+      final snapshot = await editor.prepareContext(wholeDocument: true);
+      await editor.publishContext(snapshot, 'Codex');
+      editor.loadCodexTargets = (_) async => [
+        EditorCodexTarget(
+          id: 'selected',
+          name: 'Chosen CLI',
+          workspace: root,
+          thread: 'thread',
+          objective: 'Explain code',
+          writer: false,
+        ),
+      ];
+      final sent = <String>[];
+      editor.sendCodexContext = (value, target, action, text) async {
+        expect(identical(value, snapshot), isTrue);
+        expect(target.id, 'selected');
+        expect(action, EditorCodexAction.explain);
+        sent.add(text);
+        return 'Message saved';
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => EditorContextDialog(model: editor),
+                ),
+                child: const Text('Context'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Context'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Load Codex sessions'));
+      await tester.tap(find.text('Load Codex sessions'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Review context for Codex'),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.ensureVisible(
+        find.byType(DropdownButtonFormField<EditorCodexTarget>),
+      );
+      await tester.tap(find.byType(DropdownButtonFormField<EditorCodexTarget>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Chosen CLI · read only').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Review context for Codex'));
+      await tester.tap(find.text('Review context for Codex'));
+      await tester.pumpAndSettle();
+      expect(sent, isEmpty);
+      expect(find.textContaining('Objective: Explain code'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(sent, isEmpty);
+      await tester.ensureVisible(find.text('Review context for Codex'));
+      await tester.tap(find.text('Review context for Codex'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send reviewed context'));
+      await tester.pumpAndSettle();
+      expect(sent, [
+        editor.codexContextText(snapshot, EditorCodexAction.explain),
+      ]);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(editor.disposeAsync);
+    },
+  );
+
   test(
     'registered task requests are explicit, bounded and idempotent',
     () async {
@@ -752,6 +937,54 @@ void main() {
 }
 
 final class NativeHttp extends HttpOverrides {}
+
+final class EditorCollaborationClient implements CollaborationClient {
+  EditorCollaborationClient(this.root);
+  final String root;
+  String thread = 'reviewed-thread';
+  Completer<Json>? snapshotPending;
+  final deliveries = <Json>[];
+  Json get snapshot => {
+    'capabilities': ['editor_context'],
+    'participants': [
+      {
+        'id': 'selected',
+        'name': 'Selected',
+        'thread': thread,
+        'root': root,
+        'state': 'active',
+        'objective': 'Explain code',
+        'writer': 0,
+      },
+      {
+        'id': 'other',
+        'name': 'Other',
+        'thread': 'other-thread',
+        'root': p.dirname(root),
+        'state': 'active',
+        'objective': 'Other',
+        'writer': 1,
+      },
+    ],
+  };
+  @override
+  Future<void> connect({bool start = false}) async {
+    expect(start, isFalse);
+  }
+
+  @override
+  Future<Json> call(String operation, [Json arguments = const {}]) async {
+    if (operation == 'snapshot') {
+      return snapshotPending == null ? snapshot : await snapshotPending!.future;
+    }
+    expect(operation, 'send_editor_context');
+    deliveries.add({...arguments});
+    return {'id': 1, 'status': 'stored'};
+  }
+
+  @override
+  void close() {}
+}
 
 Future<Map<String, dynamic>> rpc(
   HttpClient client,

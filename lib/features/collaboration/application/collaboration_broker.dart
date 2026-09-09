@@ -37,8 +37,9 @@ final class CollaborationBroker {
           outcome = await session.deliver(
             message,
             wake:
-                participant['auto_wake'] == 1 &&
-                message['kind'] != 'information',
+                message['kind'] == 'editor_context' ||
+                (participant['auto_wake'] == 1 &&
+                    message['kind'] != 'information'),
           );
         } catch (_) {
           outcome = DeliveryOutcome.uncertain;

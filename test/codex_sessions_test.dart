@@ -491,9 +491,14 @@ trust_level = "trusted"
       final thirdDone = completed.first;
       Future<CodexDelivery> dispatch({bool wake = false}) => session.deliver(
         messageId: 'message-124',
-        sender: 'api',
-        text: 'Dependency ready.',
+        sender: 'Tabryo editor',
+        text: jsonEncode({
+          'action': 'Explain selection',
+          'text': 'ação 🌱',
+          'unsaved': true,
+        }),
         wakeWhenIdle: wake,
+        fromEditor: true,
       );
       expect((await dispatch()).status, CodexDeliveryStatus.deferred);
       session.paused = true;
@@ -506,6 +511,18 @@ trust_level = "trusted"
       expect(next.status, CodexDeliveryStatus.accepted);
       expect(next.turnId, isNot(turnId));
       await thirdDone.timeout(const Duration(seconds: 30));
+      final received = jsonEncode(
+        await terminal.request('thread/read', {
+          'threadId': thread,
+          'includeTurns': true,
+        }),
+      );
+      expect(
+        received,
+        contains('Context explicitly sent by the user from the Tabryo editor,'),
+      );
+      expect(received, contains('message-124'));
+      expect(received, contains('ação 🌱'));
     },
     skip: codex == null
         ? 'Set TABRYO_TEST_CODEX for native App Server tests.'

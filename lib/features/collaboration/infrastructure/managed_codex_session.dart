@@ -263,6 +263,7 @@ final class ManagedCodexSession implements CollaborationSession {
           'Message kind: ${message['kind']}. Receipt ID: ${message['id']}. '
           '${message['checkpoint_id'] == null ? '' : 'Checkpoint reference: ${message['checkpoint_id']}.'}',
       wakeWhenIdle: wake,
+      fromEditor: message['kind'] == 'editor_context',
     );
     return switch (result.status) {
       CodexDeliveryStatus.accepted => DeliveryOutcome.forwarded,
@@ -285,7 +286,10 @@ final class ManagedCodexSession implements CollaborationSession {
           for (final part in ((item['content'] as List?) ?? []).cast<Map>()) {
             if (part['text'] case final String text) {
               final newline = text.indexOf('\n');
-              if (!text.startsWith('Context from a collaborating session,') ||
+              if ((!text.startsWith('Context from a collaborating session,') &&
+                      !text.startsWith(
+                        'Context explicitly sent by the user from the Tabryo editor,',
+                      )) ||
                   newline < 0) {
                 continue;
               }

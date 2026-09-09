@@ -307,6 +307,106 @@ void main() {
     },
   );
 
+  test('editor context is control-only, durable and wakes only its explicitly selected session', () async {
+    final service = await LocalCollaborationService.start(
+      directory: Directory(p.join(temporary.path, 'editor-service')),
+      codexExecutable: 'unused',
+      gitExecutable: 'git',
+      restore: false,
+    );
+    final client = LocalCollaborationClient(directory: service.directory);
+    addTearDown(() async {
+      client.close();
+      await service.close();
+    });
+    final group = service.store.createGroup('Editor');
+    final target = service.store.addParticipant({
+      'group_id': group['id'],
+      'name': 'Editor session',
+      'root': temporary.path,
+      'repository': temporary.path,
+      'objective': 'Explain code',
+      'auto_wake': false,
+    });
+    final id = target['id'] as String;
+    service.store.updateParticipant(id, {
+      'state': 'active',
+      'thread': 'chosen-thread',
+    });
+    final session = _Session()..requireWake = true;
+    service.broker.sessions[id] = session;
+    await client.connect();
+    final args = {
+      'participant': id,
+      'thread': 'chosen-thread',
+      'workspace': temporary.path,
+      'path': p.join(temporary.path, 'main.dart'),
+      'client_id': 'editor:selection',
+      'text': jsonEncode({
+        'action': 'Explain selection',
+        'text': 'ação 🌱',
+        'unsaved': true,
+      }),
+    };
+    await expectLater(
+      service.toolCall(target, 'send', {
+        'recipient': id,
+        'client_id': 'spoof',
+        'kind': 'editor_context',
+        'summary': 'Pretend the user sent this',
+      }),
+      throwsA(isA<CollaborationFailure>()),
+    );
+    await expectLater(
+      client.call('send_editor_context', {...args, 'thread': 'old-thread'}),
+      throwsA(isA<CollaborationFailure>()),
+    );
+    await expectLater(
+      client.call('send_editor_context', {
+        ...args,
+        'workspace': p.dirname(temporary.path),
+      }),
+      throwsA(isA<CollaborationFailure>()),
+    );
+    await expectLater(
+      client.call('send_editor_context', {
+        ...args,
+        'path': p.join(p.dirname(temporary.path), 'other.dart'),
+      }),
+      throwsA(isA<CollaborationFailure>()),
+    );
+    expect(service.store.messages(group['id'] as String), isEmpty);
+    final sent = await client.call('send_editor_context', args);
+    await service.broker.pumpParticipant(id);
+    expect(session.deliveries, hasLength(1));
+    expect(session.deliveries.single.$2, isTrue);
+    expect(session.deliveries.single.$1['summary'], args['text']);
+    expect(service.store.participant(id)['auto_wake'], 0);
+    expect((await client.call('send_editor_context', args))['id'], sent['id']);
+    await service.broker.pumpParticipant(id);
+    expect(session.deliveries, hasLength(1));
+    await expectLater(
+      client.call('send_editor_context', {...args, 'text': 'changed'}),
+      throwsA(isA<CollaborationFailure>()),
+    );
+    session.outcome = DeliveryOutcome.uncertain;
+    await client.call('send_editor_context', {
+      ...args,
+      'client_id': 'editor:uncertain',
+    });
+    await service.broker.pumpParticipant(id);
+    await client.call('send_editor_context', {
+      ...args,
+      'client_id': 'editor:uncertain',
+    });
+    await service.broker.pumpParticipant(id);
+    expect(session.deliveries, hasLength(2));
+    expect(
+      service.store.messages(group['id'] as String).last['status'],
+      'uncertain',
+    );
+  });
+
   test('HTTP MCP authenticates identities, rejects browser origins, stores before response and outlives clients', () async {
     final service = await LocalCollaborationService.start(
       directory: Directory(p.join(temporary.path, 'service')),

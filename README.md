@@ -434,6 +434,17 @@ and the active grant are checked again before execution. Cancelling or rejecting
 runs nothing; at most eight requests are kept per share. Revoking context does
 not stop an already approved command; use its normal Tasks stop control.
 
+**Load Codex sessions** lists active collaboration sessions for this workspace.
+Choose the destination and **Explain selection**, **Fix diagnostic** or
+**Investigate test**, then review the exact message, session objective and
+writer/read-only permission. Diagnostic and test actions require those optional
+results in the captured context. Messages are limited to 24000 characters.
+Sending persists one message before App Server delivery and can wake that
+explicitly chosen idle session; its existing approvals and permissions remain.
+Retries preserve identity, and uncertain delivery is reconciled without replay.
+Open the selected CLI through **Collaboration → Open in Tabryo**. A sent message
+stays in collaboration history after the editor endpoint is revoked.
+
 **Revoke editor context**, closing the source document, changing workspace and
 closing Tabryo revoke the endpoint. Clients cannot browse arbitrary files or
 apply edits through MCP. The endpoint is local and temporary; remote exposure and

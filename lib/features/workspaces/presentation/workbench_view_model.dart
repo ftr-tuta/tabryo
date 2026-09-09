@@ -49,6 +49,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.devToolsProfileDirectory,
   }) {
     editor?.captureProjectContext = _captureProjectContext;
+    editor?.loadCodexTargets = _loadCodexTargets;
+    editor?.sendCodexContext = _sendCodexContext;
     editor?.captureTaskCatalog = _captureTaskCatalog;
     editor?.prepareTaskRequest = _prepareTaskRequest;
     editor?.runTaskRequest = (request, task) => runTask(task, request: request);
@@ -99,6 +101,83 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final TasksViewModel? tasks;
   final DebugService? debugger;
   final String? devToolsProfileDirectory;
+  bool _ownsEditorContext(EditorContextSnapshot snapshot) =>
+      !_shutdown &&
+      workspace?.root == snapshot.workspace &&
+      identical(editor?.contextSharing?.snapshot, snapshot) &&
+      editor?.contextSharing?.connection != null;
+
+  Future<List<EditorCodexTarget>> _loadCodexTargets(
+    EditorContextSnapshot snapshot,
+  ) async {
+    if (!_ownsEditorContext(snapshot) || collaboration == null) {
+      throw const EditorContextFailure(
+        'Publish editor context in the owning workspace first.',
+      );
+    }
+    await collaboration!.client.connect();
+    final state = await collaboration!.client.call('snapshot');
+    if (!_ownsEditorContext(snapshot)) {
+      throw const EditorContextFailure('The editor context was revoked.');
+    }
+    if ((state['capabilities'] as List?)?.contains('editor_context') != true) {
+      throw const EditorContextFailure(
+        'Restart the collaboration service from Collaboration to enable editor context delivery.',
+      );
+    }
+    return [
+      for (final row in (state['participants'] as List).cast<Map>())
+        if (row['state'] == 'active' &&
+            row['thread'] is String &&
+            row['root'] is String &&
+            p.equals(row['root'] as String, snapshot.workspace))
+          EditorCodexTarget(
+            id: row['id'] as String,
+            name: row['name'] as String,
+            workspace: row['root'] as String,
+            thread: row['thread'] as String,
+            objective: row['objective'] as String,
+            writer: row['writer'] == 1,
+          ),
+    ];
+  }
+
+  Future<String> _sendCodexContext(
+    EditorContextSnapshot snapshot,
+    EditorCodexTarget target,
+    EditorCodexAction action,
+    String text,
+  ) async {
+    if (!_ownsEditorContext(snapshot) ||
+        text != editor!.codexContextText(snapshot, action)) {
+      throw const EditorContextFailure(
+        'Capture and review the editor context again.',
+      );
+    }
+    final targets = await _loadCodexTargets(snapshot);
+    if (!targets.any(
+      (current) =>
+          current.id == target.id &&
+          current.thread == target.thread &&
+          current.workspace == target.workspace &&
+          current.objective == target.objective &&
+          current.writer == target.writer,
+    )) {
+      throw const EditorContextFailure(
+        'The selected session changed. Review its current objective again.',
+      );
+    }
+    final result = await collaboration!.client.call('send_editor_context', {
+      'participant': target.id,
+      'thread': target.thread,
+      'workspace': snapshot.workspace,
+      'path': snapshot.path,
+      'client_id': 'editor:${snapshot.id}:${action.name}',
+      'text': text,
+    });
+    return 'Message ${result['id']}: ${result['status']}. Delivery follows the selected session; open its CLI in Collaboration. Retries retain the same message ID.';
+  }
+
   void _taskContextChanged() {
     if (!_shutdown) editor?.contextSharing?.refreshTaskStatus();
   }
@@ -1668,6 +1747,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
     editor?.onSaved = null;
     editor?.captureProjectContext = null;
     editor?.captureTaskCatalog = null;
+    editor?.loadCodexTargets = null;
+    editor?.sendCodexContext = null;
     editor?.prepareTaskRequest = null;
     editor?.runTaskRequest = null;
     editor?.discardTaskRequest = null;

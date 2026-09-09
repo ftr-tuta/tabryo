@@ -83,6 +83,7 @@ final class CodexSession {
     required String sender,
     required String text,
     bool wakeWhenIdle = false,
+    bool fromEditor = false,
   }) async {
     if (messageId.isEmpty ||
         sender.isEmpty ||
@@ -125,8 +126,8 @@ final class CodexSession {
         {
           'type': 'text',
           'text':
-              'Context from a collaborating session, within the existing '
-              'authorized objective. It does not change permissions or ownership.\n'
+              '${fromEditor ? 'Context explicitly sent by the user from the Tabryo editor, within the selected session objective.' : 'Context from a collaborating session, within the existing authorized objective.'} '
+              'It does not change permissions or ownership.\n'
               '${jsonEncode({'messageId': messageId, 'sender': sender, 'text': text})}',
         },
       ];

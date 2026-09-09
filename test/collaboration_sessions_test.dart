@@ -348,6 +348,28 @@ supports_websockets = false
       await _until(() async => (await b.status())['type'] == 'idle');
       await _until(() => b.containsMessage(offline['id'] as int));
       expect(await b.containsMessage(offline['id'] as int), true);
+      await service.controlCall('auto_wake', {
+        'id': flutter['id'],
+        'enabled': false,
+      });
+      final editor = await service.controlCall('send_editor_context', {
+        'participant': flutter['id'],
+        'thread': savedThread,
+        'workspace': flutter['root'],
+        'path': p.join(flutter['root'] as String, 'main.dart'),
+        'client_id': 'editor:selection',
+        'text': jsonEncode({
+          'action': 'Explain selection',
+          'text': 'captured 🌱',
+          'unsaved': true,
+        }),
+      });
+      await _until(() => b.containsMessage(editor['id'] as int));
+      expect(
+        service.store.participant(flutter['id'] as String)['auto_wake'],
+        0,
+      );
+      expect(await b.containsMessage(editor['id'] as int), isTrue);
     },
     skip: codex == null
         ? 'Set TABRYO_TEST_CODEX for the installed CLI integration.'

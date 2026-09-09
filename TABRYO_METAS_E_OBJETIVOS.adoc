@@ -520,8 +520,12 @@ rejeição sem execução. Testes cobrem revogação durante validação e statu
 A CI de `f6c30ca` passou integralmente no Windows e abriu DevTools no Linux com
 locale `C`; o teste a 200% revelou dupla escala na conversão do clique nativo.
 `8143487` corrige o mapeamento pelas dimensões reais da superfície, em validação.
-Envio de contexto à sessão Codex, descoberta contínua via Flutter daemon,
-perfis compartilháveis e aceites físicos IME/DPI continuam pendentes na matriz.
+Ações de explicar seleção, corrigir diagnóstico e investigar teste selecionam
+uma sessão Codex do workspace e revisam objetivo, permissão e mensagem limitada.
+O controle nativo persiste antes de encaminhar pelo App Server, preservando IDs
+em retries e resultados incertos; MCPs de participantes não podem forjar esse
+envio explícito do usuário. Descoberta contínua via Flutter daemon, perfis
+compartilháveis e aceites físicos IME/DPI continuam pendentes na matriz.
 Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
 seu planejamento independente permanece em CODEX-02. Operações de arquivo em
 refatorações continuam recusadas de forma explícita.

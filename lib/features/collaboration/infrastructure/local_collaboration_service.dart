@@ -145,8 +145,10 @@ final class LocalCollaborationService {
     }
   }
 
-  ManagedCodexSession? session(String id) =>
-      broker.sessions[id] as ManagedCodexSession?;
+  ManagedCodexSession? session(String id) {
+    final current = broker.sessions[id];
+    return current is ManagedCodexSession ? current : null;
+  }
 
   Future<void> connectParticipant(String id) async {
     if (_stopping || !_starting.add(id)) {
@@ -451,6 +453,7 @@ final class LocalCollaborationService {
       case 'snapshot':
         final group = args['group'] as String?;
         return {
+          'capabilities': ['editor_context'],
           'groups': store.groups(),
           'participants': store
               .participants(group: group)
@@ -478,6 +481,29 @@ final class LocalCollaborationService {
         };
       case 'create_group':
         return store.createGroup(requiredText(args, 'name', max: 120));
+      case 'send_editor_context':
+        final id = requiredText(args, 'participant', max: 128);
+        final participant = store.participant(id);
+        final root = requiredText(args, 'workspace');
+        final path = requiredText(args, 'path');
+        if (participant['state'] != 'active' ||
+            participant['thread'] != requiredText(args, 'thread', max: 128) ||
+            !p.equals(participant['root'] as String, root) ||
+            !p.isWithin(root, path)) {
+          throw const CollaborationFailure(
+            'The selected Codex session or editor workspace changed. Select it again.',
+          );
+        }
+        // Only the authenticated native control plane can create this kind.
+        // Persist before forwarding, using the same durable retry identity.
+        final message = store.send(id, {
+          'recipient': id,
+          'client_id': requiredText(args, 'client_id', max: 128),
+          'kind': 'editor_context',
+          'summary': requiredText(args, 'text', max: 24000),
+        });
+        unawaited(broker.pumpParticipant(id));
+        return {'id': message['id'], 'status': message['status']};
       case 'add_participant':
         final inputRoot = requiredText(args, 'root');
         if (!p.isAbsolute(inputRoot)) {

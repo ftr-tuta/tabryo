@@ -96,6 +96,42 @@ final class EditorTaskRequest {
       : decision;
 }
 
+enum EditorCodexAction {
+  explain(
+    'Explain selection',
+    'Explain this captured code within the current session objective.',
+  ),
+  fixDiagnostic(
+    'Fix diagnostic',
+    'Investigate the captured diagnostic and propose or apply the appropriate correction within the current session objective.',
+  ),
+  investigateTest(
+    'Investigate test',
+    'Investigate the captured test failure within the current session objective.',
+  );
+
+  const EditorCodexAction(this.label, this.instruction);
+  final String label;
+  final String instruction;
+}
+
+final class EditorCodexTarget {
+  const EditorCodexTarget({
+    required this.id,
+    required this.name,
+    required this.workspace,
+    required this.thread,
+    required this.objective,
+    required this.writer,
+  });
+  final String id;
+  final String name;
+  final String workspace;
+  final String thread;
+  final String objective;
+  final bool writer;
+}
+
 final class EditorProjectContext {
   EditorProjectContext({
     required this.root,

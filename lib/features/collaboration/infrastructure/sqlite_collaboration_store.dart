@@ -215,9 +215,19 @@ PRAGMA user_version=1;
       );
     }
     final clientId = requiredText(values, 'client_id', max: 128);
-    final summary = requiredText(values, 'summary', max: 8000);
     final kind = values['kind'] ?? 'information';
-    if (!{'information', 'request', 'dependency_ready'}.contains(kind)) {
+    final summary = requiredText(
+      values,
+      'summary',
+      max: kind == 'editor_context' ? 24000 : 8000,
+    );
+    if (!{
+          'information',
+          'request',
+          'dependency_ready',
+          'editor_context',
+        }.contains(kind) ||
+        (kind == 'editor_context' && sender != recipient)) {
       throw const CollaborationFailure('Invalid message kind.');
     }
     final checkpoint = values['checkpoint_id'];

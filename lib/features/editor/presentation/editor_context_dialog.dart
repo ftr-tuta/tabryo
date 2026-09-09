@@ -23,6 +23,10 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
   bool sessions = false;
   bool registeredTasks = false;
   bool busy = false;
+  List<EditorCodexTarget> codexTargets = const [];
+  EditorCodexTarget? codexTarget;
+  EditorCodexAction codexAction = EditorCodexAction.explain;
+  String? codexDelivery;
   String? error;
   @override
   void dispose() {
@@ -160,6 +164,55 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
       ClipboardData(text: const JsonEncoder.withIndent('  ').convert(value)),
     );
   }
+
+  Future<void> _loadCodex(EditorContextSnapshot snapshot) => _act(() async {
+    final targets = await widget.model.loadCodexTargets!(snapshot);
+    if (!mounted) return;
+    setState(() {
+      codexTargets = targets;
+      codexTarget = null;
+      codexDelivery = null;
+    });
+    if (targets.isEmpty) {
+      throw const EditorContextFailure(
+        'Connect a session for this workspace in Collaboration, then load sessions again.',
+      );
+    }
+  });
+
+  Future<void> _sendCodex(EditorContextSnapshot snapshot) => _act(() async {
+    final target = codexTarget;
+    if (target == null) {
+      throw const EditorContextFailure('Choose the destination session.');
+    }
+    final action = codexAction;
+    final text = widget.model.codexContextText(snapshot, action);
+    final approved = await _review(
+      'Review context for ${target.name}',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${action.label}\nSession: ${target.thread}\nWorkspace: ${target.workspace}\n${target.writer ? 'Registered writer' : 'Read only'}\nObjective: ${target.objective}',
+          ),
+          const Text(
+            'Send one captured message to this session. It is saved in collaboration history and can start an idle turn. Codex keeps its existing permissions and approvals. Revoking the editor endpoint does not remove a message already sent.',
+          ),
+          const Divider(),
+          SelectableText(text),
+        ],
+      ),
+      'Send reviewed context',
+    );
+    if (!approved || !mounted) return;
+    final result = await widget.model.sendCodexContext!(
+      snapshot,
+      target,
+      action,
+      text,
+    );
+    if (mounted) setState(() => codexDelivery = result);
+  });
 
   Future<void> _task(EditorTaskRequest request) => _act(() async {
     final service = widget.model.contextSharing!;
@@ -302,6 +355,65 @@ final class _EditorContextDialogState extends State<EditorContextDialog> {
                     ],
                   ),
                   const Divider(),
+                  if (widget.model.loadCodexTargets != null &&
+                      widget.model.sendCodexContext != null) ...[
+                    OutlinedButton(
+                      onPressed: busy ? null : () => _loadCodex(snapshot),
+                      child: const Text('Load Codex sessions'),
+                    ),
+                    if (codexTargets.isNotEmpty) ...[
+                      DropdownButtonFormField<EditorCodexTarget>(
+                        key: ValueKey(codexTargets),
+                        initialValue: codexTarget,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Destination Codex session',
+                        ),
+                        items: [
+                          for (final target in codexTargets)
+                            DropdownMenuItem(
+                              value: target,
+                              child: Text(
+                                '${target.name} · ${target.writer ? 'writer' : 'read only'}',
+                              ),
+                            ),
+                        ],
+                        onChanged: busy
+                            ? null
+                            : (value) => setState(() {
+                                codexTarget = value;
+                                codexDelivery = null;
+                              }),
+                      ),
+                      DropdownButtonFormField<EditorCodexAction>(
+                        initialValue: codexAction,
+                        decoration: const InputDecoration(
+                          labelText: 'Editor action',
+                        ),
+                        items: [
+                          for (final action in EditorCodexAction.values)
+                            DropdownMenuItem(
+                              value: action,
+                              child: Text(action.label),
+                            ),
+                        ],
+                        onChanged: busy
+                            ? null
+                            : (value) => setState(() {
+                                codexAction = value!;
+                                codexDelivery = null;
+                              }),
+                      ),
+                      FilledButton(
+                        onPressed: busy || codexTarget == null
+                            ? null
+                            : () => _sendCodex(snapshot),
+                        child: const Text('Review context for Codex'),
+                      ),
+                    ],
+                    if (codexDelivery != null) Text(codexDelivery!),
+                    const Divider(),
+                  ],
                   if (snapshot.taskCatalog != null) ...[
                     const Text(
                       'Registered task requests · open Tasks to stop a running command',
