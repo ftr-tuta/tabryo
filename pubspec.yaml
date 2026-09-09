@@ -28,6 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  ffi: ^2.1.4
   flutter:
     sdk: flutter
   dartitect:
@@ -46,9 +47,16 @@ dependencies:
     path: packages/terminal_host
   xterm2: 5.2.0
   path: 1.9.1
+  yaml: 3.1.4
+  sqlite3: ^3.5.2
+  crypto: ^3.0.7
+  webview_win_floating: 3.0.3
+  webview_flutter_platform_interface: 2.15.1
+  xml: 6.6.1
+  dtd: 4.0.0
+  vm_service: 15.3.0
 
 dev_dependencies:
-  ffi: ^2.1.4
   dartitect_lints:
     git:
       url: https://github.com/ftr-tuta/dartitect.git
@@ -83,6 +91,8 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/editor/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

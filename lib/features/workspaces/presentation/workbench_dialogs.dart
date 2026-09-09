@@ -194,6 +194,7 @@ final class WorkbenchDialogs {
 
   Future<void> preferences() async {
     var value = model.preferences;
+    final root = model.workspace?.root;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -254,7 +255,7 @@ final class WorkbenchDialogs {
                           value = value.copyWith(rememberPreferences: enabled),
                     ),
                     title: const Text(
-                      'Remember appearance and monitoring preferences',
+                      'Remember appearance, editor and monitoring preferences',
                     ),
                   ),
                   CheckboxListTile(
@@ -275,15 +276,45 @@ final class WorkbenchDialogs {
                     ),
                   ),
                   CheckboxListTile(
+                    value: value.recoverDocuments,
+                    onChanged: (enabled) => update(
+                      () => value = value.copyWith(recoverDocuments: enabled),
+                    ),
+                    title: const Text(
+                      'Recover unsaved documents after a crash',
+                    ),
+                    subtitle: const Text(
+                      'Stores local text copies, which can contain sensitive data. Turning off clears this session and offered recovery copies. Other running windows keep their own copies.',
+                    ),
+                  ),
+                  CheckboxListTile(
                     value: value.watchFiles,
                     onChanged: (enabled) => update(
                       () => value = value.copyWith(watchFiles: enabled),
                     ),
-                    title: const Text('Monitor the selected workspace folder'),
+                    title: const Text('Monitor workspace and open documents'),
                     subtitle: const Text(
-                      'Root folder changes trigger refresh. Disable to stop monitoring immediately.',
+                      'Refresh files changed outside Tabryo. Unsaved edits are kept for comparison. Disable to stop monitoring.',
                     ),
                   ),
+                  if (root != null)
+                    TextFormField(
+                      initialValue: value.dartFormatters[root] ?? '',
+                      decoration: const InputDecoration(
+                        labelText: 'Dart executable for format on save',
+                        helperText: 'This workspace only. Full path to dart.exe or dart. Leave empty to disable.',
+                        helperMaxLines: 3,
+                      ),
+                      onChanged: (path) {
+                        final formatters = {...value.dartFormatters};
+                        if (path.trim().isEmpty) {
+                          formatters.remove(root);
+                        } else {
+                          formatters[root] = path.trim();
+                        }
+                        value = value.copyWith(dartFormatters: formatters);
+                      },
+                    ),
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(
@@ -308,5 +339,104 @@ final class WorkbenchDialogs {
       ),
     );
     if (accepted == true) await model.updatePreferences(value);
+  }
+
+  Future<void> recoverDocuments() async {
+    final editor = model.editor;
+    if (editor == null) return;
+    await editor.refreshRecovery();
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => ListenableBuilder(
+        listenable: editor,
+        builder: (_, _) => AlertDialog(
+          title: const Text('Recover documents'),
+          content: SizedBox(
+            width: 720,
+            height: 420,
+            child: ListView(
+              children: [
+                if (!editor.recoveryEnabled)
+                  const Text(
+                    'Enable document recovery in Preferences to keep local copies.',
+                  ),
+                if (editor.recoveryError != null) Text(editor.recoveryError!),
+                if (editor.recoveryEnabled && editor.recoveries.isEmpty)
+                  const Text('No abandoned document copies were found.'),
+                for (final document in editor.recoveries)
+                  ListTile(
+                    title: Text(document.path),
+                    subtitle: const Text(
+                      'Preview or restore into a tab. The source file is not changed.',
+                    ),
+                    onTap: () => showDialog<void>(
+                      context: dialogContext,
+                      builder: (previewContext) => AlertDialog(
+                        title: Text(document.path),
+                        content: SizedBox(
+                          width: 720,
+                          height: 400,
+                          child: SingleChildScrollView(
+                            child: SelectableText(document.text),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(previewContext),
+                            child: const Text('Close'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: () async {
+                            await model.openWorkspace(document.root);
+                            if (model.workspace?.root != document.root) return;
+                            if (await editor.restoreDocument(document)) {
+                              model.showEditor(true);
+                              if (dialogContext.mounted) {
+                                Navigator.pop(dialogContext);
+                              }
+                            }
+                          },
+                          child: const Text('Restore'),
+                        ),
+                        IconButton(
+                          tooltip: 'Discard recovery copy',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            if (await confirm(
+                              'Discard recovery copy?',
+                              document.path,
+                              'Discard',
+                            )) {
+                              await editor.discardRecovery(document);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            if (editor.recoveryEnabled)
+              TextButton(
+                onPressed: editor.refreshRecovery,
+                child: const Text('Refresh copies'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

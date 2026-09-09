@@ -1,0 +1,497 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../../editor_context/domain/editor_context.dart';
+import '../../tasks/domain/project_task.dart';
+import '../../tasks/presentation/tasks_panel.dart';
+import 'editor_view_model.dart';
+
+final class EditorContextDialog extends StatefulWidget {
+  const EditorContextDialog({required this.model, super.key});
+  final EditorViewModel model;
+  @override
+  State<EditorContextDialog> createState() => _EditorContextDialogState();
+}
+
+final class _EditorContextDialogState extends State<EditorContextDialog> {
+  final client = TextEditingController(text: 'Codex');
+  bool whole = false;
+  bool diagnostics = false;
+  bool tests = false;
+  bool sessions = false;
+  bool registeredTasks = false;
+  bool busy = false;
+  List<EditorCodexTarget> codexTargets = const [];
+  EditorCodexTarget? codexTarget;
+  EditorCodexAction codexAction = EditorCodexAction.explain;
+  String? codexDelivery;
+  String? error;
+  @override
+  void dispose() {
+    client.dispose();
+    super.dispose();
+  }
+
+  Future<void> _act(Future<void> Function() action) async {
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await action();
+    } catch (failure) {
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<bool> _review(String title, Widget content, String accept) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: SizedBox(
+            width: 760,
+            height: 420,
+            child: SingleChildScrollView(child: content),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(accept),
+            ),
+          ],
+        ),
+      ) ==
+      true;
+
+  Future<void> _publish() => _act(() async {
+    final snapshot = await widget.model.prepareContext(
+      wholeDocument: whole,
+      includeDiagnostics: diagnostics,
+      includeTests: tests,
+      includeSessions: sessions,
+      includeTasks: registeredTasks,
+    );
+    if (!mounted) return;
+    final approved = await _review(
+      'Review shared editor context',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Client: ${client.text}\n${snapshot.path}\nVersion ${snapshot.version} · ${snapshot.dirty ? 'unsaved' : 'saved'}\nUTF-16 range ${snapshot.start}–${snapshot.end}',
+          ),
+          const Text(
+            'Publishes this captured text to a local MCP connection. Later typing is not shared. Revoke, close this document, change workspace or close Tabryo to end access. Clients can propose replacements for review; saving stays explicit.',
+          ),
+          const Divider(),
+          SelectableText(snapshot.text),
+          if (snapshot.includesDiagnostics) ...[
+            const Divider(),
+            const Text(
+              'Captured diagnostics · a null documentVersion means the server did not report a version. Only ranges fully inside the excerpt are included.',
+            ),
+            if (snapshot.diagnosticsLimited)
+              const Text('Diagnostic limit reached; this is a partial list.'),
+            SelectableText(
+              const JsonEncoder.withIndent('  ').convert([
+                for (final diagnostic in snapshot.diagnostics)
+                  diagnostic.toJson(),
+              ]),
+            ),
+          ],
+          if (snapshot.projectContext != null) ...[
+            const Divider(),
+            const Text(
+              'Captured project results and sessions. Later changes are not streamed. Review failure details, which can include application output. Session metadata does not add environment values or VM connection credentials.',
+            ),
+            SelectableText(
+              const JsonEncoder.withIndent('  ')
+                  .convert(snapshot.projectContext!.toJson()),
+            ),
+          ],
+          if (snapshot.taskCatalog != null) ...[
+            const Divider(),
+            const Text(
+              'MCP clients can request these registered tasks. Each request waits for command review here. Changes to the configuration or toolchain require a fresh review.',
+            ),
+            SelectableText(
+              const JsonEncoder.withIndent('  ')
+                  .convert(snapshot.taskCatalog!.toJson()),
+            ),
+          ],
+        ],
+      ),
+      'Publish reviewed context',
+    );
+    if (approved && mounted) {
+      await widget.model.publishContext(snapshot, client.text);
+    }
+  });
+
+  Future<void> _proposal(EditorProposal proposal) => _act(() async {
+    final approved = await _review(
+      'Review MCP replacement',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${proposal.snapshot.path}\nSnapshot ${proposal.snapshot.id}'),
+          const Text('Before'),
+          SelectableText(proposal.snapshot.text),
+          const Divider(),
+          const Text('After'),
+          SelectableText(proposal.text),
+          const Text(
+            'Replaces only the published excerpt in the unsaved editor buffer. Changes to the document or share invalidate this proposal.',
+          ),
+        ],
+      ),
+      'Apply unsaved replacement',
+    );
+    if (approved && mounted) await widget.model.applyContextProposal(proposal);
+  });
+
+  Future<void> _copy(Object value) async {
+    await Clipboard.setData(
+      ClipboardData(text: const JsonEncoder.withIndent('  ').convert(value)),
+    );
+  }
+
+  Future<void> _loadCodex(EditorContextSnapshot snapshot) => _act(() async {
+    final targets = await widget.model.loadCodexTargets!(snapshot);
+    if (!mounted) return;
+    setState(() {
+      codexTargets = targets;
+      codexTarget = null;
+      codexDelivery = null;
+    });
+    if (targets.isEmpty) {
+      throw const EditorContextFailure(
+        'Connect a session for this workspace in Collaboration, then load sessions again.',
+      );
+    }
+  });
+
+  Future<void> _sendCodex(EditorContextSnapshot snapshot) => _act(() async {
+    final target = codexTarget;
+    if (target == null) {
+      throw const EditorContextFailure('Choose the destination session.');
+    }
+    final action = codexAction;
+    final text = widget.model.codexContextText(snapshot, action);
+    final approved = await _review(
+      'Review context for ${target.name}',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${action.label}\nSession: ${target.thread}\nWorkspace: ${target.workspace}\n${target.writer ? 'Registered writer' : 'Read only'}\nObjective: ${target.objective}',
+          ),
+          const Text(
+            'Send one captured message to this session. It is saved in collaboration history and can start an idle turn. Codex keeps its existing permissions and approvals. Revoking the editor endpoint does not remove a message already sent.',
+          ),
+          const Divider(),
+          SelectableText(text),
+        ],
+      ),
+      'Send reviewed context',
+    );
+    if (!approved || !mounted) return;
+    final result = await widget.model.sendCodexContext!(
+      snapshot,
+      target,
+      action,
+      text,
+    );
+    if (mounted) setState(() => codexDelivery = result);
+  });
+
+  Future<void> _task(EditorTaskRequest request) => _act(() async {
+    final service = widget.model.contextSharing!;
+    final prepare = widget.model.prepareTaskRequest;
+    final run = widget.model.runTaskRequest;
+    final discard = widget.model.discardTaskRequest;
+    if (prepare == null || run == null || discard == null) {
+      throw const EditorContextFailure('The task executor is unavailable.');
+    }
+    service.taskDecided(request, 'reviewing');
+    ProjectTask? task;
+    var decision = 'pending';
+    try {
+      task = await prepare(request);
+      if (!mounted) return;
+      final approved = await reviewProjectTask(context, task);
+      if (approved && mounted) await run(request, task);
+    } catch (_) {
+      decision = 'failed';
+      rethrow;
+    } finally {
+      try {
+        if (task != null) await discard(task);
+      } finally {
+        if (task?.status == TaskStatus.prepared) request.task = null;
+        if (service.ownsTaskRequest(request) && request.task == null) {
+          service.taskDecided(request, decision);
+        }
+      }
+    }
+  });
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.model,
+    builder: (context, _) {
+      final service = widget.model.contextSharing!;
+      final connection = service.connection;
+      final snapshot = service.snapshot;
+      return AlertDialog(
+        title: const Text('Editor context for Codex / MCP'),
+        content: SizedBox(
+          width: 760,
+          height: 500,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (error != null)
+                  Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                if (connection == null) ...[
+                  const Text(
+                    'Select text in the editor before opening this dialog, or choose the whole document. Review the exact content before making it available.',
+                  ),
+                  TextField(
+                    controller: client,
+                    enabled: !busy,
+                    decoration: const InputDecoration(labelText: 'Client name'),
+                  ),
+                  CheckboxListTile(
+                    value: whole,
+                    onChanged: busy
+                        ? null
+                        : (value) => setState(() => whole = value!),
+                    title: const Text('Share the whole document'),
+                  ),
+                  CheckboxListTile(
+                    value: diagnostics,
+                    onChanged: busy
+                        ? null
+                        : (value) => setState(() => diagnostics = value!),
+                    title: const Text('Include captured diagnostics'),
+                  ),
+                  if (widget.model.captureProjectContext != null) ...[
+                    CheckboxListTile(
+                      value: tests,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => tests = value!),
+                      title: const Text('Include captured test results'),
+                    ),
+                    CheckboxListTile(
+                      value: sessions,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => sessions = value!),
+                      title: const Text('Include running debug/task sessions'),
+                    ),
+                  ],
+                  if (widget.model.captureTaskCatalog != null)
+                    CheckboxListTile(
+                      value: registeredTasks,
+                      onChanged: busy
+                          ? null
+                          : (value) => setState(() => registeredTasks = value!),
+                      title: const Text(
+                        'Allow requests for registered project tasks',
+                      ),
+                    ),
+                  FilledButton(
+                    onPressed: busy ? null : _publish,
+                    child: const Text('Review editor context'),
+                  ),
+                ] else ...[
+                  Text(
+                    'Shared for ${service.client} · captured version ${snapshot!.version}',
+                  ),
+                  SelectableText(snapshot.path),
+                  SelectableText('${connection.endpoint}'),
+                  const Text(
+                    'Add this Streamable HTTP connection in the MCP client using the copied URL and Authorization header. The credential grants access to this excerpt until revoked.',
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => _act(
+                          () => _copy({
+                            'url': '${connection.endpoint}',
+                            'http_headers': {
+                              'Authorization': 'Bearer ${connection.token}',
+                            },
+                          }),
+                        ),
+                        child: const Text('Copy MCP connection'),
+                      ),
+                      OutlinedButton(
+                        onPressed: () => _act(() => _copy(snapshot.toJson())),
+                        child: const Text('Copy context for Codex'),
+                      ),
+                      FilledButton(
+                        onPressed: () => _act(widget.model.revokeContext),
+                        child: const Text('Revoke editor context'),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  if (widget.model.loadCodexTargets != null &&
+                      widget.model.sendCodexContext != null) ...[
+                    OutlinedButton(
+                      onPressed: busy ? null : () => _loadCodex(snapshot),
+                      child: const Text('Load Codex sessions'),
+                    ),
+                    if (codexTargets.isNotEmpty) ...[
+                      DropdownButtonFormField<EditorCodexTarget>(
+                        key: ValueKey(codexTargets),
+                        initialValue: codexTarget,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Destination Codex session',
+                        ),
+                        items: [
+                          for (final target in codexTargets)
+                            DropdownMenuItem(
+                              value: target,
+                              child: Text(
+                                '${target.name} · ${target.writer ? 'writer' : 'read only'}',
+                              ),
+                            ),
+                        ],
+                        onChanged: busy
+                            ? null
+                            : (value) => setState(() {
+                                codexTarget = value;
+                                codexDelivery = null;
+                              }),
+                      ),
+                      DropdownButtonFormField<EditorCodexAction>(
+                        initialValue: codexAction,
+                        decoration: const InputDecoration(
+                          labelText: 'Editor action',
+                        ),
+                        items: [
+                          for (final action in EditorCodexAction.values)
+                            DropdownMenuItem(
+                              value: action,
+                              child: Text(action.label),
+                            ),
+                        ],
+                        onChanged: busy
+                            ? null
+                            : (value) => setState(() {
+                                codexAction = value!;
+                                codexDelivery = null;
+                              }),
+                      ),
+                      FilledButton(
+                        onPressed: busy || codexTarget == null
+                            ? null
+                            : () => _sendCodex(snapshot),
+                        child: const Text('Review context for Codex'),
+                      ),
+                    ],
+                    if (codexDelivery != null) Text(codexDelivery!),
+                    const Divider(),
+                  ],
+                  if (snapshot.taskCatalog != null) ...[
+                    const Text(
+                      'Registered task requests · open Tasks to stop a running command',
+                    ),
+                    if (service.taskRequests.isEmpty)
+                      const Text('No task requests received.'),
+                    for (final request in service.taskRequests.values)
+                      ListTile(
+                        title: Text(request.name),
+                        subtitle: Text(
+                          '${request.id} · ${request.status}${request.task?.exitCode == null ? '' : ' · exit ${request.task!.exitCode}'}',
+                        ),
+                        trailing: request.status != 'pending'
+                            ? null
+                            : Wrap(
+                                spacing: 8,
+                                children: [
+                                  OutlinedButton(
+                                    onPressed: busy
+                                        ? null
+                                        : () => _task(request),
+                                    child: const Text('Review task request'),
+                                  ),
+                                  TextButton(
+                                    onPressed: busy
+                                        ? null
+                                        : () => service.taskDecided(
+                                            request,
+                                            'rejected',
+                                          ),
+                                    child: const Text('Reject task request'),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    const Divider(),
+                  ],
+                  if (service.proposals.isEmpty)
+                    const Text('No replacement proposals received.'),
+                  for (final proposal in service.proposals.values)
+                    ListTile(
+                      title: Text(proposal.id),
+                      subtitle: Text(proposal.status),
+                      trailing: proposal.status != 'pending'
+                          ? null
+                          : Wrap(
+                              spacing: 8,
+                              children: [
+                                OutlinedButton(
+                                  onPressed: busy
+                                      ? null
+                                      : () => _proposal(proposal),
+                                  child: const Text('Review replacement'),
+                                ),
+                                TextButton(
+                                  onPressed: busy
+                                      ? null
+                                      : () => service.decided(
+                                          proposal,
+                                          applied: false,
+                                        ),
+                                  child: const Text('Reject'),
+                                ),
+                              ],
+                            ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}

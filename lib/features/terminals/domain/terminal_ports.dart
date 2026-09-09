@@ -33,3 +33,9 @@ abstract interface class CodexLauncher {
   LaunchSpec shell(String directory);
   LaunchSpec? codex(String directory, {bool resume = false});
 }
+
+/// User-initiated clipboard operations, injected by the desktop composition.
+abstract interface class TextClipboard {
+  Future<String?> readText();
+  Future<void> writeText(String text);
+}

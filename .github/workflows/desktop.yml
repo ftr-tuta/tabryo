@@ -2,12 +2,16 @@ name: Desktop
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   desktop:
@@ -25,40 +29,127 @@ jobs:
       - uses: actions/checkout@v4
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev xvfb
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/editor_web/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: packages/editor_web
+      - run: npm run build
+        working-directory: packages/editor_web
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.2'
           channel: stable
           cache: true
+      - name: Configure Flutter desktop target
+        # Qualify the native desktop host without the runner's unrelated ADB
+        # server interfering with Flutter daemon discovery and process teardown.
+        run: flutter config --enable-${{ matrix.device }}-desktop --no-enable-android
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install native project tools
+        run: python -m pip install uv==0.8.22 poetry==2.2.1 ruff==0.16.6 black==26.5.1 pytest==9.0.2 pytest-cov==7.1.0 debugpy==1.8.21 Django==6.1.1 fastapi==0.140.6 uvicorn==0.52.4
       - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
       - run: dart run dartitect_cli:dartitect scan
       - run: flutter test --concurrency=1
+        env:
+          TABRYO_TEST_PROJECT_SETUP: '1'
+          TABRYO_TEST_LANGUAGE_PYTHON: '1'
+          TABRYO_TEST_TASKS: '1'
+          TABRYO_TEST_DEBUG_PYTHON: '1'
+      - name: Windows Flutter debugger integration
+        if: runner.os == 'Windows'
+        run: flutter test test/debugger_test.dart --plain-name "Flutter discovers" --concurrency=1
+        env:
+          TABRYO_TEST_FLUTTER_DEBUG: '1'
+      - name: Linux Flutter debugger integration
+        if: runner.os == 'Linux'
+        run: xvfb-run -a flutter test test/debugger_test.dart --plain-name "Flutter discovers" --concurrency=1
+        env:
+          TABRYO_TEST_FLUTTER_DEBUG: '1'
       - name: Windows native terminal tests
         if: runner.os == 'Windows'
         run: flutter test integration_test/terminal_host_test.dart -d windows
       - name: Linux native terminal tests
         if: runner.os == 'Linux'
         run: xvfb-run -a flutter test integration_test/terminal_host_test.dart -d linux
+      - name: Native Codex editor context and MCP integration
+        shell: pwsh
+        run: |
+          $codexRoot = Join-Path $env:RUNNER_TEMP 'tabryo-codex'
+          npm install --prefix $codexRoot --no-save --ignore-scripts --no-audit --no-fund '@openai/codex@0.147.0'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $platform = if ($IsWindows) { 'win32' } else { 'linux' }
+          $binary = if ($IsWindows) { 'codex.exe' } else { 'codex' }
+          $package = Join-Path $codexRoot "node_modules/@openai/codex-$platform-x64"
+          $executables = @(Get-ChildItem -LiteralPath $package -Recurse -File -Filter $binary)
+          if ($executables.Count -ne 1) { throw 'Expected one installed native Codex executable.' }
+          $env:TABRYO_TEST_CODEX = $executables[0].FullName
+          $flutterBin = Split-Path (Get-Command flutter).Source
+          $dartBinary = if ($IsWindows) { 'dart.exe' } else { 'dart' }
+          $env:TABRYO_TEST_DART = Join-Path $flutterBin "cache/dart-sdk/bin/$dartBinary"
+          if ($IsWindows) {
+            $env:PATH = "${PWD}/build/windows/x64/runner/Debug;$env:PATH"
+          } else {
+            $env:LD_LIBRARY_PATH = "${PWD}/build/linux/x64/debug/bundle/lib:$env:LD_LIBRARY_PATH"
+          }
+          flutter test test/collaboration_sessions_test.dart test/codex_sessions_test.dart test/mcp_codex_test.dart --concurrency=1 --name 'installed Codex uses authenticated collaboration MCP|steering reaches the active turn|installed Codex|standalone client'
+          exit $LASTEXITCODE
       - name: Windows desktop integration
         if: runner.os == 'Windows'
         run: flutter test integration_test/workbench_test.dart -d windows
+      - name: Windows embedded editor integration
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        run: flutter test integration_test/editor_test.dart -d windows
       - name: Linux desktop integration
         if: runner.os == 'Linux'
         run: xvfb-run -a flutter test integration_test/workbench_test.dart -d linux
+      - name: Linux embedded editor integration
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded
+        env:
+          LC_ALL: C
+      - name: Linux HiDPI editor integration
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: xvfb-run -a -s '-screen 0 2560x1600x24' flutter test integration_test/editor_test.dart -d linux --reporter expanded
+        env:
+          GDK_SCALE: '2'
+          GDK_DPI_SCALE: '0.5'
+      - name: Linux Release editor integration
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          flutter build linux --release -t integration_test/editor_test.dart
+          xvfb-run -a build/linux/x64/release/bundle/tabryo
+      - name: Windows Release editor integration
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          flutter build windows --release -t integration_test/editor_test.dart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $app = Start-Process -FilePath build/windows/x64/runner/Release/tabryo.exe -Wait -PassThru -NoNewWindow
+          exit $app.ExitCode
       - name: Build Release integration entrypoint for memory observation
         run: flutter build ${{ matrix.device }} --release -t integration_test/workbench_test.dart
       - name: Windows Release integration and memory
         if: runner.os == 'Windows'
-        timeout-minutes: 3
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $app = Start-Process -FilePath build/windows/x64/runner/Release/tabryo.exe -Wait -PassThru -NoNewWindow
           exit $app.ExitCode
       - name: Linux Release integration and memory
         if: runner.os == 'Linux'
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: xvfb-run -a build/linux/x64/release/bundle/tabryo
       - run: flutter build ${{ matrix.device }} --release
       - name: Package Windows

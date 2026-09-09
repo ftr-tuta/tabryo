@@ -1,0 +1,16 @@
+{
+  "name": "@tabryo/editor-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "monaco-editor": "0.56.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "pyright": "1.1.413"
+  }
+}

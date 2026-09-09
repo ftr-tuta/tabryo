@@ -259,6 +259,23 @@ void main() {
           ? await Directory('/proc/self/fd').list().length
           : await windowsHandleCount();
       final childPids = <int>[];
+      final kernel = Platform.isWindows
+          ? DynamicLibrary.open('kernel32.dll')
+          : null;
+      final openProcess = kernel
+          ?.lookupFunction<
+            IntPtr Function(Uint32, Int32, Uint32),
+            int Function(int, int, int)
+          >('OpenProcess');
+      final waitProcess = kernel
+          ?.lookupFunction<
+            Uint32 Function(IntPtr, Uint32),
+            int Function(int, int)
+          >('WaitForSingleObject');
+      final closeHandle = kernel
+          ?.lookupFunction<Int32 Function(IntPtr), int Function(int)>(
+            'CloseHandle',
+          );
       for (var index = 0; index < 100; index++) {
         final spec = Platform.isWindows
             ? TerminalLaunchSpec(
@@ -271,8 +288,17 @@ void main() {
             : command('', "printf 'cycle-$index\\n'");
         final pty = TerminalPty.start(spec);
         childPids.add(pty.pid);
-        expect(await collect(pty, exit: 0), contains('cycle-$index'));
-        await pty.close();
+        // Retain the original process object before draining the PTY. Looking
+        // up released PIDs after 100 cycles can find an unrelated reused PID.
+        final process = openProcess?.call(0x00100000, 0, pty.pid) ?? 0;
+        if (Platform.isWindows) expect(process, isNot(0));
+        try {
+          expect(await collect(pty, exit: 0), contains('cycle-$index'));
+          await pty.close();
+          if (Platform.isWindows) expect(waitProcess!(process, 0), 0);
+        } finally {
+          if (process != 0) expect(closeHandle!(process), 1);
+        }
       }
       if (Platform.isLinux) {
         expect(
@@ -288,14 +314,6 @@ void main() {
           'Windows process handles after warmup: $before; after 100 closed sessions: $after',
         );
         expect(after, lessThanOrEqualTo(before + 4));
-        final alive = await Process.run(command('', '').executable, [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          'Get-Process -Id ${childPids.join(',')} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id',
-        ]);
-        expect('${alive.stdout}'.trim(), isEmpty);
       }
     },
     timeout: const Timeout(Duration(minutes: 4)),

@@ -74,6 +74,15 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# webview_win_floating is pinned to 3.0.3. Its Linux host frees borrowed
+# WebKit objects and bypasses scripted navigation decisions. Compile our
+# corrected host while retaining the package's Dart API and method channel.
+get_target_property(WEBVIEW_SOURCE_DIR webview_win_floating_plugin SOURCE_DIR)
+set_property(TARGET webview_win_floating_plugin PROPERTY SOURCES
+  "${CMAKE_CURRENT_SOURCE_DIR}/webview/webview_win_floating_plugin.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/webview/my_webview.cpp")
+target_include_directories(webview_win_floating_plugin PRIVATE "${WEBVIEW_SOURCE_DIR}")
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build

@@ -1,3 +1,7 @@
+// Flutter HardwareKeyboard is presentation input state; Dartitect 1.1.0
+// classifies the SDK's services/ source directory as infrastructure.
+// ignore_for_file: dartitect_dt3121
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm2/xterm.dart';
@@ -12,6 +16,8 @@ final class TerminalPaneView extends StatefulWidget {
     required this.focused,
     required this.onFocus,
     required this.onClose,
+    required this.readClipboard,
+    required this.writeClipboard,
     super.key,
   });
   final TerminalSession session;
@@ -19,6 +25,8 @@ final class TerminalPaneView extends StatefulWidget {
   final bool focused;
   final VoidCallback onFocus;
   final VoidCallback onClose;
+  final Future<String?> Function() readClipboard;
+  final Future<void> Function(String) writeClipboard;
   @override
   State<TerminalPaneView> createState() => _TerminalPaneViewState();
 }
@@ -69,16 +77,15 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
   Future<void> _copy() async {
     final range = _controller.selection;
     if (range != null) {
-      await Clipboard.setData(
-        ClipboardData(text: widget.session.terminal.buffer.getText(range)),
-      );
+      final text = widget.session.terminal.buffer.getText(range);
+      await widget.writeClipboard(text);
     }
   }
 
   Future<void> _paste() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (!mounted || data?.text == null) return;
-    final text = data!.text!;
+    final text = await widget.readClipboard();
+    if (!mounted) return;
+    if (text == null) return;
     if (text.contains('\n') || text.contains('\r')) {
       final accepted = await showDialog<bool>(
         context: context,

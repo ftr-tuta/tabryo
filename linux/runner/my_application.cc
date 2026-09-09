@@ -14,11 +14,6 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
-// Called when first Flutter frame received.
-static void first_frame_cb(MyApplication* self, FlView* view) {
-  gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
-}
-
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -73,14 +68,15 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
-  // Show the window when Flutter renders.
-  // Requires the view to be realized so we can start rendering.
-  g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
-                           self);
-  gtk_widget_realize(GTK_WIDGET(view));
-
+  // Plugins install the native surface container while FlView is unrealized.
+  // Reparenting an already rendering FlView recreates its compositor and can
+  // strand the GTK thread waiting for a frame from the previous compositor.
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  // Map the GTK window before waiting for Dart to paint. A hidden window can
+  // leave the first frame waiting for the allocation/lifecycle events that
+  // mapping it supplies, including when a desktop test pumps its initial tree.
+  gtk_widget_show(GTK_WIDGET(window));
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 

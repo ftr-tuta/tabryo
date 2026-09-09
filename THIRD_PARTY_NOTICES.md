@@ -4,6 +4,17 @@ Tabryo depends on Flutter/Dart (BSD-3-Clause), Dartitect 1.1.0, xterm2 5.2.0
 (MIT), path (BSD-3-Clause) and their transitive dependencies. Flutter bundles
 resolved Dart package license notices in data/flutter_assets/NOTICES.Z.
 
+The embedded editor uses Monaco Editor 0.56.0 (MIT, Microsoft Corporation).
+Its complete license and upstream notices ship as assets/editor/MONACO-LICENSE.txt
+and assets/editor/MONACO-ThirdPartyNotices.txt inside data/flutter_assets.
+Bundled JavaScript also retains linked dependency license notices.
+The desktop adapter is webview_win_floating 3.0.3; its Flutter package notices
+are included in NOTICES.Z. Windows requires Microsoft's WebView2 Runtime;
+Ubuntu uses the system WebKitGTK 4.1 runtime.
+The Linux host in `linux/webview` is derived from that version, with corrected
+navigation decisions and WebKit object ownership. Its BSD-3-Clause license is
+retained in `linux/webview/LICENSE` and the upstream package's bundled notices.
+
 The terminal_host native implementation derives from flutter_pty 0.4.2 by xuty.
 Its MIT license is reproduced below. Dart dynamic API headers retain their
 copyright and BSD license notices in packages/terminal_host/src/upstream_include.

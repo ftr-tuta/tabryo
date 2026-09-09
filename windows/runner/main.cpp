@@ -1,6 +1,7 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
+#include <algorithm>
 
 #include "flutter_window.h"
 #include "utils.h"
@@ -22,9 +23,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
 
+  const bool service = std::find(command_line_arguments.begin(),
+      command_line_arguments.end(), "--collaboration-service") != command_line_arguments.end();
+  if (service) {
+    // A detached daemon owns its children. On a crash Windows closes this job
+    // handle and terminates only this daemon's Codex processes and descendants.
+    HANDLE job = CreateJobObject(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+        &limits, sizeof(limits)) || !AssignProcessToJobObject(job, GetCurrentProcess())) {
+      return EXIT_FAILURE;
+    }
+    // Intentionally retained until process termination (including abnormal exit).
+  }
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
-  FlutterWindow window(project);
+  FlutterWindow window(project, service);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(L"Tabryo", origin, size)) {

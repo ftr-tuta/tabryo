@@ -34,7 +34,51 @@ final class FilePreview {
   final bool invalidUtf8;
 }
 
+final class WorkspaceSearchQuery {
+  const WorkspaceSearchQuery(
+    this.text, {
+    this.caseSensitive = false,
+    this.pathContains = '',
+    this.excludedDirectories = const [],
+  });
+  final String text;
+  final bool caseSensitive;
+  final String pathContains;
+  final List<String> excludedDirectories;
+}
+
+final class WorkspaceMatch {
+  const WorkspaceMatch({
+    required this.path,
+    required this.line,
+    required this.column,
+    required this.text,
+    required this.preview,
+  });
+  final String path;
+  final int line;
+  final int column;
+  final String text;
+  final String preview;
+}
+
+final class WorkspaceSearchResults {
+  const WorkspaceSearchResults(
+    this.matches, {
+    this.limited = false,
+    this.skipped = 0,
+  });
+  final List<WorkspaceMatch> matches;
+  final bool limited;
+  final int skipped;
+}
+
 abstract interface class WorkspaceFiles {
+  Future<WorkspaceSearchResults> search(
+    String root,
+    WorkspaceSearchQuery query,
+    Cancellation cancellation,
+  );
   Future<String> authorizeRoot(String path);
   Future<FilePage> list(
     String root,
