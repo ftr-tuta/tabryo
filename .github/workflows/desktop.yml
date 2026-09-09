@@ -294,6 +294,7 @@ jobs:
           flutter-version: '3.47.2'
           channel: stable
           cache: true
+          pub-cache-path: /home/desktop/.pub-cache
       - uses: actions/download-artifact@v4
         with:
           name: editor-linux-${{ github.sha }}
@@ -311,7 +312,8 @@ jobs:
           for bundle in editor workbench release; do
             tar -xzf .archlinux/$bundle/*.tar.gz -C .archlinux/$bundle
           done
-          chown -R desktop:desktop "$GITHUB_WORKSPACE" "$FLUTTER_ROOT"
+          mkdir -p "$PUB_CACHE"
+          chown -R desktop:desktop "$GITHUB_WORKSPACE" "$FLUTTER_ROOT" "$PUB_CACHE"
           runuser -u desktop -- env PATH="$FLUTTER_ROOT/bin:$PATH" bash -euo pipefail <<'TESTS'
           git config --global --add safe.directory "$FLUTTER_ROOT"
           flutter config --enable-linux-desktop --no-enable-android
