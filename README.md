@@ -115,7 +115,7 @@ arriving during formatting keep the buffer. Retry with Ctrl+S or use
 **Document actions → Save without formatting** after a formatter failure.
 Project SDK discovery is available from **Projects and toolchains**. An active
 Dart language server supplies formatting; the selected SDK process is the fallback
-when no server provides it. Flutter hot reload remains pending.
+when no server provides it. Flutter hot reload is available during a running session.
 
 Preferences, remembered directories, layout and file watching are opt-in.
 Disabling persistence clears the corresponding persisted data. Watching monitors
@@ -446,8 +446,14 @@ shutdown close the owned adapter process tree, including Python descendants.
 The project stays reserved while startup or shutdown is pending.
 
 Flutter provides hot reload/restart after application startup, requiring saved
-project buffers. **Open DevTools in browser** starts the selected SDK's DevTools
-on loopback and opens it for this local VM service; Stop closes that server too.
+project buffers. Successful Dart saves automatically reload the active Flutter
+project; rapid saves coalesce and a paused session waits until continued. Disable
+**Hot reload after successful Dart saves** to use manual controls only. A reload
+failure leaves the saved file intact and reports the separate reload error.
+**Open DevTools in Tabryo** starts the selected SDK's DevTools on loopback and
+opens a resizable pane for this session's VM service. The pane has a separate
+browser profile, permits navigation only on that server and hides while a dialog
+covers it. Closing the pane keeps the session; Stop closes its DevTools server.
 Debugger output and variables remain in memory, with bounded retained output.
 Adapters and SDKs are not bundled.
 

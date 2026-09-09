@@ -43,14 +43,42 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.projects,
     this.tasks,
     this.debugger,
+    this.devToolsProfileDirectory,
   }) {
     editor?.addListener(_editorChanged);
+    editor?.onSaved = (saved) {
+      final service = debugger;
+      final config = service?.configuration;
+      if (_shutdown ||
+          config == null ||
+          config.project.kind != ProjectKind.flutter ||
+          saved.root != config.project.workspace ||
+          !p.isWithin(config.project.directory, saved.path) ||
+          p.extension(saved.path) != '.dart' ||
+          projects?.discovery.projects.any(
+                (other) =>
+                    other.id != config.project.id &&
+                    p.isWithin(config.project.directory, other.directory) &&
+                    p.isWithin(other.directory, saved.path),
+              ) ==
+              true) {
+        return;
+      }
+      service!.scheduleReloadAfterSave(() async {
+        if (_shutdown || !identical(service.configuration, config)) {
+          return false;
+        }
+        await _checkProjectDocuments(config.project.directory);
+        return !_shutdown && identical(service.configuration, config);
+      });
+    };
     _debugChanges = debugger?.changes.listen((_) {
       if (!_startingDebugger &&
           debugger?.active != true &&
           _debugProject != null) {
         _projectRuns.remove(_debugProject);
         _debugProject = null;
+        devToolsVisible = false;
       }
       if (!_shutdown) notifyListeners();
     });
@@ -59,6 +87,33 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final ProjectsViewModel? projects;
   final TasksViewModel? tasks;
   final DebugService? debugger;
+  final String? devToolsProfileDirectory;
+  bool devToolsVisible = false;
+  Future<void> openDevToolsPane() async {
+    final service = debugger;
+    final config = service?.configuration;
+    if (service == null ||
+        config == null ||
+        devToolsProfileDirectory == null ||
+        workspace?.root != config.project.workspace) {
+      throw const DebugFailure('Open the workspace owning this debug session.');
+    }
+    await service.openDevTools(external: false);
+    if (_shutdown ||
+        !identical(config, service.configuration) ||
+        service.devToolsUri == null ||
+        workspace?.root != config.project.workspace) {
+      return;
+    }
+    devToolsVisible = true;
+    notifyListeners();
+  }
+
+  void hideDevToolsPane() {
+    devToolsVisible = false;
+    notifyListeners();
+  }
+
   StreamSubscription<void>? _debugChanges;
   String? _debugProject;
   bool _startingDebugger = false;
@@ -1297,6 +1352,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
   Future<void>? _shutdownFuture;
   Future<void> shutdown() => _shutdownFuture ??= () async {
     _shutdown = true;
+    editor?.onSaved = null;
     await debugger?.dispose();
     await _debugChanges?.cancel();
     _selection?.cancel();

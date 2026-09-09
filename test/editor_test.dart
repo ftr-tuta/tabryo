@@ -646,6 +646,8 @@ Future<void> main(List<String> args) async {
   test(
     'failed and overlapping saves preserve buffers and edits made while saving',
     () async {
+      final saved = <DocumentSnapshot>[];
+      editor.onSaved = saved.add;
       await editor.open(root, p.join(root, 'server.dart'));
       final buffer = editor.active!;
       buffer.controller.text = 'first edit';
@@ -665,8 +667,12 @@ Future<void> main(List<String> args) async {
       expect(buffer.error, contains('changed on disk'));
       expect(editor.closeWorkspace(root), isFalse);
       files.failure = null;
+      await Future<void>.delayed(Duration.zero);
+      expect(saved, isEmpty);
       expect(await editor.save(buffer), isTrue);
       expect(buffer.dirty, isFalse);
+      await Future<void>.delayed(Duration.zero);
+      expect(saved.single.text, 'later edit');
       await editor.disposeAsync();
     },
   );

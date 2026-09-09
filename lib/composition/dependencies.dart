@@ -44,6 +44,14 @@ WorkbenchViewModel createWorkbench() {
   );
   return WorkbenchViewModel(
     debugger: DebugService(LocalDebugAdapters()),
+    devToolsProfileDirectory: p.join(
+      Platform.isWindows
+          ? Platform.environment['LOCALAPPDATA']!
+          : (Platform.environment['XDG_CACHE_HOME'] ??
+                p.join(Platform.environment['HOME']!, '.cache')),
+      'Tabryo',
+      'devtools-webview',
+    ),
     projects: ProjectsViewModel(LocalProjectEnvironment()),
     tasks: TasksViewModel(LocalTaskFiles(), windows: Platform.isWindows),
     collaboration: Platform.isWindows

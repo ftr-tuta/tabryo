@@ -464,13 +464,18 @@ relatórios ausentes/inválidos não produzem sucesso. Os testes nativos existen
 cobrem esses contratos, sem infraestrutura de evidência paralela. DAP oferece
 início revisado, breakpoints confirmados, pilha, variáveis, avaliação e controles
 com ownership da árvore de processos e exclusão de comandos sobrepostos.
-Flutter oferece seleção de dispositivo, execução, hot reload/restart e DevTools
-local vinculado à sessão. Perfis Django/FastAPI e tarefas de gestão Django usam
+Flutter oferece seleção de dispositivo, execução e hot reload/restart. Salvamentos
+Dart bem-sucedidos recarregam a sessão ativa, agrupando eventos próximos e
+aguardando a continuação quando pausada; erros de reload não desfazem o salvamento.
+DevTools local vinculado à sessão abre em painel redimensionável, com perfil web
+próprio, navegação restrita ao servidor e ocultação durante diálogos.
+Perfis Django/FastAPI e tarefas de gestão Django usam
 o interpretador escolhido. Testes nativos Windows passaram para esses fluxos,
 incluindo requisições HTTP reais pausadas em breakpoints e encerramento de filhos.
 O workflow Desktop inclui os mesmos adaptadores e frameworks nos dois sistemas;
-a CI da revisão `3b4dec3` passou todos os gates Ubuntu, incluindo Release,
-empacotamento e execução do pacote extraído. Alterações posteriores seguem
+a CI da revisão `74b6114` passou todos os gates Windows/Ubuntu, incluindo Release,
+empacotamento, execução do pacote extraído e editor Linux em escala de 200%.
+Alterações posteriores seguem
 dependentes dos gates do respectivo HEAD.
 Contexto do editor oferece publicação revisada de seleção/documento, versão e
 estado salvo/modificado por MCP HTTP local autenticado, além de cópia explícita
@@ -483,9 +488,12 @@ proposta do servidor e exige revisão nativa antes de alterar o buffer; desfazer
 permanece no Monaco. Comandos cancelados não podem fornecer uma proposta tardia
 para outra revisão. A exposição opcional de diagnósticos captura somente faixas
 inteiramente contidas no trecho, limita quantidade/bytes e mostra origem, código
-e versão reportada, mantendo explícita a ausência de versão. Refatorações com
-operações de arquivo, conversas gráficas Codex e aceites físicos IME/DPI continuam pendentes;
-esta entrega não conclui a matriz Python/Dart/Flutter.
+e versão reportada, mantendo explícita a ausência de versão. Attach, breakpoints
+condicionais/watches, navegação Flutter via DTD, contexto de testes/sessões e
+aceites físicos IME/DPI continuam pendentes na matriz Python/Dart/Flutter.
+Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
+seu planejamento independente permanece em CODEX-02. Operações de arquivo em
+refatorações continuam recusadas de forma explícita.
 
 * *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.
 * *Resultado esperado:* editor com abas, destaque de sintaxe, busca/substituição, desfazer/refazer, seleção múltipla, salvamento confiável e recuperação de alterações.

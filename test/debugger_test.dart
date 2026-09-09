@@ -5,11 +5,21 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/cancellation.dart';
+import 'package:tabryo/core/preview_cache.dart';
+import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
+import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart';
+import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
+import 'package:tabryo/features/projects/infrastructure/local_project_environment.dart';
+import 'package:tabryo/features/projects/presentation/projects_view_model.dart';
+import 'package:tabryo/features/workspaces/presentation/workbench_view_model.dart';
 import 'package:tabryo/features/debugger/application/debug_service.dart';
 import 'package:tabryo/features/debugger/application/debug_profiles.dart';
 import 'package:tabryo/features/debugger/domain/debug_session.dart';
 import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
 import 'package:tabryo/features/projects/domain/project.dart';
+
+import 'workbench_test.dart'
+    show MemoryHost, MemoryLauncher, MemoryFiles, NoGit, MemoryPreferences;
 
 void main() {
   test(
@@ -51,7 +61,8 @@ void main() {
       String code(String message) =>
           "import 'package:flutter/material.dart';\n"
           "void main() { print('BOOT_READY'); runApp(const App()); }\n"
-          "class App extends StatelessWidget { const App({super.key});\n"
+          "class App extends StatefulWidget { const App({super.key}); @override State<App> createState() => AppState(); }\n"
+          "class AppState extends State<App> { @override void initState() { super.initState(); print('STATE_CREATED'); }\n"
           "@override Widget build(BuildContext context) { print('$message'); return const MaterialApp(home: Text('$message')); } }\n";
       await source.writeAsString(code('FIRST_READY'));
       final setup = await Process.run(dart, [
@@ -73,13 +84,33 @@ void main() {
       });
       final adapters = LocalDebugAdapters();
       final service = DebugService(adapters);
+      final editor = EditorViewModel(
+        LocalDocumentFiles(PreviewCache()),
+        formatter: LocalDartFormatter(),
+      )..dartFormatters = {root: dart};
+      final projects = ProjectsViewModel(LocalProjectEnvironment());
+      final git = NoGit();
+      final workbench = WorkbenchViewModel(
+        host: MemoryHost(),
+        launcher: MemoryLauncher(),
+        files: MemoryFiles(),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: MemoryPreferences(),
+        editor: editor,
+        debugger: service,
+        projects: projects,
+      );
       addTearDown(() async {
-        await service.dispose();
+        await workbench.shutdown();
         await directory.delete(recursive: true);
       });
+      await workbench.openWorkspace(root);
+      projects.discovery = ProjectDiscovery([project]);
+      projects.selections[project.id] = tools;
       final devices = await adapters.devices(project, tools);
       expect(devices.any((device) => device.id == platform), isTrue);
-      await service.start(
+      await workbench.startDebugger(
         debugProfile(
           project: project,
           tools: tools,
@@ -94,10 +125,15 @@ void main() {
             'Flutter startup: ${service.status}, appStarted=${service.appStarted}, error=${service.error}\n${service.output}',
       );
       expect(service.vmService, isNotNull);
-      await source.writeAsString(code('RELOADED_READY'));
-      await service.control('hotReload');
-      await _until(() => service.output.contains('RELOADED_READY'));
+      final states = RegExp('STATE_CREATED').allMatches(service.output).length;
       final boots = RegExp('BOOT_READY').allMatches(service.output).length;
+      await editor.open(root, source.path);
+      final buffer = editor.active!;
+      buffer.controller.text = code('RELOADED_READY');
+      expect(await editor.save(buffer), isTrue, reason: buffer.error);
+      await _until(() => service.output.contains('RELOADED_READY'));
+      expect(RegExp('STATE_CREATED').allMatches(service.output).length, states);
+      expect(RegExp('BOOT_READY').allMatches(service.output).length, boots);
       await service.control('hotRestart');
       await _until(
         () => RegExp('BOOT_READY').allMatches(service.output).length > boots,
@@ -257,6 +293,71 @@ void main() {
       await _until(() => !service.active);
       expect(service.error, isNull);
       expect(service.exitCode, 0);
+    },
+  );
+
+  test(
+    'successful saves coalesce reloads and stop retires pending checks',
+    () async {
+      final adapters = MemoryAdapters();
+      final service = DebugService(adapters);
+      addTearDown(service.dispose);
+      final base = memoryConfiguration();
+      await service.start(
+        DebugConfiguration(
+          project: DevelopmentProject(
+            workspace: base.project.workspace,
+            directory: base.project.directory,
+            name: 'Flutter',
+            kind: ProjectKind.flutter,
+          ),
+          tools: base.tools,
+          program: base.program,
+          device: 'desktop',
+        ),
+      );
+      adapters.connection.emit('flutter.appStarted');
+      await _until(() => service.appStarted);
+      var checks = 0;
+      Future<bool> check() async {
+        checks++;
+        return true;
+      }
+
+      for (var i = 0; i < 5; i++) {
+        service.scheduleReloadAfterSave(check);
+      }
+      await _until(() => adapters.connection.commands.contains('hotReload'));
+      expect(checks, 1);
+      expect(
+        adapters.connection.commands.where((c) => c == 'hotReload').length,
+        1,
+      );
+      expect(adapters.connection.lastHotReason, 'save');
+      adapters.connection.emit('stopped', {'threadId': 7});
+      await _until(() => service.status == DebugStatus.paused);
+      service.scheduleReloadAfterSave(check);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(checks, 1);
+      adapters.connection.emit('continued');
+      await _until(() => checks == 2);
+      final held = Completer<bool>();
+      var waiting = false;
+      service.scheduleReloadAfterSave(() {
+        waiting = true;
+        return held.future;
+      });
+      await _until(() => waiting);
+      final count = adapters.connection.commands
+          .where((c) => c == 'hotReload')
+          .length;
+      await service.stop();
+      held.complete(true);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        adapters.connection.commands.where((c) => c == 'hotReload').length,
+        count,
+      );
     },
   );
 
@@ -568,6 +669,7 @@ final class MemoryAdapters implements DebugAdapters {
 }
 
 final class MemoryDebugConnection implements DebugConnection {
+  String? lastHotReason;
   Object? stackError;
   final controller = StreamController<Map<String, dynamic>>.broadcast();
   final variables = Completer<Map<String, dynamic>>();
@@ -583,6 +685,7 @@ final class MemoryDebugConnection implements DebugConnection {
     Map<String, Object?> arguments = const {},
   ]) async {
     commands.add(command);
+    if (command == 'hotReload') lastHotReason = arguments['reason'] as String?;
     if (command == 'stackTrace' && stackError != null) throw stackError!;
     if (command == 'initialize') {
       return {'supportsConfigurationDoneRequest': true};

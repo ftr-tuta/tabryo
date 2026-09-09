@@ -41,6 +41,83 @@ final class DebugService {
   int stopCount = 0;
   Uri? vmService;
   bool appStarted = false;
+  bool reloadOnSave = true;
+  Timer? _reloadTimer;
+  Future<bool> Function()? _savedReloadCheck;
+  Future<void>? _hotOperation;
+
+  void setReloadOnSave(bool enabled) {
+    reloadOnSave = enabled;
+    if (!enabled) {
+      _reloadTimer?.cancel();
+      _savedReloadCheck = null;
+    }
+    _changed();
+  }
+
+  void scheduleReloadAfterSave(Future<bool> Function() check) {
+    if (_disposed ||
+        !reloadOnSave ||
+        !active ||
+        !appStarted ||
+        configuration?.project.kind != ProjectKind.flutter) {
+      return;
+    }
+    _savedReloadCheck = check;
+    _reloadTimer?.cancel();
+    _reloadTimer = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_reloadSaved());
+    });
+  }
+
+  Future<void> _reloadSaved() async {
+    if (status == DebugStatus.paused) return;
+    final check = _savedReloadCheck;
+    _savedReloadCheck = null;
+    if (check == null || !reloadOnSave || !active || !appStarted) return;
+    final generation = _generation;
+    try {
+      await _flutterControl('hotReload', 'save', check: check);
+    } catch (failure) {
+      if (!_disposed && generation == _generation && active) {
+        error = 'Saved successfully; hot reload was not completed: $failure';
+        _pauseFailure = false;
+        _changed();
+      }
+    }
+  }
+
+  Future<void> _flutterControl(
+    String command,
+    String reason, {
+    Future<bool> Function()? check,
+  }) async {
+    final connection = _connection;
+    final generation = _generation;
+    final previous = _hotOperation;
+    final finished = Completer<void>();
+    _hotOperation = finished.future;
+    try {
+      await previous;
+      if (check != null && (!reloadOnSave || !await check())) return;
+      if (_disposed ||
+          generation != _generation ||
+          connection == null ||
+          !active ||
+          !appStarted) {
+        return;
+      }
+      if (reason == 'save' && status == DebugStatus.paused) {
+        _savedReloadCheck ??= check;
+        return;
+      }
+      await connection.request(command, {'reason': reason});
+    } finally {
+      finished.complete();
+      if (identical(_hotOperation, finished.future)) _hotOperation = null;
+    }
+  }
+
   Map<String, dynamic> capabilities = {};
   List<Map<String, dynamic>> frames = [];
   List<Map<String, dynamic>> scopes = [];
@@ -230,6 +307,9 @@ final class DebugService {
         scopes = [];
         variables = [];
         frameId = null;
+        if (_savedReloadCheck != null) {
+          scheduleReloadAfterSave(_savedReloadCheck!);
+        }
       case 'exited':
         _pauseGeneration++;
         _clearPauseFailure();
@@ -400,7 +480,7 @@ final class DebugService {
       if (configuration?.project.kind != ProjectKind.flutter || !appStarted) {
         throw const DebugFailure('Wait for the Flutter application to start.');
       }
-      await _connection!.request(command, {'reason': 'manual'});
+      await _flutterControl(command, 'manual');
     } else {
       if (command != 'pause' && status != DebugStatus.paused) return;
       final connection = _connection!;
@@ -445,7 +525,7 @@ final class DebugService {
     _changed();
   }
 
-  Future<void> openDevTools() async {
+  Future<void> openDevTools({bool external = true}) async {
     if (_startingDevTools) return;
     final uri = vmService;
     final config = configuration;
@@ -473,7 +553,7 @@ final class DebugService {
         return;
       }
       _devTools = tools;
-      await tools.open();
+      if (external) await tools.open();
       _changed();
     } finally {
       _pendingDevTools = null;
@@ -482,6 +562,8 @@ final class DebugService {
   }
 
   Future<void> _release() {
+    _reloadTimer?.cancel();
+    _savedReloadCheck = null;
     final previous = _releasing;
     return _releasing = () async {
       await previous;

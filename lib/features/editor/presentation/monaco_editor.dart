@@ -10,21 +10,9 @@ import '../domain/document_files.dart';
 import '../domain/editor_assets.dart';
 import 'editor_view_model.dart';
 import '../../../core/cancellation.dart';
+import '../../../core/web_surface_routes.dart';
 import '../../language/domain/language_server.dart';
-
-final editorRoutes = _EditorRouteObserver();
-
-final class _EditorRouteObserver extends RouteObserver<ModalRoute<dynamic>> {
-  Future<void> settled = Future<void>.value();
-
-  @override
-  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    settled = route is TransitionRoute<dynamic>
-        ? route.completed.then((_) {})
-        : Future<void>.value();
-    super.didPop(route, previousRoute);
-  }
-}
+export '../../../core/web_surface_routes.dart' show editorRoutes;
 
 final class EditorShortcutIntent extends Intent {
   const EditorShortcutIntent(this.command);

@@ -77,6 +77,7 @@ final class EditorViewModel extends DartitectViewModel {
     });
   }
   final EditorContextService? contextSharing;
+  void Function(DocumentSnapshot)? onSaved;
   StreamSubscription<void>? _contextEvents;
   int _nextContext = 0;
   ({EditorContextSnapshot snapshot, EditorBuffer buffer, String before})?
@@ -1054,6 +1055,7 @@ final class EditorViewModel extends DartitectViewModel {
       buffer.baseline = saved;
       buffer.diskText = null;
       _scheduleRecovery();
+      if (!buffer.dirty) onSaved?.call(saved);
       return !buffer.dirty;
     } catch (error) {
       if (!_closed) buffer.error = '$error';
@@ -1251,6 +1253,7 @@ final class EditorViewModel extends DartitectViewModel {
     await flushRecovery();
     _recoveryTimer?.cancel();
     _closed = true;
+    onSaved = null;
     await _languageEvents?.cancel();
     await language?.close();
     formatter?.close();

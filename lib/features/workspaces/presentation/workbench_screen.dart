@@ -25,6 +25,7 @@ import '../domain/workspace.dart';
 import 'workbench_dialogs.dart';
 import 'workbench_view_model.dart';
 import '../../debugger/presentation/debug_panel.dart';
+import '../../debugger/presentation/devtools_pane.dart';
 
 final class WorkbenchScreen extends StatefulWidget {
   const WorkbenchScreen({required this.model, super.key});
@@ -37,6 +38,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
   WorkbenchViewModel get model => widget.model;
   WorkbenchDialogs get dialogs => WorkbenchDialogs(context, model);
   late final AppLifecycleListener _lifecycle;
+  double _devToolsWidth = .48;
   @override
   void initState() {
     super.initState();
@@ -163,6 +165,12 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                         onStart: model.startDebugger,
                         onStop: model.debugger!.stop,
                         onControl: model.controlDebugger,
+                        onDevTools: () async {
+                          await model.openDevToolsPane();
+                          if (dialogContext.mounted && model.devToolsVisible) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
                         onSource: (path, line, column) async {
                           await model.openDebugSource(path, line, column);
                           if (dialogContext.mounted) {
@@ -537,6 +545,14 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                 icon: const Icon(Icons.terminal),
                                 label: const Text('Terminals'),
                               ),
+                              if (model.debugger?.vmService != null &&
+                                  model.devToolsProfileDirectory != null)
+                                TextButton.icon(
+                                  onPressed: () =>
+                                      model.guarded(model.openDevToolsPane),
+                                  icon: const Icon(Icons.developer_mode),
+                                  label: const Text('DevTools'),
+                                ),
                             ],
                           ),
                         Expanded(
@@ -571,7 +587,55 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                       ],
                     ),
                   ),
-                  if (model.previewText != null) ...[
+                  if (model.devToolsVisible &&
+                      model.debugger?.devToolsUri != null &&
+                      model.debugger?.configuration?.project.workspace ==
+                          model.workspace?.root) ...[
+                    MouseRegion(
+                      cursor: SystemMouseCursors.resizeLeftRight,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onHorizontalDragUpdate: (details) => setState(() {
+                          _devToolsWidth =
+                              (_devToolsWidth -
+                                      details.delta.dx /
+                                          MediaQuery.sizeOf(context).width)
+                                  .clamp(.25, .7);
+                        }),
+                        child: const SizedBox(
+                          width: 8,
+                          child: Center(
+                            child: Icon(Icons.drag_indicator, size: 8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: MediaQuery.sizeOf(context).width * _devToolsWidth,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            dense: true,
+                            title: Text(
+                              'DevTools · ${model.debugger!.configuration!.project.name}',
+                            ),
+                            trailing: IconButton(
+                              tooltip: 'Close DevTools pane',
+                              onPressed: model.hideDevToolsPane,
+                              icon: const Icon(Icons.close),
+                            ),
+                          ),
+                          Expanded(
+                            child: DevToolsPane(
+                              key: ValueKey(model.debugger!.devToolsUri),
+                              uri: model.debugger!.devToolsUri!,
+                              profileDirectory: model.devToolsProfileDirectory!,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (model.previewText != null) ...[
                     const VerticalDivider(width: 1),
                     SizedBox(
                       width: MediaQuery.sizeOf(context).width * .38,

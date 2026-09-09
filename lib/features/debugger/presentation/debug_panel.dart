@@ -17,6 +17,7 @@ final class DebugPanel extends StatefulWidget {
     required this.onStop,
     required this.onControl,
     required this.onSource,
+    this.onDevTools,
     super.key,
   });
   final DebugService service;
@@ -26,6 +27,7 @@ final class DebugPanel extends StatefulWidget {
   final Future<void> Function() onStop;
   final Future<void> Function(String) onControl;
   final Future<void> Function(String, int, int) onSource;
+  final Future<void> Function()? onDevTools;
   @override
   State<DebugPanel> createState() => _DebugPanelState();
 }
@@ -198,6 +200,12 @@ final class _DebugPanelState extends State<DebugPanel> {
                 : (v) => setState(() => noDebug = v!),
           ),
           if (widget.project.kind == ProjectKind.flutter) ...[
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: service.reloadOnSave,
+              title: const Text('Hot reload after successful Dart saves'),
+              onChanged: (value) => service.setReloadOnSave(value!),
+            ),
             OutlinedButton(
               onPressed: busy
                   ? null
@@ -250,8 +258,14 @@ final class _DebugPanelState extends State<DebugPanel> {
           if (here) ...[
             if (service.vmService != null)
               OutlinedButton(
-                onPressed: busy ? null : () => _act(service.openDevTools),
-                child: const Text('Open DevTools in browser'),
+                onPressed: busy
+                    ? null
+                    : () => _act(widget.onDevTools ?? service.openDevTools),
+                child: Text(
+                  widget.onDevTools == null
+                      ? 'Open DevTools in browser'
+                      : 'Open DevTools in Tabryo',
+                ),
               ),
             Text(
               'Debugger: ${service.status.name}${service.exitCode == null ? '' : ' · exit ${service.exitCode}'}',

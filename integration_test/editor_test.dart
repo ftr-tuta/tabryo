@@ -10,6 +10,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/preview_cache.dart';
+import 'package:tabryo/features/debugger/application/debug_service.dart';
+import 'package:tabryo/features/debugger/domain/debug_session.dart';
+import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
+import 'package:tabryo/features/debugger/presentation/devtools_pane.dart';
+import 'package:tabryo/features/projects/domain/project.dart';
 import 'package:tabryo/features/editor/infrastructure/bundled_editor_assets.dart';
 import 'package:tabryo/features/editor/infrastructure/local_document_files.dart';
 import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart';
@@ -64,7 +69,7 @@ void controlKey(int key) {
   }
 }
 
-void focusTestWindow() {
+int focusTestWindow({bool ownedMainOnly = false}) {
   final user32 = DynamicLibrary.open('user32.dll');
   final find = user32
       .lookupFunction<
@@ -95,24 +100,119 @@ void focusTestWindow() {
         int Function(int, int, int)
       >('AttachThreadInput');
   final process = calloc<Uint32>();
+  final className = calloc<Uint16>(256);
+  final getClass = user32
+      .lookupFunction<
+        Int32 Function(IntPtr, Pointer<Uint16>, Int32),
+        int Function(int, Pointer<Uint16>, int)
+      >('GetClassNameW');
   try {
     var window = 0;
     while ((window = find(0, window, nullptr, nullptr)) != 0) {
       owner(window, process);
       if (process.value != pid) continue;
+      if (ownedMainOnly) {
+        final length = getClass(window, className, 256);
+        if (String.fromCharCodes(className.asTypedList(length)) ==
+            'FLUTTER_RUNNER_WIN32_WINDOW') {
+          return window;
+        }
+        continue;
+      }
       show(window, 9);
-      if (foreground(window) != 0) return;
+      if (foreground(window) != 0) return window;
       final activeThread = owner(active(), process);
       final attached = attach(current(), activeThread, 1) != 0;
       try {
-        if (foreground(window) != 0) return;
+        if (foreground(window) != 0) return window;
       } finally {
         if (attached) attach(current(), activeThread, 0);
       }
     }
-    fail('The native test window could not receive keyboard focus.');
+    fail('The owned native test window was unavailable.');
   } finally {
     calloc.free(process);
+    calloc.free(className);
+  }
+}
+
+Future<void> clickNativeSurface(WidgetTester tester, Offset position) async {
+  final point = tester.getTopLeft(find.byType(WinWebViewWidget)) + position;
+  final ratio = tester.view.devicePixelRatio;
+  if (Platform.isWindows) {
+    final window = focusTestWindow(ownedMainOnly: true);
+    final user32 = DynamicLibrary.open('user32.dll');
+    final childAt = user32
+        .lookupFunction<
+          IntPtr Function(IntPtr, Int64, Uint32),
+          int Function(int, int, int)
+        >('ChildWindowFromPointEx');
+    final map = user32
+        .lookupFunction<
+          Int32 Function(IntPtr, IntPtr, Pointer<Int32>, Uint32),
+          int Function(int, int, Pointer<Int32>, int)
+        >('MapWindowPoints');
+    final ancestor = user32
+        .lookupFunction<
+          IntPtr Function(IntPtr, Uint32),
+          int Function(int, int)
+        >('GetAncestor');
+    final send = user32
+        .lookupFunction<
+          Int32 Function(IntPtr, Uint32, UintPtr, IntPtr),
+          int Function(int, int, int, int)
+        >('PostMessageW');
+    final coordinates = calloc<Int32>(2);
+    try {
+      coordinates[0] = (point.dx * ratio).round();
+      coordinates[1] = (point.dy * ratio).round();
+      var target = window;
+      for (var depth = 0; depth < 16; depth++) {
+        final child = childAt(
+          target,
+          (coordinates[1] << 32) | (coordinates[0] & 0xffffffff),
+          7,
+        );
+        if (child == 0 || child == target) break;
+        map(target, child, coordinates, 1);
+        target = child;
+      }
+      expect(
+        target,
+        isNot(window),
+        reason: 'The native browser must be visible at the requested point.',
+      );
+      expect(ancestor(target, 2), window);
+      final at = ((coordinates[1] & 0xffff) << 16) | (coordinates[0] & 0xffff);
+      expect(send(target, 0x0200, 0, at), 1);
+      expect(send(target, 0x0201, 1, at), 1);
+      expect(send(target, 0x0202, 0, at), 1);
+      await tester.pump(const Duration(milliseconds: 100));
+    } finally {
+      calloc.free(coordinates);
+    }
+  } else {
+    final windows = await Process.run('xdotool', [
+      'search',
+      '--onlyvisible',
+      '--pid',
+      '$pid',
+    ]);
+    expect(windows.exitCode, 0);
+    final window = '${windows.stdout}'.trim().split('\n').first;
+    final clicked = await Process.run('xdotool', [
+      'windowfocus',
+      '--sync',
+      window,
+      'mousemove',
+      '--window',
+      window,
+      '${(point.dx * ratio).round()}',
+      '${(point.dy * ratio).round()}',
+      'click',
+      '1',
+    ]);
+    expect(clicked.exitCode, 0);
   }
 }
 
@@ -128,16 +228,26 @@ Future<void> expectWeb(
   WidgetTester tester,
   WinWebViewController browser,
   String expression,
-  Object expected,
-) async {
+  Object expected, {
+  int attempts = 50,
+}) async {
   Object? value;
-  for (var attempt = 0; attempt < 50; attempt++) {
+  for (var attempt = 0; attempt < attempts; attempt++) {
     value = await browser.runJavaScriptReturningResult(expression);
     if (value == expected) return;
     await tester.pump(const Duration(milliseconds: 100));
   }
   final details = await browser.runJavaScriptReturningResult("""
     JSON.stringify({focus: document.activeElement?.className,
+      devTools: document.querySelector('flutter-view') ? {
+        children: [...document.querySelector('flutter-view').children].map(e => e.tagName),
+        shadow: [...(document.querySelector('flt-glass-pane')?.shadowRoot?.children ?? [])].map(e => e.tagName),
+        labels: [...document.querySelectorAll('flt-semantics-host [aria-label]')].map(e => e.getAttribute('aria-label').replace(/https?:[^ ]+/g, '[endpoint]')).slice(0, 40),
+        semantics: document.querySelector('flt-semantics-host')?.childElementCount,
+        viewport: [innerWidth, innerHeight],
+        canvases: [...(document.querySelector('flt-glass-pane')?.shadowRoot?.querySelectorAll('canvas') ?? [])].map(e => [e.width, e.height]),
+        clicks: window.devToolsClicks ?? [],
+      } : null,
       suggestions: [...document.querySelectorAll('.suggest-widget')].map(e => ({display: getComputedStyle(e).display, text: e.textContent.slice(0, 100)})),
       errors: window.editorFailures ?? []})
   """);
@@ -896,6 +1006,173 @@ void main() {
         await reconnected.removeScriptChannelByName('AlreadyRemoved');
       }
       await tester.pumpWidget(const SizedBox.shrink());
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  testWidgets(
+    'local DevTools loads in its own surface and obeys dialog visibility',
+    (tester) async {
+      final directory = await Directory.systemTemp.createTemp(
+        'tabryo_devtools_',
+      );
+      final root = await directory.resolveSymbolicLinks();
+      final source = await File(p.join(root, 'main.dart')).writeAsString(
+        "import 'dart:async';\nvoid main() { Timer.periodic(const Duration(seconds: 1), (_) {}); }\n",
+      );
+      final config = File(
+        p.join(Directory.current.path, '.dart_tool', 'package_config.json'),
+      );
+      final packages =
+          (jsonDecode(await config.readAsString()) as Map)['packages'] as List;
+      final flutter = packages.cast<Map>().firstWhere(
+        (v) => v['name'] == 'flutter',
+      );
+      final sdk = p.dirname(
+        p.dirname(
+          config.uri.resolve(flutter['rootUri'] as String).toFilePath(),
+        ),
+      );
+      final service = DebugService(LocalDebugAdapters());
+      addTearDown(() async {
+        await service.dispose();
+        try {
+          await directory.delete(recursive: true);
+        } on FileSystemException {
+          // A native WebView2 profile can finish closing after the widget.
+        }
+      });
+      await service.start(
+        DebugConfiguration(
+          project: DevelopmentProject(
+            workspace: root,
+            directory: root,
+            name: 'DevTools',
+            kind: ProjectKind.dart,
+          ),
+          tools: ToolchainSelection({
+            ProjectTool.dart: p.join(
+              sdk,
+              'bin',
+              'cache',
+              'dart-sdk',
+              'bin',
+              Platform.isWindows ? 'dart.exe' : 'dart',
+            ),
+          }),
+          program: source.path,
+        ),
+      );
+      await until(tester, () => service.vmService != null);
+      await service.openDevTools(external: false);
+      expect(service.devToolsUri, isNotNull);
+      final visible = ValueNotifier(true);
+      addTearDown(visible.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [editorRoutes],
+          home: Scaffold(
+            body: ValueListenableBuilder<bool>(
+              valueListenable: visible,
+              builder: (_, value, _) => DevToolsPane(
+                uri: service.devToolsUri!,
+                profileDirectory: p.join(root, 'webview'),
+                visible: value,
+              ),
+            ),
+          ),
+        ),
+      );
+      await until(
+        tester,
+        () =>
+            find.byType(DevToolsPane).evaluate().isNotEmpty &&
+            tester
+                .state<DevToolsPaneState>(find.byType(DevToolsPane))
+                .surfaceVisible,
+      );
+      final state = tester.state<DevToolsPaneState>(find.byType(DevToolsPane));
+      final browser = tester
+          .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
+          .controller;
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('flt-glass-pane') != null",
+        true,
+      );
+      await expectWeb(
+        tester,
+        browser,
+        "typeof window.tabryoReceive === 'undefined' && typeof window.TabryoEditor === 'undefined'",
+        true,
+      );
+      await browser.runJavaScript(
+        "document.querySelector('flt-glass-pane')?.shadowRoot?.querySelector('flt-semantics-placeholder')?.click();",
+      );
+      await expectWeb(
+        tester,
+        browser,
+        "(document.querySelector('flt-glass-pane')?.shadowRoot?.querySelector('canvas')?.width ?? 0) > 0",
+        true,
+        attempts: 300,
+      );
+      await browser.requestFocus();
+      await tester.pump(const Duration(seconds: 1));
+      await browser.runJavaScript("""
+        window.devToolsClicks = [];
+        document.addEventListener('pointerdown', e => window.devToolsClicks.push({x: e.clientX, y: e.clientY, trusted: e.isTrusted, target: e.target.tagName}), true);
+        window.editorFailures = [];
+        window.addEventListener('error', e => window.editorFailures.push(e.message));
+      """);
+      await clickNativeSurface(tester, const Offset(470, 16));
+      await expectWeb(
+        tester,
+        browser,
+        'window.devToolsClicks.length > 0',
+        true,
+        attempts: 300,
+      );
+      await expectWeb(
+        tester,
+        browser,
+        "location.href.includes('debugger')",
+        true,
+        attempts: 300,
+      );
+      final route = showDialog<void>(
+        context: tester.element(find.byType(DevToolsPane)),
+        builder: (context) => AlertDialog(
+          title: const Text('DevTools visibility'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Return to tools'),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(state.surfaceVisible, isFalse);
+      await tester.tap(find.text('Return to tools'));
+      await tester.pumpAndSettle();
+      await route;
+      await until(tester, () => state.surfaceVisible);
+      await browser.runJavaScript(
+        "location.href = 'https://example.invalid/';",
+      );
+      await expectWeb(
+        tester,
+        browser,
+        'location.origin === ${jsonEncode(service.devToolsUri!.origin)}',
+        true,
+      );
+      visible.value = false;
+      await tester.pumpAndSettle();
+      expect(state.surfaceVisible, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await service.stop();
+      expect(service.devToolsUri, isNull);
     },
     timeout: const Timeout(Duration(minutes: 3)),
   );
