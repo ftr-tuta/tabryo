@@ -181,6 +181,157 @@ Set `TABRYO_TEST_PROJECT_SETUP=1` to include the external-tool cases in
 PATH, or supplied with `TABRYO_TEST_PYTHON`, `TABRYO_TEST_UV` and
 `TABRYO_TEST_POETRY`. The Desktop workflow installs those tools for both platforms.
 
+## Game development: Unreal, C++ and Blender
+
+Open **Projects and toolchains**, scan a workspace and select its `.uproject` or
+`CMakeLists.txt`. If the game does not exist yet, **Create or open an Unreal game**
+opens the installed engine's project browser; create the game there and scan its
+directory. Game creation, replication, combat rules and career services belong to
+the game repository. Tabryo provides their development workflow.
+
+The **Game development** panel discovers Unreal targets, modules, plugins and
+assets. Apply installed tool paths before running commands. Windows C++ needs
+Visual Studio C++ Build Tools, a Windows SDK and, for Unreal Editor builds, the
+**.NET Framework 4.8 SDK** component. Select `Common7/Tools/VsDevCmd.bat` to load
+compiler/SDK search paths for CMake and clangd without starting Tabryo from a
+developer shell. CMake presets select the generator/compiler; a Ninja or Makefiles
+generator is required to export compile commands. Unreal uses its installed UBT
+toolchain and checks the descriptor's numeric engine version against Build.version.
+Dedicated Server/Client targets require an engine distribution that supports them;
+Epic's dedicated-server workflow uses a source build.
+
+**Build**, **Generate compile commands**, **Run native tests**, **Cook**, **Package**
+and **Validate content** display exact native arguments before execution. Unreal
+uses UBT, UAT and editor commandlets; C++ projects use CMake/CTest. Nonempty native
+test reports decide the result, together with process exit status. Empty,
+unfinished or failing reports never count as passing tests. Generated compilation
+databases are checked before success is shown. Compiler, UnrealHeaderTool, asset,
+test and runtime problems retain their origin; source diagnostics open the line.
+
+Select clangd in **Language intelligence** and point it at the directory containing
+`compile_commands.json` (project root for Unreal, usually `build` for CMake).
+Build first so generated Unreal headers exist. On Windows, generating Unreal clang
+commands uses the LLVM installation containing the selected clangd; install the
+complete compatible LLVM toolchain, including clang-cl. Monaco provides C/C++
+completion, navigation, symbols, hover, diagnostics and rename through clangd.
+Selected engine source opens read-only. See the
+[clangd compilation database contract](https://clangd.llvm.org/design/compile-commands).
+
+**Run and debug** accepts a native executable and either LLVM `lldb-dap` or
+CodeLLDB (stdio support, version 1.11 or later). Install these separately; the
+Windows LLVM archive may omit lldb-dap. CodeLLDB 1.12.3 is qualified with Windows
+PDB symbols. Set breakpoints in C++ sources, inspect stack/locals, evaluate native
+expressions and step. Use a PID to attach, or **Attach C++ debugger** on an owned
+game process. Detaching leaves an existing process alive. A debug attachment may
+share its game session; unrelated builds remain excluded. LLVM and CodeLLDB are
+external tools under their own licenses, not bundled proprietary IDE adapters.
+
+Portable settings live in `.tabryo/game.json`; save them explicitly and commit
+them with the game. Absolute installed-tool paths stay in local toolchain choices.
+One example (replace the executable, data and script paths with real game files):
+
+```json
+{
+  "version": 1,
+  "configuration": "Development",
+  "target": "ArenaEditor",
+  "map": "/Game/Maps/Main",
+  "port": 7777,
+  "clients": 2,
+  "testFilter": "Arena",
+  "lab": {"name": "Rules", "executable": "Binaries/RulesLab.exe"},
+  "versionFiles": ["Source/Rules/Combat.cpp", "Data/equipment.json"],
+  "blenderExport": "Art/export.py",
+  "unrealImport": "Art/import.py",
+  "contentValidation": "Art/validate.py",
+  "assets": [{
+    "path": "Content/Weapons/Rifle.uasset",
+    "source": "Art/Rifle.blend",
+    "exported": "Art/Export/Rifle.fbx",
+    "preview": "Art/Preview/Rifle.png",
+    "objectPath": "/Game/Weapons/Rifle",
+    "dependencies": ["Content/Materials/Metal.uasset"]
+  }],
+  "services": [{
+    "name": "Career", "executable": ".venv/Scripts/python.exe",
+    "arguments": ["-m", "uvicorn", "career:app", "--host", "127.0.0.1"],
+    "readyText": "Application startup complete"
+  }]
+}
+```
+
+The laboratory sends one version-1 JSON object on stdin, closes stdin and reads
+one JSON response from stdout. Put diagnostic logs on stderr. Inputs contain 1–64
+uniquely named `cases`; domain-specific fields are passed unchanged to the native
+process. The game's executable or commandlet must call the **same C++ core as
+gameplay**. Tabryo does not implement damage/progression formulas. Response:
+
+```json
+{"version":1,"codeVersion":"commit-or-build","dataVersion":"data-revision","cases":[{"id":"recruit","metrics":{"reloadSeconds":6.64},"explanation":["Native core explanation with the values used"]}]}
+```
+
+The number above illustrates the protocol, not a built-in rule. Responses must
+match requested case IDs and supply finite numeric metrics plus explanations.
+Tabryo hashes the executable and every `versionFiles` input before/after the run;
+include all authoring inputs and native rule files there. **Recheck freshness**
+flags changed inputs before reusing comparisons. Results remain in bounded session
+history, with explicit code/data versions. Authoring data stays in the game.
+
+Content maps distinguish the editable `.blend`, exported interchange file and
+Unreal `.uasset`. **Export** runs the selected Blender with embedded autoexecution
+disabled and the project-owned Python script; the output path follows `--`.
+**Import / reimport** and **Validate asset** use Unreal's Python commandlet and
+the project's script, with `TABRYO_ASSET_SOURCE` (interchange file),
+`TABRYO_ASSET_PATH` (saved asset) and `TABRYO_ASSET_OBJECT` in the environment.
+Enable Unreal's Python Script Plugin and Editor Scripting Utilities. Scripts must
+raise an error on failure and preserve import settings/references using Unreal
+APIs. Save and close external editors before offline automation; Tabryo cannot
+detect unsaved assets in an independently opened editor. Engine APIs own skeleton,
+scale, sockets, collision, materials, LOD and compatibility checks. Image previews
+use project PNG/JPEG/WebP files up to 4 MiB. Sources and declared dependencies are
+checked, with reverse dependency lookup. Git LFS lists files/locks and performs
+explicit lock/unlock operations; lock support and authentication belong to the
+selected Git/LFS server.
+
+**Start server and clients** runs an Unreal editor server and 1–16 local clients,
+waiting for backend and server readiness markers. For packaged binaries, character
+profiles or other service layouts, add `sessions` entries containing `name`,
+`buildVersion`, `scenario` and `processes`. Each process uses the executable profile
+format above, with optional `dependsOn` naming earlier processes; dependencies
+need a `readyText`. `readyTimeoutSeconds` defaults to 90. Up to 25 processes share
+one project reservation. Stops, failed dependencies, exits and workspace closure
+retire only owned process trees; separate processes never receive blanket kills.
+Readiness means a startup marker, not network correctness or player capacity.
+Use the game's native scenario tests/Gauntlet and additional machines for large or
+distributed sessions. No 128/256-player, rendering or playtest claim follows from
+launching local clients.
+
+An optional `pipeline` executable profile runs the game's existing delivery or
+distributed-test entrypoint. Its logs remain distinct from native test results.
+Open `.utrace` captures with the selected Unreal Insights executable. **Copy
+investigation context** includes reviewed configuration, scenario/build identifiers,
+process outcomes, tests and versioned lab results. Explicitly including project
+test/session context in a Codex editor request also includes bounded game results.
+Review this context before sending. Backend idempotency, authorization, persistence,
+release publication and production operation remain responsibilities of the game's
+native code and pipeline; Tabryo does not infer their correctness from a green build.
+
+Native Flutter tests cover the process lifecycle, reservations, settings, reports,
+command construction and UI. The opt-in `TABRYO_TEST_NATIVE_GAME=1` scenario in
+`test/game_development_test.dart` builds a CMake game and lab linked to one C++
+library, runs CTest, queries clangd, and breaks/evaluates in the actual debugger;
+Windows also attaches to a server and proves detach preserves it. Supply
+`TABRYO_TEST_CMAKE`, `TABRYO_TEST_CTEST`, `TABRYO_TEST_NINJA`, `TABRYO_TEST_CXX`,
+`TABRYO_TEST_CLANGD`, `TABRYO_TEST_CODELLDB` (or `TABRYO_TEST_LLDB_DAP`) and, on
+Windows, `TABRYO_TEST_MSVC_ENV`. Desktop CI runs this on both platforms.
+`TABRYO_TEST_CONTENT=1` with `TABRYO_TEST_BLENDER` and `TABRYO_TEST_UNREAL` exercises
+real export/import/reimport and Unreal Automation (qualified with Blender 5.2 and
+Unreal 5.8 on Windows). `TABRYO_TEST_UNREAL_CPP=1` additionally builds a reflected
+Unreal module, runs its native rule tests and generates compile commands; it needs
+the full Unreal C++ prerequisites and `TABRYO_TEST_CLANGD`. These fixtures use
+temporary projects; acceptance of an actual game, assets and multiplayer remains
+part of that game's development.
+
 ## MCP Hub
 
 Open a workspace and choose **MCP Hub** from the toolbar or command palette.

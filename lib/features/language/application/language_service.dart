@@ -23,8 +23,7 @@ final class LanguageSession {
             p.isWithin(spec.root, root) &&
             (p.equals(root, path) || p.isWithin(root, path)),
       ) &&
-      p.extension(path).toLowerCase() ==
-          (spec.language == 'dart' ? '.dart' : '.py');
+      spec.supportsPath(path);
 }
 
 final class LanguageService {

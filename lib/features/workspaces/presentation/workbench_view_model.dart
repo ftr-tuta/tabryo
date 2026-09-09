@@ -21,6 +21,8 @@ import '../../tasks/domain/project_task.dart';
 import '../../tasks/presentation/tasks_view_model.dart';
 import '../../debugger/application/debug_service.dart';
 import '../../debugger/domain/debug_session.dart';
+import '../../games/application/game_service.dart';
+import '../../games/domain/game_workspace.dart';
 import '../../language/domain/language_server.dart';
 import '../../mcp/presentation/mcp_hub_view_model.dart';
 import '../../mcp/domain/mcp_server.dart';
@@ -46,8 +48,12 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.projects,
     this.tasks,
     this.debugger,
+    this.games,
     this.devToolsProfileDirectory,
   }) {
+    _gameChanges = games?.changes.listen((_) {
+      if (!_shutdown) notifyListeners();
+    });
     editor?.captureProjectContext = _captureProjectContext;
     editor?.loadCodexTargets = _loadCodexTargets;
     editor?.sendCodexContext = _sendCodexContext;
@@ -100,6 +106,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final ProjectsViewModel? projects;
   final TasksViewModel? tasks;
   final DebugService? debugger;
+  final GameService? games;
+  StreamSubscription<void>? _gameChanges;
   final String? devToolsProfileDirectory;
   bool _ownsEditorContext(EditorContextSnapshot snapshot) =>
       !_shutdown &&
@@ -388,8 +396,59 @@ final class WorkbenchViewModel extends DartitectViewModel {
         );
       }
     }
+    final gameContext = project.native && (tests || sessions)
+        ? {
+            'operations': [
+              for (final run
+                  in (games?.runs ?? <GameRun>[]).reversed
+                      .where((r) => r.plan.workspace.project.id == project.id)
+                      .take(3))
+                {
+                  'title': run.plan.title,
+                  'started': run.started.toIso8601String(),
+                  'scenario': run.plan.scenario,
+                  'complete': run.complete,
+                  'successful': run.successful,
+                  'error': run.error,
+                  if (tests && run.tests != null)
+                    'tests': [
+                      for (final c in run.tests!.cases.take(30))
+                        {'name': c.name, 'outcome': c.outcome.name},
+                    ],
+                  if (tests && run.lab != null)
+                    'laboratory': {
+                      'codeVersion': run.lab!.codeVersion,
+                      'dataVersion': run.lab!.dataVersion,
+                      'fingerprint': run.lab!.fingerprint,
+                      'freshness': 'snapshot; recheck files before reuse',
+                      'cases': run.lab!.cases
+                          .take(4)
+                          .map((c) => {'id': c['id'], 'metrics': c['metrics']})
+                          .toList(),
+                    },
+                  if (sessions)
+                    'processes': [
+                      for (final process in run.processes)
+                        {
+                          'name': process.spec.name,
+                          'state': process.state.name,
+                          'pid': process.pid,
+                        },
+                    ],
+                },
+            ],
+          }
+        : null;
+    if (gameContext != null) {
+      while (utf8.encode(jsonEncode(gameContext)).length > 64 * 1024 &&
+          gameContext['operations']!.isNotEmpty) {
+        gameContext['operations']!.removeLast();
+        limited = true;
+      }
+    }
     return EditorProjectContext(
       root: project.directory,
+      gameContext: gameContext,
       includesTests: tests,
       includesSessions: sessions,
       limited: limited,
@@ -407,6 +466,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
         project == null ||
         tools == null ||
         project.kind == ProjectKind.python ||
+        project.native ||
         workspace?.root != project.workspace) {
       throw const ProjectFailure(
         'Select a Dart or Flutter project and apply its SDK first.',
@@ -685,6 +745,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
     if (debugger?.configuration?.project.workspace == current.root) {
       await debugger?.stop();
     }
+    await games?.stopWorkspace(current.root);
     for (final id in current.tabs.expand((t) => t.panes.sessions).toList()) {
       await closeSession(id);
     }
@@ -824,8 +885,12 @@ final class WorkbenchViewModel extends DartitectViewModel {
     await openFile(p.join(project.path, studio!.studio.entryFile(project)));
   }
 
-  void _reserveProjectCommand(String directory) {
-    if ([..._projectRuns.keys, ..._studioRuns.keys].any(
+  void _reserveProjectCommand(String directory, {bool attachToGame = false}) {
+    if ([
+      ..._projectRuns.keys,
+      ..._studioRuns.keys,
+      if (!attachToGame) ...?games?.reservations,
+    ].any(
       (path) =>
           p.equals(path, directory) ||
           p.isWithin(path, directory) ||
@@ -856,6 +921,39 @@ final class WorkbenchViewModel extends DartitectViewModel {
       throw const ProjectFailure(
         'Save project documents before running setup.',
       );
+    }
+  }
+
+  Future<void> runGamePlan(GamePlan plan) async {
+    final service = games;
+    final project = plan.workspace.project;
+    final owner = workspace;
+    if (_shutdown ||
+        service == null ||
+        projects == null ||
+        owner == null ||
+        owner.root != project.workspace) {
+      throw const GameFailure(
+        'Open the owning workspace before starting a game operation.',
+      );
+    }
+    _reserveProjectCommand(project.directory);
+    try {
+      await _checkProjectDocuments(project.directory);
+      final selected = projects!.selections[project.id];
+      if (selected == null ||
+          selected.paths.length != plan.toolPaths.length ||
+          plan.toolPaths.entries.any((e) => selected[e.key] != e.value)) {
+        throw const GameFailure(
+          'Toolchains changed. Review this operation again.',
+        );
+      }
+      if (_shutdown || !workspaces.contains(owner)) {
+        throw const GameFailure('The workspace closed.');
+      }
+      await service.start(plan);
+    } finally {
+      _projectRuns.remove(project.directory);
     }
   }
 
@@ -1028,7 +1126,14 @@ final class WorkbenchViewModel extends DartitectViewModel {
         'Apply and review the selected toolchain first.',
       );
     }
-    _reserveProjectCommand(config.project.directory);
+    final attachToGame =
+        config.project.native &&
+        config.attachPid != null &&
+        games?.ownsPid(config.project.directory, config.attachPid!) == true;
+    _reserveProjectCommand(
+      config.project.directory,
+      attachToGame: attachToGame,
+    );
     _startingDebugger = true;
     _debugProject = config.project.directory;
     try {
@@ -1045,6 +1150,9 @@ final class WorkbenchViewModel extends DartitectViewModel {
       }
       if (_shutdown ||
           !workspaces.contains(owner) ||
+          (attachToGame &&
+              games?.ownsPid(config.project.directory, config.attachPid!) !=
+                  true) ||
           !identical(chosen, projects!.selections[config.project.id])) {
         throw const DebugFailure(
           'Project ownership or tools changed. Review the debug session again.',
@@ -1089,7 +1197,11 @@ final class WorkbenchViewModel extends DartitectViewModel {
       await openFile(path);
     } else {
       final executable =
-          config.tools[python ? ProjectTool.python : ProjectTool.dart];
+          config.tools[config.project.native
+              ? ProjectTool.clangd
+              : python
+              ? ProjectTool.python
+              : ProjectTool.dart];
       if (executable == null) {
         throw const DebugFailure(
           'Select the SDK before opening dependency source.',
@@ -1099,11 +1211,33 @@ final class WorkbenchViewModel extends DartitectViewModel {
         root,
         path,
         sourceSpec: LanguageServerSpec(
-          kind: python ? LanguageServerKind.pyright : LanguageServerKind.dart,
+          kind: config.project.native
+              ? LanguageServerKind.clangd
+              : python
+              ? LanguageServerKind.pyright
+              : LanguageServerKind.dart,
           workspace: root,
           root: config.project.directory,
           executable: executable,
           python: python ? executable : null,
+          sourceRoots: [
+            if (config.project.native &&
+                config.tools[ProjectTool.unreal] != null)
+              p.join(
+                p.dirname(
+                  p.dirname(p.dirname(config.tools[ProjectTool.unreal]!)),
+                ),
+                'Source',
+              ),
+            if (config.project.native &&
+                config.tools[ProjectTool.unreal] != null)
+              p.join(
+                p.dirname(
+                  p.dirname(p.dirname(config.tools[ProjectTool.unreal]!)),
+                ),
+                'Plugins',
+              ),
+          ],
         ),
       );
     }
@@ -1141,6 +1275,48 @@ final class WorkbenchViewModel extends DartitectViewModel {
     showEditor(false);
     selectTab(index);
     focusSession(task.sessionId!);
+  }
+
+  Future<void> openGameSource(String path, int? line) async {
+    final root = workspace?.root;
+    if (root == null || !p.isWithin(root, path)) {
+      throw const GameFailure(
+        'The game source is outside the current workspace.',
+      );
+    }
+    await openFile(path);
+    final buffer = editor?.active;
+    if (buffer == null ||
+        buffer.path != path ||
+        workspace?.root != root ||
+        line == null) {
+      return;
+    }
+    if (!await editor!.synchronizeBuffer(buffer)) {
+      throw const GameFailure(
+        'Reconnect the editor before navigating to a diagnostic.',
+      );
+    }
+    final lines = buffer.controller.text.split('\n');
+    if (line < 1 || line > lines.length) {
+      throw const GameFailure(
+        'This diagnostic line is no longer present. Rebuild to refresh it.',
+      );
+    }
+    final offset = languageOffset(buffer.controller.text, {
+      'line': line - 1,
+      'character': 0,
+    });
+    editor!.applyWebEdit(
+      buffer,
+      buffer.controller.text,
+      offset,
+      offset,
+      buffer.webCanUndo,
+      buffer.webCanRedo,
+    );
+    editor!.webCommand?.call('reveal');
+    showEditor(true);
   }
 
   Future<void> openSearchResult(String root, WorkspaceMatch match) =>
@@ -1631,6 +1807,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
       final repo = await selectedRepository();
       await gitMutator.removeWorktree(repo, tree, [
         ?_debugProject,
+        ...?games?.reservations,
         ...(await collaboration?.reservations() ?? const <Json>[]).map(
           (row) => row['root'] as String,
         ),
@@ -1670,7 +1847,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
       }
     }
     final formatters = {...preferences.dartFormatters};
-    if (project.kind != ProjectKind.python) {
+    if (project.kind == ProjectKind.dart ||
+        project.kind == ProjectKind.flutter) {
       final dart = selected[ProjectTool.dart];
       // An explicit empty choice also suppresses an ancestor workspace default.
       formatters[project.directory] = dart ?? '';
@@ -1760,6 +1938,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
     editor?.prepareTaskRequest = null;
     editor?.runTaskRequest = null;
     editor?.discardTaskRequest = null;
+    await games?.dispose();
+    await _gameChanges?.cancel();
     debugger?.onInspectorSource = null;
     await debugger?.dispose();
     await _debugChanges?.cancel();

@@ -5,6 +5,7 @@ import 'projects_view_model.dart';
 import 'project_setup_panel.dart';
 import '../../language/application/language_service.dart';
 import '../../language/presentation/language_dialog.dart';
+import '../../terminals/domain/terminal_ports.dart';
 
 final class ProjectsScreen extends StatelessWidget {
   const ProjectsScreen({
@@ -30,6 +31,47 @@ final class ProjectsScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Projects and toolchains'),
         actions: [
+          if (model.hints.candidates[ProjectTool.unreal]?.isNotEmpty == true &&
+              model.workspace != null &&
+              onRun != null)
+            PopupMenuButton<String>(
+              tooltip: 'Create or open an Unreal game',
+              icon: const Icon(Icons.sports_esports),
+              itemBuilder: (_) => [
+                for (final candidate
+                    in model.hints.candidates[ProjectTool.unreal]!)
+                  PopupMenuItem(
+                    value: candidate.path,
+                    child: Text('Unreal project browser · ${candidate.path}'),
+                  ),
+              ],
+              onSelected: (executable) async {
+                final root = model.workspace!;
+                try {
+                  await onRun!(
+                    DevelopmentProject(
+                      workspace: root,
+                      directory: root,
+                      name: 'Unreal',
+                      kind: ProjectKind.unreal,
+                    ),
+                    ProjectCommand(
+                      title: 'Unreal project browser',
+                      description: 'Create a game with the installed engine, then scan its workspace.',
+                      spec: LaunchSpec(
+                        executable: executable,
+                        workingDirectory: root,
+                      ),
+                    ),
+                  );
+                } catch (error) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(SnackBar(content: Text('$error')));
+                  }
+                }
+              },
+            ),
           TextButton.icon(
             onPressed: onCreate == null || model.workspace == null
                 ? null
@@ -92,7 +134,7 @@ final class ProjectsScreen extends StatelessWidget {
             child: model.discovery.projects.isEmpty
                 ? const Center(
                     child: Text(
-                      'No Dart, Flutter or Python manifest was found. Open a project folder or create a project from the command palette.',
+                      'No Dart, Flutter, Python, Unreal or CMake project was found. Open a project folder or create a project from the command palette.',
                     ),
                   )
                 : Row(
@@ -196,6 +238,18 @@ final class _ToolchainFormState extends State<_ToolchainForm> {
   List<ProjectTool> get tools => switch (widget.project.kind) {
     ProjectKind.dart => [ProjectTool.dart],
     ProjectKind.flutter => [ProjectTool.flutter],
+    ProjectKind.cpp || ProjectKind.unreal => [
+      if (widget.project.kind == ProjectKind.unreal) ProjectTool.unreal,
+      ProjectTool.cmake,
+      ProjectTool.ctest,
+      ProjectTool.clangd,
+      ProjectTool.lldbDap,
+      ProjectTool.codeLldb,
+      if (widget.model.environment.windows) ProjectTool.msvcEnvironment,
+      ProjectTool.blender,
+      ProjectTool.insights,
+      ProjectTool.git,
+    ],
     ProjectKind.python => [
       ProjectTool.python,
       ProjectTool.uv,
@@ -252,6 +306,8 @@ final class _ToolchainFormState extends State<_ToolchainForm> {
                 ? 'Flutter SDK directory'
                 : tool == ProjectTool.pyright
                 ? 'Pyright langserver JavaScript file'
+                : tool == ProjectTool.msvcEnvironment
+                ? 'Visual Studio VsDevCmd.bat (C++ compiler and SDK)'
                 : '${tool.name} executable',
             helperText: tool == ProjectTool.flutter
                 ? 'Uses its bundled Dart SDK for format on save.'

@@ -31,6 +31,11 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
     'dist',
     '.tox',
     '.pytest_cache',
+    'Binaries',
+    'Intermediate',
+    'Saved',
+    'DerivedDataCache',
+    'Content',
   };
 
   Future<String?> _text(String directory, String name) async {
@@ -188,6 +193,55 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
           );
         }
       } catch (error) {
+        warnings.add('${current.directory}: $error');
+      }
+      // Native manifests are discovered independently of Dart/Python failures.
+      try {
+        var unreal = false;
+        var count = 0;
+        await for (final entry in Directory(
+          current.directory,
+        ).list(followLinks: false)) {
+          cancellation.check();
+          if (++count > 2000) {
+            limited = true;
+            break;
+          }
+          if (entry is! File ||
+              p.extension(entry.path).toLowerCase() != '.uproject') {
+            continue;
+          }
+          final name = p.basename(entry.path);
+          final manifest = jsonDecode((await _text(current.directory, name))!);
+          if (manifest is! Map || manifest['FileVersion'] is! int) {
+            throw ProjectFailure('Invalid Unreal project: $name');
+          }
+          unreal = true;
+          addProject(
+            DevelopmentProject(
+              workspace: root,
+              directory: current.directory,
+              name: p.basenameWithoutExtension(name),
+              kind: ProjectKind.unreal,
+              manifests: [name],
+              versionHint: manifest['EngineAssociation']?.toString(),
+            ),
+          );
+        }
+        if (!unreal &&
+            await _text(current.directory, 'CMakeLists.txt') != null) {
+          addProject(
+            DevelopmentProject(
+              workspace: root,
+              directory: current.directory,
+              name: p.basename(current.directory),
+              kind: ProjectKind.cpp,
+              manifests: const ['CMakeLists.txt'],
+            ),
+          );
+        }
+      } catch (error) {
+        if (error is Cancelled) rethrow;
         warnings.add('${current.directory}: $error');
       }
       cancellation.check();
@@ -398,6 +452,17 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       ProjectTool.node: windows ? ['node.exe'] : ['node'],
       ProjectTool.ruff: windows ? ['ruff.exe'] : ['ruff'],
       ProjectTool.black: windows ? ['black.exe'] : ['black'],
+      ProjectTool.cmake: windows ? ['cmake.exe'] : ['cmake'],
+      ProjectTool.git: windows ? ['git.exe'] : ['git'],
+      ProjectTool.ctest: windows ? ['ctest.exe'] : ['ctest'],
+      ProjectTool.clangd: windows ? ['clangd.exe'] : ['clangd'],
+      ProjectTool.lldbDap: windows ? ['lldb-dap.exe'] : ['lldb-dap'],
+      ProjectTool.codeLldb: windows ? ['codelldb.exe'] : ['codelldb'],
+      ProjectTool.blender: windows ? ['blender.exe'] : ['blender'],
+      ProjectTool.unreal: windows ? ['UnrealEditor.exe'] : ['UnrealEditor'],
+      ProjectTool.insights: windows
+          ? ['UnrealInsights.exe']
+          : ['UnrealInsights'],
     }.entries) {
       for (final executable in _path(entry.value)) {
         await add(entry.key, executable, 'PATH');
@@ -408,6 +473,130 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
       p.join(root, 'node_modules', 'pyright', 'dist', 'pyright-langserver.js'),
       'Project node_modules',
     );
+    if (environment['UE_ROOT'] case final engine?) {
+      await add(
+        ProjectTool.unreal,
+        p.join(
+          engine,
+          'Engine',
+          'Binaries',
+          windows ? 'Win64' : 'Linux',
+          windows ? 'UnrealEditor.exe' : 'UnrealEditor',
+        ),
+        'UE_ROOT',
+      );
+    }
+    if (environment['ProgramFiles'] case final programFiles? when windows) {
+      for (final (folder, tool, suffix) in [
+        (
+          'Epic Games',
+          ProjectTool.unreal,
+          p.join('Engine', 'Binaries', 'Win64', 'UnrealEditor.exe'),
+        ),
+        ('Blender Foundation', ProjectTool.blender, 'blender.exe'),
+      ]) {
+        final parent = Directory(p.join(programFiles, folder));
+        if (!await parent.exists()) continue;
+        var count = 0;
+        await for (final entry in parent.list(followLinks: false)) {
+          if (++count > 32) break;
+          if (entry is Directory) {
+            await add(tool, p.join(entry.path, suffix), 'Installed $folder');
+          }
+        }
+      }
+      for (final (tool, name) in [
+        (ProjectTool.clangd, 'clangd'),
+        (ProjectTool.lldbDap, 'lldb-dap'),
+      ]) {
+        await add(
+          tool,
+          p.join(programFiles, 'LLVM', 'bin', '$name.exe'),
+          'LLVM installation',
+        );
+      }
+    }
+    if (environment['LOCALAPPDATA'] case final local? when windows) {
+      await add(
+        ProjectTool.codeLldb,
+        p.join(
+          local,
+          'Tabryo',
+          'toolchains',
+          'codelldb',
+          'extension',
+          'adapter',
+          'codelldb.exe',
+        ),
+        'Local CodeLLDB adapter',
+      );
+      for (final (tool, name) in [
+        (ProjectTool.clangd, 'clangd'),
+        (ProjectTool.lldbDap, 'lldb-dap'),
+      ]) {
+        await add(
+          tool,
+          p.join(local, 'Tabryo', 'toolchains', 'llvm', 'bin', '$name.exe'),
+          'Local LLVM toolchain',
+        );
+      }
+    }
+    if (environment['ProgramFiles(x86)'] case final base? when windows) {
+      for (final edition in [
+        'BuildTools',
+        'Community',
+        'Professional',
+        'Enterprise',
+      ]) {
+        final bin = p.join(
+          base,
+          'Microsoft Visual Studio',
+          '2022',
+          edition,
+          'Common7',
+          'IDE',
+          'CommonExtensions',
+          'Microsoft',
+          'CMake',
+          'CMake',
+          'bin',
+        );
+        await add(
+          ProjectTool.msvcEnvironment,
+          p.join(
+            base,
+            'Microsoft Visual Studio',
+            '2022',
+            edition,
+            'Common7',
+            'Tools',
+            'VsDevCmd.bat',
+          ),
+          'Visual Studio $edition compiler and SDK',
+        );
+        await add(
+          ProjectTool.cmake,
+          p.join(bin, 'cmake.exe'),
+          'Visual Studio $edition',
+        );
+        await add(
+          ProjectTool.ctest,
+          p.join(bin, 'ctest.exe'),
+          'Visual Studio $edition',
+        );
+      }
+    }
+    for (final editor
+        in candidates[ProjectTool.unreal] ?? <ToolchainCandidate>[]) {
+      await add(
+        ProjectTool.insights,
+        p.join(
+          p.dirname(editor.path),
+          windows ? 'UnrealInsights.exe' : 'UnrealInsights',
+        ),
+        'Unreal engine',
+      );
+    }
     return ToolchainHints(Map.unmodifiable(candidates));
   }
 
@@ -443,10 +632,13 @@ final class LocalProjectEnvironment implements ProjectEnvironment {
           (windows &&
               tool != ProjectTool.flutter &&
               tool != ProjectTool.pyenv &&
+              tool != ProjectTool.msvcEnvironment &&
               tool != ProjectTool.pyright &&
               p.extension(path).toLowerCase() != '.exe') ||
           (tool == ProjectTool.pyright &&
               p.extension(path).toLowerCase() != '.js') ||
+          (tool == ProjectTool.msvcEnvironment &&
+              (!windows || p.basename(path).toLowerCase() != 'vsdevcmd.bat')) ||
           (!windows &&
               tool != ProjectTool.pyright &&
               (await File(path).stat()).mode & 0x49 == 0)) {

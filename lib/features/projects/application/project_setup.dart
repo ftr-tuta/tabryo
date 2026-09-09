@@ -275,6 +275,9 @@ final class ProjectSetup {
       ProjectKind.dart => [ProjectTool.dart],
       ProjectKind.flutter => [ProjectTool.flutter],
       ProjectKind.python => [ProjectTool.python, ProjectTool.uv],
+      ProjectKind.cpp || ProjectKind.unreal => throw const ProjectFailure(
+        'Create a native project with Unreal or CMake, then scan its folder.',
+      ),
     };
     tools = ToolchainSelection({
       for (final tool in requiredTools) tool: ?tools[tool],
@@ -291,6 +294,7 @@ final class ProjectSetup {
                 environment.windows ? 'flutter.bat' : 'flutter',
               ),
       ProjectKind.python => tools[ProjectTool.uv],
+      ProjectKind.cpp || ProjectKind.unreal => null,
     };
     if (executable == null ||
         (kind == ProjectKind.python && tools[ProjectTool.python] == null)) {
@@ -326,6 +330,7 @@ final class ProjectSetup {
         name.trim(),
         target.source,
       ],
+      ProjectKind.cpp || ProjectKind.unreal => <String>[],
     };
     return ProjectCreation(
       target,

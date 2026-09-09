@@ -7,22 +7,22 @@
 :sectnumlevels: 3
 :idprefix:
 :idseparator: -
-:revnumber: 1.2
+:revnumber: 1.3
 :description: Visão, metas, dependências e critérios de aceite para a evolução do Tabryo.
 
-Este é o documento central de evolução do Tabryo, baseado na versão `0.1.0` e no código do commit `0ac8b71`.
+Este é o documento central de evolução do Tabryo. A base histórica é a versão `0.1.0`; a evolução para desenvolvimento de jogos parte do commit `dac557b`.
 O estado inicial histórico de todas as metas é *Planejada*; a situação atual está registrada em <<progresso>>.
 As versões sugeridas são propostas de agrupamento, sem datas ou compromisso de publicação.
 Este documento distingue o escopo integral das capacidades já implementadas e qualificadas. Atualizá-lo não representa publicar um release.
 
 .RECOMENDAÇÃO DE OPERAÇÃO
 * *Papel:* executor de integração; coordenador único do resultado.
-* *Modelo/esforço:* GPT-5.6 Terra — High para integração entre módulos; Medium para implementações delimitadas em um módulo.
-* *Janela:* continuar o executor durante a mesma fatia funcional; preparar uma nova tarefa na passagem de marco, com base e próximo aceite explícitos.
+* *Modelo/esforço:* GPT-6 Astra — High para integração; preservar Extra High quando escolhido pelo usuário. Medium para implementação delimitada.
+* *Janela:* continuar a mesma tarefa enquanto objetivo, writer, autoridade e ambiente forem coerentes; marcos e compactações não exigem reinício.
 * *Contexto inicial:* este documento, `README.md`, `pubspec.yaml`, `dartitect.json`, interfaces existentes e estado Git do checkout autorizado.
 * *Escrita e paralelismo:* writer único por repositório; código de produto, testes nativos e documentação existente; zero subagentes por padrão.
-* *Escalonamento:* Sol High para decisão não resolvida de arquitetura, permissões, exposição remota ou compatibilidade.
-* *Economia:* um documento central e entregas funcionais limitadas; cada implementação deve caber em 100 minutos com 20 minutos de reserva ou ser dividida antes da escrita.
+* *Escalonamento:* aprofundar revisão em incompatibilidade comprovada de engine, depurador, ownership ou exposição remota; operação em ambiente vivo tem fronteira própria.
+* *Economia:* reutilizar contexto e evidência válida, um writer, testes nativos por impacto e nenhuma infraestrutura paralela de evidência; sem limites artificiais de duração ou tentativas.
 
 [[visao]]
 == Visão e decisões de produto
@@ -85,8 +85,8 @@ Fontes locais: <<fonte-readme>>, <<fonte-versao>>, <<fonte-arquitetura>> e <<fon
 [[progresso]]
 == Progresso da implementação
 
-As primeiras fatias implementam o cliente local do App Server, o MCP Hub, um editor mínimo e a criação de projetos STDIO no MCP Studio.
-A etapa MCP permanece aberta; os aceites pendentes estão separados da implementação já exercitada no Windows.
+O código atual inclui editor Monaco, serviços LSP/DAP, tarefas compartilhadas, testes, contexto do editor, Hub/Studio MCP e colaboração pelo App Server.
+O README acompanha as qualificações por plataforma. A evolução abaixo acrescenta Unreal/C++, conteúdo e sessões de jogo; os sistemas do jogo ainda serão criados em seu próprio repositório.
 
 [cols="1,2,4,4",options="header"]
 |===
@@ -94,7 +94,7 @@ A etapa MCP permanece aberta; os aceites pendentes estão separados da implement
 |<<base-01,BASE-01>>
 |Em implementação
 |Porta Codex, transporte JSONL limitado, modelos MCP, contratos de documentos e criação de projetos; serviços separados da apresentação.
-|Contratos de linguagem e diff; qualificação integral por plataforma e capacidade.
+|Qualificação integral por plataforma e capacidade; evolução do diff estruturado.
 |<<safe-01,SAFE-01>>
 |Em implementação
 |Prévia imutável de configuração e projetos; versões esperadas; buffers preservados em conflitos; gravação de documentos por substituição com checagem dos bytes; comandos do Studio serializados por projeto e bloqueados com documentos pendentes.
@@ -110,19 +110,27 @@ A etapa MCP permanece aberta; os aceites pendentes estão separados da implement
 |<<edit-01,EDIT-01>>
 |Em validação
 |Abas, edição UTF-8, indicação de pendências, desfazer/refazer, Ctrl+S/Ctrl+Tab, comparação/releitura de disco, confirmação ao fechar e preservação entre workspaces/atividades; BOM e LF/CRLF preservados. Limites de 12 documentos e 512 KiB por documento.
-|Aceite Linux e ajustes/execução assistida dos três exemplos pela interface. O fluxo desktop Windows foi exercitado com fechamento nativo cancelado, conflito em disco, abertura do projeto e comando revisado no PTY.
+|Aceite físico de IME e mudança entre monitores com escalas distintas. O README registra qualificação nativa Debug/Release Windows e Linux, incluindo HiDPI; não representa a matriz completa de uma IDE.
 |<<mcp-02,MCP-02>>
 |Em implementação
 |Criação revisada de projetos Dart, Python e TypeScript, sem sobrescrever pastas; exemplos de ferramenta, recurso e prompt; testes nativos; execução revisada no terminal; registro no Hub e chamada da ferramenta pelo Codex real em configuração isolada.
 |Inspetor interativo de prompts, logs de aplicação sanitizados, assistência gráfica do Codex, dependências transitivas congeladas, reabertura no Studio após reiniciar e qualificação Linux. Projetos da sessão ficam listados; arquivos e entradas do Hub persistem.
 |<<dev-01,DEV-01>>
 |Em implementação
-|Tarefas revisadas de análise, execução de scripts e builds; descoberta de arquivos de teste; seleção por arquivo/filtro; relatórios nativos Dart/Flutter e pytest com falhas, cancelamento e navegação. Um comando por projeto, compartilhando a exclusão com setup e Studio.
-|Busca global, configuração compartilhável de tarefas, cobertura e matriz integral de execução. Esta fatia não conclui os demais fluxos IDE.
+|Busca global, tarefas compartilhadas, builds, testes e cobertura nativos; seleção por arquivo/filtro, falhas e navegação. CMake/CTest e Unreal UBT/UAT/Automation integrados. Exclusão por projeto compartilhada com setup, Studio, debugger e sessões de jogo.
+|Matriz integral de execução e aceite dos comportamentos do jogo em seu projeto real.
+|Linguagem e depuração
+|Implementado, com qualificação por ambiente
+|Dart, Pyright/Ruff e clangd; Monaco recebe símbolos, navegação e diagnósticos. DAP para Dart/Flutter/Python e C++ com LLDB/CodeLLDB; breakpoint, pilha, variáveis, avaliação e attach por PID. Fontes da engine somente leitura.
+|Símbolos e compilação dos projetos Unreal reais, distribuição de engine para Server e requisitos locais de SDK. Anexar a processos Linux depende da política ptrace do host.
+|Desenvolvimento de jogos
+|Implementado no Tabryo
+|Descoberta .uproject/CMake, targets/módulos/plugins, toolchains, build/test/cook/package; laboratório que executa o núcleo nativo e identifica código/dados; conteúdo Blender/Unreal com origem, intercâmbio, prévia, dependências e LFS; grupos de processos com prontidão, perfis de cenário/build e backend; abertura de Insights, pipeline existente e contexto para investigação/Codex.
+|Criar o jogo e implementar suas regras, assets e backend; qualificar cliente/servidor, combate, carreira, playtest, distribuição e 128/256 conexões com o conteúdo real. Esses aceites não são substituídos pelos testes do Tabryo.
 |Demais metas
 |Planejada
 |Base existente preservada.
-|Servidor Tabryo, editor completo, IDE gráfica e demais objetivos descritos a seguir.
+|Objetivos ainda não cobertos nas linhas acima, incluindo experiência gráfica completa e extensibilidade.
 |===
 
 Os testes nativos de integração exercitam o Codex CLI 0.147.0 no Windows com configuração descartável, servidor STDIO e endpoint Streamable HTTP em loopback.
@@ -139,6 +147,26 @@ O salvamento usa concorrência otimista e não oferece compare-and-swap contra a
 O campo `version` da configuração é interpretado pelo próprio Codex: mudanças semânticas concorrentes são recusadas, enquanto comentários adicionais são preservados.
 Desconectar o Hub encerra sua conexão e seus resultados transitórios, mas não promete cancelar uma operação já recebida por um servidor remoto.
 Configurações de outros clientes Codex podem exigir reconexão separada; remover a entrada local não revoga uma credencial no provedor.
+
+[[jogos]]
+== Desenvolvimento de jogos: contrato e aceite
+
+O painel *Game development* integra ferramentas instaladas. Nenhuma engine, licença de ferramenta ou regra de gameplay é embutida no Tabryo.
+As configurações portáveis ficam em `.tabryo/game.json`; o README descreve campos e exemplos executáveis. Toolchains absolutas permanecem locais.
+O usuário cria o jogo pelo navegador nativo da Unreal, depois seleciona o projeto no Tabryo. Alterações em assets usam os scripts/APIs da ferramenta responsável e exigem salvar/fechar editores externos antes da automação offline.
+
+O laboratório envia JSON ao processo do jogo, que chama o mesmo núcleo C++ utilizado em gameplay. A resposta contém versões do código/dados, casos, métricas e explicações.
+O executável e os arquivos autorais declarados são verificados antes e depois da comparação. Tabryo não implementa fórmulas paralelas nem presume as regras de combate, especialização, equipamento ou carreira do futuro jogo.
+
+Cada sessão possui processos identificados, dependências, prontidão, logs e encerramento próprio. Um attach pode compartilhar o processo pertencente à sessão; builds concorrentes permanecem bloqueados.
+Prontidão é evidência de inicialização. Testes do jogo, comunicação em rede, desempenho, playtest e instalação distribuída têm evidências distintas.
+Escala distribuída e entrega usam os pipelines nativos configurados pelo projeto, com Unreal Insights/Gauntlet quando aplicáveis. Não há certificação automática de 128/256 conexões.
+
+Os testes Flutter nativos incluem descoberta, comandos, relatórios, conflitos de configuração, ciclo de processos, attach e widgets.
+A qualificação real CMake liga jogo e laboratório à mesma biblioteca C++, executa CTest, consulta clangd e para em breakpoint; Windows verifica símbolos e detach de servidor.
+Blender 5.2 e Unreal 5.8 foram exercitados com exportação, importação, reimportação, validação de referência/LOD e Automation em um projeto temporário.
+A prova de módulo Unreal refletido também passou na Unreal 5.8: UBT, Automation e clangd com cabeçalhos gerados, sem erros de linguagem. Permanece executável como teste opt-in e exige todos os componentes C++ da engine, incluindo `.NET Framework SDK` no Windows.
+Essas provas qualificam a integração; o jogo ainda inexistente terá seu próprio aceite funcional e operacional.
 
 [[prioridades]]
 == Prioridades, estados e ordem de entrega

@@ -1,7 +1,7 @@
 import '../../../core/cancellation.dart';
 import '../../terminals/domain/terminal_ports.dart';
 
-enum ProjectKind { dart, flutter, python }
+enum ProjectKind { dart, flutter, python, cpp, unreal }
 
 enum PythonManager { uv, poetry, pip }
 
@@ -16,6 +16,16 @@ enum ProjectTool {
   pyright,
   ruff,
   black,
+  cmake,
+  ctest,
+  clangd,
+  lldbDap,
+  codeLldb,
+  msvcEnvironment,
+  unreal,
+  blender,
+  insights,
+  git,
 }
 
 final class DevelopmentProject {
@@ -35,7 +45,9 @@ final class DevelopmentProject {
   final PythonManager manager;
   final List<String> manifests;
   final String? versionHint;
-  String get id => '${kind.name}:$directory';
+  String get id =>
+      '${kind.name}:$directory${kind == ProjectKind.unreal && manifests.isNotEmpty ? '#${manifests.first}' : ''}';
+  bool get native => kind == ProjectKind.cpp || kind == ProjectKind.unreal;
 }
 
 final class ProjectDiscovery {

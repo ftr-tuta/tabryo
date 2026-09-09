@@ -24,12 +24,12 @@ jobs:
           - os: ubuntu-24.04
             device: linux
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -56,6 +56,44 @@ jobs:
       - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
       - run: dart run dartitect_cli:dartitect scan
+      - name: Native C++ compiler language server and debugger
+        shell: pwsh
+        run: |
+          $nativeRoot = Join-Path $env:RUNNER_TEMP 'native-cpp'
+          New-Item -ItemType Directory -Path $nativeRoot -Force | Out-Null
+          $platform = if ($IsWindows) { 'win32' } else { 'linux' }
+          $adapterArchive = Join-Path $nativeRoot 'codelldb.zip'
+          Invoke-WebRequest "https://github.com/vadimcn/codelldb/releases/download/v1.12.3/codelldb-$platform-x64.vsix" -OutFile $adapterArchive
+          $expected = if ($IsWindows) { 'a916e509308dac817732f63ca604a8b93ed29cd16f38a2fa9f0b64ed58e8f51a' } else { '1cd7f386598022b51a5b93b9ffa23e812b23f519cfe1833384ec4bef4bfd1be1' }
+          if ((Get-FileHash $adapterArchive -Algorithm SHA256).Hash.ToLower() -ne $expected) { throw 'CodeLLDB checksum mismatch.' }
+          Expand-Archive -LiteralPath $adapterArchive -DestinationPath $nativeRoot
+          if ($IsWindows) {
+            $clangdArchive = Join-Path $nativeRoot 'clangd.zip'
+            Invoke-WebRequest 'https://github.com/clangd/clangd/releases/download/22.1.6/clangd-windows-22.1.6.zip' -OutFile $clangdArchive
+            if ((Get-FileHash $clangdArchive -Algorithm SHA256).Hash.ToLower() -ne 'ce54f16e0b4fd76d450eeda9664420b195360b73febcfe40e661108fa57f2ce1') { throw 'clangd checksum mismatch.' }
+            Expand-Archive -LiteralPath $clangdArchive -DestinationPath $nativeRoot
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+            $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $cmake = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake'
+            $env:TABRYO_TEST_CMAKE = Join-Path $cmake 'CMake/bin/cmake.exe'
+            $env:TABRYO_TEST_CTEST = Join-Path $cmake 'CMake/bin/ctest.exe'
+            $env:TABRYO_TEST_NINJA = Join-Path $cmake 'Ninja/ninja.exe'
+            $env:TABRYO_TEST_CXX = 'cl.exe'
+            $env:TABRYO_TEST_MSVC_ENV = Join-Path $vs 'Common7/Tools/VsDevCmd.bat'
+            $env:TABRYO_TEST_CLANGD = (Get-ChildItem $nativeRoot -Recurse -Filter clangd.exe).FullName
+            $env:TABRYO_TEST_CODELLDB = Join-Path $nativeRoot 'extension/adapter/codelldb.exe'
+          } else {
+            chmod +x "$nativeRoot/extension/adapter/codelldb"
+            $env:TABRYO_TEST_CMAKE = '/usr/bin/cmake'
+            $env:TABRYO_TEST_CTEST = '/usr/bin/ctest'
+            $env:TABRYO_TEST_NINJA = '/usr/bin/ninja'
+            $env:TABRYO_TEST_CXX = '/usr/bin/clang++'
+            $env:TABRYO_TEST_CLANGD = '/usr/bin/clangd'
+            $env:TABRYO_TEST_CODELLDB = Join-Path $nativeRoot 'extension/adapter/codelldb'
+          }
+          $env:TABRYO_TEST_NATIVE_GAME = '1'
+          flutter test test/game_development_test.dart --plain-name 'native C++ workflow' --concurrency=1
+          exit $LASTEXITCODE
       - run: flutter test --concurrency=1
         env:
           TABRYO_TEST_PROJECT_SETUP: '1'

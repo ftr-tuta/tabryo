@@ -207,7 +207,7 @@ final class LocalDebugAdapters implements DebugAdapters {
     Cancellation cancellation,
   ) async {
     final project = configuration.project;
-    if (project.kind == ProjectKind.python) {
+    if (project.kind == ProjectKind.python || project.native) {
       throw const DebugFailure('DevTools requires Dart or Flutter.');
     }
     final executable = command(
@@ -229,6 +229,16 @@ final class LocalDebugAdapters implements DebugAdapters {
     ToolchainSelection tools,
     String command,
   ) {
+    if (project.native) {
+      final executable =
+          tools[ProjectTool.lldbDap] ?? tools[ProjectTool.codeLldb];
+      if (executable == null) {
+        throw const DebugFailure(
+          'Select lldb-dap or CodeLLDB 1.11+ as the native debug adapter.',
+        );
+      }
+      return (executable: executable, arguments: <String>[]);
+    }
     if (project.kind == ProjectKind.flutter) {
       final sdk = tools[ProjectTool.flutter];
       if (sdk == null) throw const DebugFailure('Select a Flutter SDK.');
@@ -301,7 +311,33 @@ final class LocalDebugAdapters implements DebugAdapters {
     final project = configuration.project;
     final launch = command(project, configuration.tools, 'debug_adapter');
     await _validate(project, launch.executable);
-    await _file(project, configuration.program);
+    if (project.kind == ProjectKind.unreal &&
+        configuration.program == configuration.tools[ProjectTool.unreal]) {
+      if (!await File(configuration.program).exists()) {
+        throw const DebugFailure('Selected Unreal Editor is unavailable.');
+      }
+    } else {
+      await _file(project, configuration.program);
+    }
+    if (configuration.attachPid != null &&
+        (!project.native ||
+            configuration.attachPid! <= 0 ||
+            configuration.attachUri != null)) {
+      throw const DebugFailure(
+        'Native attach requires a positive local process ID.',
+      );
+    }
+    if (project.native &&
+        (configuration.attachUri != null ||
+            configuration.toolArguments.isNotEmpty ||
+            (configuration.isAttach &&
+                (configuration.noDebug ||
+                    configuration.arguments.isNotEmpty ||
+                    configuration.environment.isNotEmpty)))) {
+      throw const DebugFailure(
+        'Use a local process ID for C++ attach and clear launch arguments/environment. LLDB tool arguments are not supported.',
+      );
+    }
     final directory = configuration.directory;
     if (!(p.equals(directory, project.directory) ||
             p.isWithin(project.directory, directory)) ||

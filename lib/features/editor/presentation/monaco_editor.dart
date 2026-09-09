@@ -295,6 +295,17 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           'language': switch (p.extension(buffer.path).toLowerCase()) {
             '.dart' => 'dart',
             '.py' => 'python',
+            '.c' ||
+            '.cc' ||
+            '.cpp' ||
+            '.cxx' ||
+            '.h' ||
+            '.hh' ||
+            '.hpp' ||
+            '.hxx' ||
+            '.inl' => 'cpp',
+            '.cs' => 'csharp',
+            '.uproject' || '.uplugin' => 'json',
             '.yaml' || '.yml' => 'yaml',
             '.md' => 'markdown',
             '.toml' || '.ini' => 'ini',

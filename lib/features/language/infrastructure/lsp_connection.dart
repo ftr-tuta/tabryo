@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import '../../../core/tool_environment.dart';
+
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
@@ -104,10 +107,21 @@ final class LocalLanguageServers implements LanguageServers {
         'Select the Pyright langserver JavaScript file and the project Python executable.',
       );
     }
+    if (spec.kind == LanguageServerKind.clangd) {
+      final database = spec.compilationDatabase;
+      if (database == null ||
+          !p.isAbsolute(database) ||
+          !await File(p.join(database, 'compile_commands.json')).exists()) {
+        throw const LanguageFailure(
+          'Generate compile_commands.json and select its directory before starting clangd.',
+        );
+      }
+    }
     final process = await Process.start(
       spec.executable,
       spec.arguments,
       workingDirectory: root,
+      environment: await nativeToolEnvironment(spec.environmentScript, root),
       runInShell: false,
     );
     final connection = LspConnection(

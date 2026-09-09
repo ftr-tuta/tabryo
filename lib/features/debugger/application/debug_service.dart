@@ -204,63 +204,85 @@ final class DebugService {
     if (!_disposed) _changes.add(null);
   }
 
-  Map<String, Object?> launchArguments(DebugConfiguration config) => {
-    'name': config.project.name,
-    'request': config.isAttach ? 'attach' : 'launch',
-    'type': config.project.kind == ProjectKind.python ? 'python' : 'dart',
-    'cwd': config.directory,
-    if (config.isAttach && config.project.kind == ProjectKind.python)
-      'connect': {
-        'host': config.attachUri!.host,
-        'port': config.attachUri!.port,
-      }
-    else if (config.isAttach)
-      'vmServiceUri': config.attachUri.toString(),
-    if ((!config.isAttach || config.project.kind == ProjectKind.flutter) &&
-        config.pythonModule == null)
-      'program': config.program
-    else if (!config.isAttach)
-      'module': config.pythonModule,
-    if (!config.isAttach) ...{
-      'args': config.arguments,
-      'noDebug': config.noDebug || config.flutterMode != 'debug',
-      'env': {
-        if (config.project.kind == ProjectKind.python) ...{
-          'PYTHONNOUSERSITE': '1',
-          'PYTHONUNBUFFERED': '1',
-        },
-        ...config.environment,
-      },
-    },
-    if (config.project.kind == ProjectKind.python) ...{
-      'python': config.tools[ProjectTool.python],
-      'console': 'internalConsole',
-      'redirectOutput': true,
-      'subProcess': false,
-      'justMyCode': true,
-      'django': config.django,
-    } else ...{
-      'debugSdkLibraries': false,
-      'debugExternalPackageLibraries': false,
-      'evaluateGettersInDebugViews': false,
-      'evaluateToStringInDebugViews': false,
-      'sendLogsToClient': false,
-      if (config.project.kind == ProjectKind.flutter)
-        'toolArgs': [
-          if (!config.isAttach) '--no-pub',
-          if (config.device != null) ...['--device-id', config.device!],
-          if (!config.isAttach && config.flutterMode != 'debug')
-            '--${config.flutterMode}',
-          if (!config.isAttach && config.flavor != null) ...[
-            '--flavor',
-            config.flavor!,
-          ],
-          if (!config.isAttach) ...config.toolArguments,
-        ]
-      else if (!config.isAttach && config.toolArguments.isNotEmpty)
-        'toolArgs': config.toolArguments,
-    },
-  };
+  Map<String, Object?> launchArguments(DebugConfiguration config) =>
+      config.project.native
+      ? {
+          'name': config.project.name,
+          'type': config.codeLldb ? 'lldb' : 'lldb-dap',
+          if (config.codeLldb) ...{
+            'terminal': 'console',
+            'expressions': 'native',
+            'sourceLanguages': ['cpp'],
+          },
+          'request': config.isAttach ? 'attach' : 'launch',
+          'program': config.program,
+          'cwd': config.directory,
+          if (config.isAttach) 'pid': config.attachPid,
+          if (!config.isAttach) ...{
+            'args': config.arguments,
+            'env': config.environment,
+            'noDebug': config.noDebug,
+            'stopOnEntry': false,
+          },
+        }
+      : {
+          'name': config.project.name,
+          'request': config.isAttach ? 'attach' : 'launch',
+          'type': config.project.kind == ProjectKind.python ? 'python' : 'dart',
+          'cwd': config.directory,
+          if (config.isAttach && config.project.kind == ProjectKind.python)
+            'connect': {
+              'host': config.attachUri!.host,
+              'port': config.attachUri!.port,
+            }
+          else if (config.isAttach)
+            'vmServiceUri': config.attachUri.toString(),
+          if ((!config.isAttach ||
+                  config.project.kind == ProjectKind.flutter) &&
+              config.pythonModule == null)
+            'program': config.program
+          else if (!config.isAttach)
+            'module': config.pythonModule,
+          if (!config.isAttach) ...{
+            'args': config.arguments,
+            'noDebug': config.noDebug || config.flutterMode != 'debug',
+            'env': {
+              if (config.project.kind == ProjectKind.python) ...{
+                'PYTHONNOUSERSITE': '1',
+                'PYTHONUNBUFFERED': '1',
+              },
+              ...config.environment,
+            },
+          },
+          if (config.project.kind == ProjectKind.python) ...{
+            'python': config.tools[ProjectTool.python],
+            'console': 'internalConsole',
+            'redirectOutput': true,
+            'subProcess': false,
+            'justMyCode': true,
+            'django': config.django,
+          } else ...{
+            'debugSdkLibraries': false,
+            'debugExternalPackageLibraries': false,
+            'evaluateGettersInDebugViews': false,
+            'evaluateToStringInDebugViews': false,
+            'sendLogsToClient': false,
+            if (config.project.kind == ProjectKind.flutter)
+              'toolArgs': [
+                if (!config.isAttach) '--no-pub',
+                if (config.device != null) ...['--device-id', config.device!],
+                if (!config.isAttach && config.flutterMode != 'debug')
+                  '--${config.flutterMode}',
+                if (!config.isAttach && config.flavor != null) ...[
+                  '--flavor',
+                  config.flavor!,
+                ],
+                if (!config.isAttach) ...config.toolArguments,
+              ]
+            else if (!config.isAttach && config.toolArguments.isNotEmpty)
+              'toolArgs': config.toolArguments,
+          },
+        };
 
   Future<void> start(DebugConfiguration config) async {
     if (_disposed || active) {
@@ -306,6 +328,8 @@ final class DebugService {
         'clientName': 'Tabryo',
         'adapterID': config.project.kind == ProjectKind.python
             ? 'python'
+            : config.project.native
+            ? (config.codeLldb ? 'lldb' : 'lldb-dap')
             : 'dart',
         'pathFormat': 'path',
         'linesStartAt1': true,
@@ -641,7 +665,7 @@ final class DebugService {
     final result = await connection.request('evaluate', {
       'expression': expression,
       'frameId': frameId,
-      'context': 'repl',
+      'context': configuration?.codeLldb == true ? 'watch' : 'repl',
     });
     if (pause != _pauseGeneration ||
         frame != frameId ||

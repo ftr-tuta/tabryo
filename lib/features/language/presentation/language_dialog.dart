@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../../projects/domain/project.dart';
 import '../application/language_service.dart';
@@ -36,6 +37,12 @@ final class _LanguageDialogState extends State<LanguageDialog> {
   late final _ruff = TextEditingController(
     text: widget.selection[ProjectTool.ruff] ?? '',
   );
+  late final _clangd = TextEditingController(
+    text: widget.selection[ProjectTool.clangd] ?? '',
+  );
+  late final _compilationDatabase = TextEditingController(
+    text: widget.project.directory,
+  );
   bool _busy = false;
   String? _message;
   bool get python => widget.project.kind == ProjectKind.python;
@@ -47,12 +54,31 @@ final class _LanguageDialogState extends State<LanguageDialog> {
     });
     final project = widget.project;
     final specs = <LanguageServerSpec>[
-      if (!python)
+      if (!python && !project.native)
         LanguageServerSpec(
           kind: LanguageServerKind.dart,
           workspace: project.workspace,
           root: project.directory,
           executable: _dart.text.trim(),
+          excludedRoots: widget.projects
+              .where((p) => p.directory != project.directory)
+              .map((p) => p.directory)
+              .toList(),
+        ),
+      if (project.native)
+        LanguageServerSpec(
+          kind: LanguageServerKind.clangd,
+          workspace: project.workspace,
+          root: project.directory,
+          executable: _clangd.text.trim(),
+          compilationDatabase: _compilationDatabase.text.trim(),
+          environmentScript: widget.selection[ProjectTool.msvcEnvironment],
+          sourceRoots: [
+            if (widget.selection[ProjectTool.unreal] case final editor?)
+              p.join(p.dirname(p.dirname(p.dirname(editor))), 'Source'),
+            if (widget.selection[ProjectTool.unreal] case final editor?)
+              p.join(p.dirname(p.dirname(p.dirname(editor))), 'Plugins'),
+          ],
           excludedRoots: widget.projects
               .where((p) => p.directory != project.directory)
               .map((p) => p.directory)
@@ -132,12 +158,24 @@ final class _LanguageDialogState extends State<LanguageDialog> {
               const Text(
                 'Start installed tools for this project. They can read project files and configuration. Use Apply toolchains in Projects to remember paths; overrides below apply only to this session. Opening a workspace never starts a server.',
               ),
-              if (!python)
+              if (!python && !widget.project.native)
                 _field(
                   _dart,
                   'Dart executable',
                   'Runs: dart language-server --protocol=lsp',
                 ),
+              if (widget.project.native) ...[
+                _field(
+                  _clangd,
+                  'clangd executable',
+                  'Installed LLVM language server for C and C++.',
+                ),
+                _field(
+                  _compilationDatabase,
+                  'Compilation database directory',
+                  'Generate compile_commands.json with UnrealBuildTool or CMake. Includes generated Unreal headers and the actual compiler flags.',
+                ),
+              ],
               if (python) ...[
                 _field(
                   _python,
@@ -211,7 +249,15 @@ final class _LanguageDialogState extends State<LanguageDialog> {
 
   @override
   void dispose() {
-    for (final controller in [_dart, _python, _node, _pyright, _ruff]) {
+    for (final controller in [
+      _dart,
+      _python,
+      _node,
+      _pyright,
+      _ruff,
+      _clangd,
+      _compilationDatabase,
+    ]) {
       controller.dispose();
     }
     super.dispose();

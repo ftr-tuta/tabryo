@@ -40,7 +40,7 @@ export function installLanguage(editor, documents, emit, snapshot) {
       emit({ type: 'language', id: doc.id, generation: doc.generation, sequence: version, request, method, params });
     });
   }
-  for (const language of ['dart', 'python']) {
+  for (const language of ['dart', 'python', 'cpp']) {
     monaco.languages.registerCompletionItemProvider(language, {
       triggerCharacters: ['.', '(', ' '],
       provideCompletionItems: async (model, at, _context, cancel) => {

@@ -18,6 +18,25 @@ import 'package:tabryo/features/language/infrastructure/local_language_sources.d
 import 'editor_context_test.dart' show MemoryContextTransport;
 
 void main() {
+  test('clangd routes C++ sources and headers with the selected compilation database', () {
+    final root = p.absolute('game');
+    final spec = LanguageServerSpec(
+      kind: LanguageServerKind.clangd,
+      workspace: root,
+      root: root,
+      executable: p.join(root, 'clangd'),
+      compilationDatabase: p.join(root, 'build'),
+    );
+    expect(
+      spec.arguments,
+      contains('--compile-commands-dir=${p.join(root, 'build')}'),
+    );
+    expect(spec.supportsPath('Source/Game.cpp'), true);
+    expect(spec.supportsPath('Source/Game.generated.h'), true);
+    expect(spec.supportsPath('Source/Rule.inl'), true);
+    expect(spec.supportsPath('main.py'), false);
+    expect(spec.language, 'cpp');
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('LSP framing handles fragmented Unicode, concatenation and limits', () {
