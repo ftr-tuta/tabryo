@@ -23,6 +23,9 @@ final class Conversation {
   String? uncertainId;
   Set<String> beforeSend = {};
   bool controlled = false, sending = false, historyTruncated = false;
+  bool originatedHere = false;
+  bool get resumable =>
+      originatedHere && !controlled && !active && status != 'active';
   ConversationJson configuration = {};
   bool get active => activeTurn != null;
 }
@@ -167,6 +170,7 @@ final class ConversationService {
       () => Conversation(id, row['cwd'] as String? ?? _workspace ?? '', title),
     );
     conversation.title = title.isEmpty ? 'New conversation' : title;
+    conversation.originatedHere = row['threadSource'] == 'tabryo_chat';
     if (row['updatedAt'] case final num updated) {
       conversation.updatedAt = updated.toInt();
     }
@@ -219,6 +223,7 @@ final class ConversationService {
       'model': ?model,
       if (effort != null) 'config': {'model_reasoning_effort': effort},
       'serviceName': 'tabryo_chat',
+      'threadSource': 'tabryo_chat',
     });
     final conversation = _summary(
       Map<String, Object?>.from(response['thread'] as Map),
@@ -245,6 +250,7 @@ final class ConversationService {
           'threadId': id,
           'includeTurns': true,
         });
+        _summary(Map<String, Object?>.from(response['thread'] as Map));
         _history(
           conversation,
           Map<String, Object?>.from(response['thread'] as Map),
@@ -254,6 +260,43 @@ final class ConversationService {
       error = '$failure';
     }
     _notify();
+  }
+
+  /// An explicit gesture can resume an idle conversation identified by the CLI
+  /// as this client's creation. Generic/external and collaboration history never
+  /// gains control from being listed or selected.
+  Future<void> resumeCreatedConversation(String id) async {
+    final conversation = conversations[id]!;
+    if (!conversation.resumable) {
+      throw const CodexFailure(
+        'This conversation remains with its session owner.',
+      );
+    }
+    await connect(conversation.workspace);
+    if (_owned.length >= 64 && !_owned.contains(id)) {
+      throw const CodexFailure(
+        'This client already controls 64 conversations. Restart Tabryo before resuming another.',
+      );
+    }
+    final response = await connection.request('thread/read', {
+      'threadId': id,
+      // CLI 0.147's metadata-only response omits the persisted threadSource.
+      // Read the canonical history before confirming this client's origin.
+      'includeTurns': true,
+    });
+    _summary(Map<String, Object?>.from(response['thread'] as Map));
+    if (!conversation.resumable) {
+      throw const CodexFailure('This conversation cannot be resumed here.');
+    }
+    _owned.add(id);
+    try {
+      await _resume(conversation);
+    } catch (_) {
+      _owned.remove(id);
+      rethrow;
+    } finally {
+      _notify();
+    }
   }
 
   Future<void> _resume(Conversation conversation) async {

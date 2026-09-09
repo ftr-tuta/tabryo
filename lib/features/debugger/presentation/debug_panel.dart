@@ -549,9 +549,9 @@ final class _DebugPanelState extends State<DebugPanel> {
               DropdownButton<String>(
                 value: device,
                 hint: const Text('Choose a device'),
+                // DropdownButton.items requires a List<DropdownMenuItem>.
+                // ignore: dartitect_dt3140
                 items: devices
-                    // DropdownButton.items requires a List<DropdownMenuItem>.
-                    // ignore: dartitect_dt3140
                     .map(
                       (d) => DropdownMenuItem(
                         value: d.id,

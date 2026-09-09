@@ -204,6 +204,27 @@ void main() {
     },
   );
 
+  test('persisted Tabryo history needs an explicit resume and external history is refused', () async {
+    final connection = ConversationConnection()..tabryoHistory = true;
+    final service = ConversationService(connection);
+    addTearDown(service.close);
+    await service.list('/workspace');
+    await service.select('external');
+    expect(service.selected!.controlled, isFalse);
+    expect(service.selected!.resumable, isTrue);
+    expect(connection.calls.where((c) => c.$1 == 'thread/resume'), isEmpty);
+    await service.resumeCreatedConversation('external');
+    expect(service.selected!.controlled, isTrue);
+    expect(connection.calls.last.$1, 'thread/resume');
+    service.selected!.controlled = false;
+    connection.tabryoHistory = false;
+    await expectLater(
+      service.resumeCreatedConversation('external'),
+      throwsA(isA<CodexFailure>()),
+    );
+    expect(service.selected!.controlled, isFalse);
+  });
+
   test(
     'correlates interleaved replies and preserves split UTF-8 frames',
     () async {
@@ -403,6 +424,7 @@ void main() {
 
 final class ConversationConnection implements InteractiveCodexConnection {
   bool online = false, failSend = false;
+  bool tabryoHistory = false;
   final notifications = StreamController<CodexEvent>.broadcast(sync: true);
   final interactions = StreamController<CodexServerRequest>.broadcast(
     sync: true,
@@ -443,6 +465,7 @@ final class ConversationConnection implements InteractiveCodexConnection {
           'id': parameters['threadId'] ?? 'chat',
           'cwd': '/workspace',
           'preview': 'Chat',
+          'threadSource': tabryoHistory ? 'tabryo_chat' : null,
           'turns': history,
         },
         'model': 'cli-model',

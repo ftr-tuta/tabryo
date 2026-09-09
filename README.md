@@ -147,8 +147,9 @@ their original anchors until the history is refreshed.
 **Converse** starts the installed Codex CLI's App Server only after **Connect CLI**
 or **New conversation**. The CLI supplies models, permissions, account limits and
 history. Direct chat messages are separate from collaboration envelopes. Only
-conversations created by this client are controlled; external and collaboration
-sessions are available as history. Reconnection reconciles item IDs and uncertain
+conversations created by this client are controlled. An idle conversation marked
+by the CLI as a Tabryo chat offers explicit resumption after reopening Tabryo;
+external and collaboration sessions remain history only. Reconnection reconciles item IDs and uncertain
 sends without automatic replay. Context is attached only through explicit review.
 Up to 200 recent turns, 2,000 items and 2 MiB of text per conversation are retained for display;
 the CLI keeps the full history. Draft persistence follows remembered preferences.

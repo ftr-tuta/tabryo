@@ -46,6 +46,8 @@ import 'package:webview_win_floating/webview_win_floating.dart';
 import 'package:multiview_desktop/multiview_desktop.dart';
 import 'package:tabryo/main.dart';
 
+import 'editor_test.dart' show controlKey, expectWeb, focusTestWindow;
+
 final class WindowEvents extends WindowObserver {
   final events = <String>[];
   @override
@@ -972,9 +974,7 @@ void main() {
             .state<DevToolsPaneState>(find.byType(DevToolsPane))
             .surfaceVisible,
       );
-      await browser.runJavaScript(
-        'document.getElementById("value").value="ação preserved"; window.presentationMarker=42',
-      );
+      await browser.runJavaScript('window.presentationMarker=42');
       await tester.tap(find.byTooltip('Open in window'));
       await until(
         tester,
@@ -998,6 +998,37 @@ void main() {
       expect(
         await browser.runJavaScriptReturningResult('window.presentationMarker'),
         42,
+      );
+      final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+      addTearDown(
+        () => Clipboard.setData(ClipboardData(text: clipboard?.text ?? '')),
+      );
+      if (Platform.isWindows) focusTestWindow();
+      await windows.focus(preview);
+      await browser.requestFocus();
+      await browser.runJavaScript('document.getElementById("value").select()');
+      await Clipboard.setData(const ClipboardData(text: 'ação preserved'));
+      if (Platform.isWindows) {
+        controlKey(0x56);
+      } else {
+        final focused = await Process.run('xdotool', [
+          'getwindowfocus',
+          'getwindowpid',
+        ]);
+        expect('${focused.stdout}'.trim(), '$pid');
+        expect((await Process.run('xdotool', ['key', 'ctrl+v'])).exitCode, 0);
+      }
+      await expectWeb(
+        tester,
+        browser,
+        'document.getElementById("value").value === "ação preserved"',
+        true,
+      );
+      await expectWeb(
+        tester,
+        browser,
+        'typeof window.TabryoEditor === "undefined" && typeof window.tabryoBridge === "undefined"',
+        true,
       );
       model.previewPreferences(
         model.preferences.copyWith(theme: AppTheme.dark),

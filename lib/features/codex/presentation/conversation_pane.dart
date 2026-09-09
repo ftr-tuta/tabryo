@@ -347,10 +347,21 @@ final class _ConversationPaneState extends State<ConversationPane> {
           ),
         ),
         if (!conversation.controlled)
-          const Padding(
-            padding: EdgeInsets.all(8),
-            child: Text(
-              'History only. Execution remains with the session owner.',
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [
+                const Text(
+                  'History only. Execution remains with the session owner.',
+                ),
+                if (conversation.resumable)
+                  TextButton(
+                    onPressed: () => _action(
+                      () => service.resumeCreatedConversation(conversation.id),
+                    ),
+                    child: const Text('Resume this Tabryo conversation'),
+                  ),
+              ],
             ),
           ),
         if (conversation.historyTruncated)

@@ -580,6 +580,30 @@ trust_level = "trusted"
       await service.list(root);
       expect(service.conversations.keys, contains(thread.id));
       expect(modelInputs['graphical'], hasLength(1));
+      await service.close();
+      final reopened = ConversationService(
+        LocalCodexConnection(
+          executable: codex,
+          interactive: true,
+          environment: {
+            'CODEX_HOME': p.join(root, 'codex'),
+            'OPENAI_API_KEY': '',
+          },
+        ),
+      );
+      addTearDown(reopened.close);
+      await reopened.list(root);
+      await reopened.select(thread.id);
+      expect(reopened.selected!.resumable, isTrue);
+      expect(reopened.selected!.controlled, isFalse);
+      await reopened.resumeCreatedConversation(thread.id);
+      expect(reopened.selected!.controlled, isTrue);
+      final resumedTurn = reopened.connection.events.firstWhere(
+        (e) => e.method == 'turn/completed',
+      );
+      await reopened.send(thread.id, 'Continue the conversation');
+      await resumedTurn.timeout(const Duration(seconds: 30));
+      expect(modelInputs['graphical'], hasLength(2));
     },
     skip: codex == null
         ? 'Set TABRYO_TEST_CODEX for native App Server tests.'
