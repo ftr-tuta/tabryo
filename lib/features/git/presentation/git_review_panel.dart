@@ -157,6 +157,7 @@ final class _GitReviewPanelState extends State<GitReviewPanel> {
   }
 
   Widget _historyFilters() => ExpansionTile(
+    key: ValueKey(widget.root),
     title: const Text('History filters'),
     children: [
       DropdownButtonFormField<String>(
@@ -165,6 +166,15 @@ final class _GitReviewPanelState extends State<GitReviewPanel> {
         decoration: const InputDecoration(labelText: 'Branch / reference'),
         items: [
           const DropdownMenuItem(value: 'HEAD', child: Text('Current branch')),
+          if (_branch != 'HEAD' &&
+              !model.references.any((reference) => reference.name == _branch))
+            DropdownMenuItem(
+              value: _branch,
+              child: Text(
+                '$_branch (unavailable)',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           for (final reference in model.references)
             DropdownMenuItem(
               value: reference.name,

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:ffi/ffi.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:terminal_host/terminal_host.dart';
@@ -249,7 +250,13 @@ void main() {
 
   testWidgets(
     '100 sessions finish and release without accumulating owned child processes',
-    (_) async {
+    (tester) async {
+      // Process-wide handles also include asynchronous renderer startup. Wait
+      // for the host's first raster before measuring the terminal lifecycle.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.binding.waitUntilFirstFrameRasterized.timeout(
+        const Duration(seconds: 30),
+      );
       // Initialize the SDK/ConPTY thread pools before measuring retained owners.
       final warmup = TerminalPty.start(
         command("[Console]::WriteLine('warmup')", "printf 'warmup\\n'"),

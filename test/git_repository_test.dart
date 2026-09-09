@@ -76,6 +76,7 @@ void main() {
   ) async {
     final model = GitReviewViewModel(git, git, git)
       ..panelPage = 'History'
+      ..query = const GitHistoryQuery(reference: 'refs/heads/removed')
       ..commit = const GitCommit(
         '123456789abcdef',
         'Test Author',
@@ -91,26 +92,26 @@ void main() {
         ],
       );
     addTearDown(model.disposeAsync);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Align(
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: 320,
-              height: 330,
-              child: GitReviewPanel(
-                model: model,
-                root: null,
-                commit: () {},
-                fetch: () {},
-                push: () {},
-              ),
+    String? root;
+    Widget panel() => MaterialApp(
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 320,
+            height: 330,
+            child: GitReviewPanel(
+              model: model,
+              root: root,
+              commit: () {},
+              fetch: () {},
+              push: () {},
             ),
           ),
         ),
       ),
     );
+    await tester.pumpWidget(panel());
     expect(tester.takeException(), isNull);
     await tester.tap(find.text('History filters'));
     await tester.pumpAndSettle();
@@ -122,6 +123,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await tester.ensureVisible(find.text('lib/main.dart'));
+    // Loading another workspace resets the form's old reference and filters.
+    root = checkout.path;
+    model.query = const GitHistoryQuery();
+    await tester.pumpWidget(panel());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
     await tester.tap(find.text('Compare').first);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

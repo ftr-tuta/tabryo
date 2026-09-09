@@ -137,17 +137,16 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
   }
 
   Future<void> _openLocalPreview() async {
-    if (model.workspace == null || model.devToolsProfileDirectory == null) {
+    final owner = model.workspace?.root;
+    if (owner == null || model.devToolsProfileDirectory == null) {
       return;
     }
-    final input = TextEditingController(
-      text: _previewUri?.toString() ?? 'http://localhost:',
-    );
+    var input = _previewUri?.toString() ?? 'http://localhost:';
     final uri = await showDialog<Uri>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, update) {
-          final value = Uri.tryParse(input.text);
+          final value = Uri.tryParse(input);
           final valid =
               value != null &&
               ['http', 'https'].contains(value.scheme) &&
@@ -159,10 +158,10 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
             title: const Text('Open local web preview'),
             content: SizedBox(
               width: 480,
-              child: TextField(
-                controller: input,
+              child: TextFormField(
+                initialValue: input,
                 autofocus: true,
-                onChanged: (_) => update(() {}),
+                onChanged: (value) => update(() => input = value),
                 decoration: const InputDecoration(
                   labelText: 'Local URL with port',
                   helperText: 'Choose the running app to display.',
@@ -183,13 +182,12 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
         },
       ),
     );
-    await WidgetsBinding.instance.endOfFrame;
-    input.dispose();
-    if (!mounted || uri == null) return;
+    if (!mounted || uri == null || model.workspace?.root != owner) return;
     if (_preview?.window != null) await widget.windows!.reattach(_preview!);
+    if (!mounted || model.workspace?.root != owner) return;
     setState(() {
       _previewUri = uri;
-      _previewOwner = model.workspace!.root;
+      _previewOwner = owner;
       _previewVisible = true;
       _auxiliaryTab = true;
     });
