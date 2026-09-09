@@ -267,6 +267,47 @@ void main() {
     expect(closes, 1);
   });
 
+  test('Flutter daemon reports bounded SDK errors without endpoint credentials', () async {
+    final output = StreamController<List<int>>();
+    var closes = 0;
+    final discovery = LocalFlutterDevices(
+      output.stream,
+      (bytes) {
+        final request = (jsonDecode(utf8.decode(bytes)) as List).single as Map;
+        output.add(
+          utf8.encode(
+            '${jsonEncode([
+              {'id': request['id'], 'error': 'Cannot discover ws://127.0.0.1:1234/private-token/ ${'x' * 1024}\nprivate stack'},
+            ])}\n',
+          ),
+        );
+      },
+      () async {
+        closes++;
+      },
+    );
+    addTearDown(() async {
+      await discovery.close();
+      await output.close();
+    });
+    await expectLater(
+      discovery.initialize(Cancellation()),
+      throwsA(
+        isA<DebugFailure>().having(
+          (error) => error.message,
+          'message',
+          allOf(
+            contains('Cannot discover [endpoint]'),
+            isNot(contains('private-token')),
+            isNot(contains('private stack')),
+            hasLength(lessThan(600)),
+          ),
+        ),
+      ),
+    );
+    expect(closes, 1);
+  });
+
   test('Flutter daemon cancellation drains startup and ignores late device messages', () async {
     final output = StreamController<List<int>>();
     var closes = 0;

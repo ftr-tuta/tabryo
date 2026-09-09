@@ -122,9 +122,21 @@ final class LocalFlutterDevices implements FlutterDeviceDiscovery {
           final pending = _pending[message['id']];
           if (pending != null && !pending.isCompleted) {
             if (message.containsKey('error')) {
+              final failure = message['error'];
+              final detail = failure is Map ? failure['message'] : failure;
+              final summary = detail is String
+                  ? String.fromCharCodes(
+                          detail.split('\n').first.runes.take(512),
+                        )
+                        .replaceAll(
+                          RegExp(r'https?://\S+|wss?://\S+'),
+                          '[endpoint]',
+                        )
+                        .replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ')
+                  : 'No diagnostic supplied.';
               pending.completeError(
-                const DebugFailure(
-                  'Flutter refused device discovery. Check the selected SDK.',
+                DebugFailure(
+                  'Flutter refused device discovery. Check the selected SDK. $summary',
                 ),
               );
             } else {
