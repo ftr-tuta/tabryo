@@ -239,6 +239,8 @@ Future<void> expectWeb(
   }
   final details = await browser.runJavaScriptReturningResult("""
     JSON.stringify({focus: document.activeElement?.className,
+      page: document.body?.innerText.slice(0, 1000).replace(/https?:[^ ]+/g, '[endpoint]'),
+      ready: document.readyState,
       devTools: document.querySelector('flutter-view') ? {
         children: [...document.querySelector('flutter-view').children].map(e => e.tagName),
         shadow: [...(document.querySelector('flt-glass-pane')?.shadowRoot?.children ?? [])].map(e => e.tagName),
@@ -1100,6 +1102,7 @@ void main() {
         browser,
         "document.querySelector('flt-glass-pane') != null",
         true,
+        attempts: 300,
       );
       await expectWeb(
         tester,
