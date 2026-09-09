@@ -92,14 +92,22 @@ void main() {
       final Map<String, Object?> item;
       if (name == 'approval' && modelInputs[name]!.length == 1) {
         final tools =
-            ((body['tools'] as List?) ??
-                    [
-                      {'name': 'shell_command'},
-                    ])
-                .cast<Map>();
+            [
+              ...(body['tools'] as List? ?? []),
+              for (final input
+                  in (body['input'] as List? ?? []).whereType<Map>())
+                if (input['type'] == 'additional_tools')
+                  ...(input['tools'] as List? ?? []),
+            ].cast<Map>().expand(
+              (tool) => tool['type'] == 'namespace'
+                  ? (tool['tools'] as List).cast<Map>()
+                  : [tool],
+            );
         final commandTool = tools.firstWhere(
           (tool) =>
               ['shell_command', 'shell', 'exec_command'].contains(tool['name']),
+          // The code-mode facade can hide this native call from the catalog.
+          orElse: () => {'name': 'exec_command'},
         );
         item = {
           'id': 'call_item',
@@ -119,6 +127,8 @@ void main() {
               ]
             else
               'command': 'Set-Content -LiteralPath ./approval_probe.txt -Value fixture',
+            'sandbox_permissions': 'require_escalated',
+            'justification': 'Approve the isolated test command.',
           }),
         };
       } else {

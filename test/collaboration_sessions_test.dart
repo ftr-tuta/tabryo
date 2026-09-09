@@ -38,8 +38,10 @@ void main() {
   final services = <LocalCollaborationService>[];
   final inputs = <Json>[];
   var approvalNext = false;
+  String? providerFailure;
   Completer<void>? hold;
   setUp(() async {
+    providerFailure = null;
     temporary = await Directory.systemTemp.createTemp(
       'tabryo_collaboration_sessions_',
     );
@@ -51,17 +53,55 @@ void main() {
       );
       inputs.add(body);
       await hold?.future;
+      if (providerFailure case final message?) {
+        request.response.statusCode = HttpStatus.badRequest;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'error': {'type': 'invalid_request_error', 'message': message},
+          }),
+        );
+        await request.response.close();
+        return;
+      }
       final Json item;
       if (approvalNext) {
         approvalNext = false;
+        final tools =
+            [
+              ...(body['tools'] as List? ?? []),
+              for (final input
+                  in (body['input'] as List? ?? []).whereType<Map>())
+                if (input['type'] == 'additional_tools')
+                  ...(input['tools'] as List? ?? []),
+            ].cast<Map>().expand(
+              (tool) => tool['type'] == 'namespace'
+                  ? (tool['tools'] as List).cast<Map>()
+                  : [tool],
+            );
+        // Code-mode versions expose only their facade in the model catalog;
+        // the native exec_command call still exercises the same approval RPC.
+        final commandTool = tools.firstWhere(
+          (tool) =>
+              ['shell_command', 'shell', 'exec_command'].contains(tool['name']),
+          orElse: () => {'name': 'exec_command'},
+        );
+        const command =
+            'Set-Content -LiteralPath ./approval_probe.txt -Value fixture';
         item = {
           'id': 'command',
           'type': 'function_call',
           'call_id': 'call_command',
-          'name': 'shell_command',
+          'name': commandTool['name'],
           'arguments': jsonEncode({
-            'command':
-                'Set-Content -LiteralPath ./approval_probe.txt -Value fixture',
+            if (commandTool['name'] == 'exec_command')
+              'cmd': command
+            else if (commandTool['name'] == 'shell')
+              'command': ['powershell.exe', '-NoProfile', '-Command', command]
+            else
+              'command': command,
+            'sandbox_permissions': 'require_escalated',
+            'justification': 'Approve the isolated test command.',
           }),
         };
       } else {
@@ -154,7 +194,7 @@ void main() {
     await File(p.join(configHome.path, 'config.toml')).writeAsString('''
 model = "gpt-5.6-terra"
 model_provider = "fixture"
-approval_policy = "untrusted"
+approval_policy = "on-request"
 sandbox_mode = "read-only"
 [model_providers.fixture]
 name = "Local responses fixture"
@@ -375,6 +415,74 @@ supports_websockets = false
         ? 'Set TABRYO_TEST_CODEX for the installed CLI integration.'
         : false,
     timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'installed Codex restores failed turns and replies without retrying work on reconnect',
+    () async {
+      providerFailure =
+          "The 'gpt-6-astra' model requires a newer version of Codex. "
+          'Please upgrade to the latest app or CLI and try again. secret-fixture';
+      final service = await start();
+      final group =
+          service.store.createGroup('Session recovery')['id'] as String;
+      final member = await participant(
+        service,
+        group,
+        'API',
+        'Wait for context.',
+      );
+      final id = member['id'] as String;
+      await service.connectParticipant(id);
+      var managed = service.session(id)!;
+      await _until(() async => managed.lastTurnStatus == 'failed');
+      expect(managed.lastError, contains('requires a newer Codex CLI'));
+      expect(managed.lastError, isNot(contains('secret-fixture')));
+      expect(managed.snapshot['codex_version'], matches(r'^\d+\.\d+\.\d+'));
+      final thread = managed.participant['thread'];
+      final requests = inputs.length;
+      await service.controlCall('disconnect', {'id': id});
+      await service.connectParticipant(id);
+      managed = service.session(id)!;
+      expect(managed.participant['thread'], thread);
+      expect(managed.lastTurnStatus, 'failed');
+      expect(managed.lastError, contains('requires a newer Codex CLI'));
+      expect(
+        inputs.length,
+        requests,
+        reason: 'Reconnect must not replay input.',
+      );
+      final snapshot = await service.controlCall('snapshot', {'group': group});
+      expect(snapshot['capabilities'], contains('session_diagnostics'));
+      expect(
+        (snapshot['participants'] as List).single,
+        containsPair('last_turn_status', 'failed'),
+      );
+
+      // Only a new, explicit user turn resumes model work after recovery.
+      providerFailure = null;
+      hold = Completer<void>();
+      await managed.connection.request('turn/start', {
+        'threadId': thread,
+        'input': [
+          {'type': 'text', 'text': 'Continue the task.'},
+        ],
+      });
+      await _until(() async => managed.lastTurnStatus == 'inProgress');
+      expect(managed.lastError, isNull);
+      hold!.complete();
+      await _until(() async => managed.lastTurnStatus == 'completed');
+      expect(managed.lastMessage, 'Waiting for collaborator context.');
+      await service.controlCall('disconnect', {'id': id});
+      await service.connectParticipant(id);
+      managed = service.session(id)!;
+      expect(managed.lastTurnStatus, 'completed');
+      expect(managed.lastError, isNull);
+      expect(managed.lastMessage, 'Waiting for collaborator context.');
+      expect(inputs.length, requests + 1);
+    },
+    skip: codex == null ? 'Set TABRYO_TEST_CODEX for native recovery.' : false,
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 
   test(

@@ -14,6 +14,7 @@ import 'package:tabryo/features/preferences/domain/preferences.dart';
 import 'package:tabryo/features/preferences/domain/appearance.dart';
 import 'package:tabryo/features/terminals/domain/terminal_ports.dart';
 import 'package:tabryo/features/terminals/presentation/terminal_session.dart';
+import 'package:tabryo/features/terminals/presentation/terminal_pane_view.dart';
 import 'package:tabryo/features/workspaces/domain/workspace.dart';
 import 'package:tabryo/features/workspaces/presentation/workbench_view_model.dart';
 import 'package:tabryo/main.dart';
@@ -188,6 +189,154 @@ void main() {
   tearDown(() async {
     if (model.sessions.isNotEmpty) await model.shutdown();
   });
+
+  testWidgets(
+    'Windows terminal commits accents once through text input and preserves control keys',
+    (tester) async {
+      final session = (await tester.runAsync(
+        () async => TerminalSession(
+          id: 1,
+          title: 'Shell',
+          spec: LaunchSpec(executable: '/shell', workingDirectory: root),
+          host: host,
+        ),
+      ))!;
+      addTearDown(() async {
+        await tester.runAsync(session.close);
+        session.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TerminalPaneView(
+              session: session,
+              preferences: const Preferences(),
+              focused: true,
+              onFocus: () {},
+              onClose: () {},
+              readClipboard: () async => null,
+              writeClipboard: (_) async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+      final input = host.processes.single.input;
+      for (final entry in {
+        '´': 'é',
+        '~': 'ã',
+        '^': 'ê',
+        '`': 'à',
+        '¨': 'ü',
+      }.entries) {
+        input.clear();
+        // Dead keys may carry a label but no committed character on Windows.
+        await tester.sendKeyEvent(
+          LogicalKeyboardKey.quote,
+          character: entry.key,
+          physicalKey: PhysicalKeyboardKey.quote,
+          platform: 'windows',
+        );
+        expect(
+          input,
+          isEmpty,
+          reason: 'A dead key must wait for platform text.',
+        );
+        tester.testTextInput.updateEditingValue(
+          TextEditingValue(
+            text: entry.key,
+            selection: const TextSelection.collapsed(offset: 1),
+            composing: const TextRange(start: 0, end: 1),
+          ),
+        );
+        expect(input, isEmpty);
+        tester.testTextInput.updateEditingValue(
+          TextEditingValue(
+            text: entry.value,
+            selection: const TextSelection.collapsed(offset: 1),
+          ),
+        );
+        await tester.pump();
+        expect(utf8.decode(input), entry.value);
+        // Synchronize the empty editing state sent back to the platform.
+        tester.testTextInput.updateEditingValue(TextEditingValue.empty);
+      }
+      input.clear();
+      await tester.sendKeyEvent(
+        LogicalKeyboardKey.keyA,
+        character: 'a',
+        platform: 'windows',
+      );
+      expect(input, isEmpty);
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(text: 'a'),
+      );
+      await tester.pump();
+      expect(utf8.decode(input), 'a');
+      tester.testTextInput.updateEditingValue(TextEditingValue.empty);
+      input.clear();
+      // A literal accent (dead key followed by space) is still valid text.
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(text: '´'),
+      );
+      await tester.pump();
+      expect(utf8.decode(input), '´');
+      tester.testTextInput.updateEditingValue(TextEditingValue.empty);
+      input.clear();
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.controlLeft,
+        platform: 'windows',
+      );
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.altRight,
+        platform: 'windows',
+      );
+      await tester.sendKeyEvent(
+        LogicalKeyboardKey.keyQ,
+        character: '@',
+        platform: 'windows',
+      );
+      expect(
+        input,
+        isEmpty,
+        reason: 'AltGr text also belongs to the platform.',
+      );
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(text: '@'),
+      );
+      await tester.pump();
+      expect(utf8.decode(input), '@');
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.altRight,
+        platform: 'windows',
+      );
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.controlLeft,
+        platform: 'windows',
+      );
+      tester.testTextInput.updateEditingValue(TextEditingValue.empty);
+      input.clear();
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.controlLeft,
+        platform: 'windows',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC, platform: 'windows');
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.controlLeft,
+        platform: 'windows',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter, platform: 'windows');
+      await tester.sendKeyEvent(
+        LogicalKeyboardKey.arrowUp,
+        platform: 'windows',
+      );
+      expect(utf8.decode(input), '\x03\r\x1b[A');
+      await tester.pumpWidget(const SizedBox());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.windows),
+  );
 
   test('collaboration reservations block duplicate writers and remote credentials stay out of preferences', () async {
     final client = ReservedCollaboration(root);

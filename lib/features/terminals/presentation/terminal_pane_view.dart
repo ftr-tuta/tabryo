@@ -3,6 +3,7 @@
 // ignore_for_file: dartitect_dt3121
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm2/xterm.dart';
 
@@ -145,9 +146,10 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
   }
 
   KeyEventResult _key(FocusNode _, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final keyboard = HardwareKeyboard.instance;
-    if (keyboard.isControlPressed && keyboard.isShiftPressed) {
+    if (event is KeyDownEvent &&
+        keyboard.isControlPressed &&
+        keyboard.isShiftPressed) {
       if (event.logicalKey == LogicalKeyboardKey.keyC) {
         _copy();
         return KeyEventResult.handled;
@@ -160,6 +162,27 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
         setState(() => _searching = !_searching);
         return KeyEventResult.handled;
       }
+    }
+    // xterm's hardware fallback inserts dead-key labels before Windows commits
+    // their composed text. Let the platform text client handle printable input
+    // (including AltGr), while xterm retains control/navigation key encoding.
+    final altGr = keyboard.physicalKeysPressed.contains(
+      PhysicalKeyboardKey.altRight,
+    );
+    final plainText =
+        !keyboard.isMetaPressed &&
+        ((!keyboard.isControlPressed && !keyboard.isAltPressed) || altGr);
+    final printable =
+        ((event.character?.isNotEmpty ?? false) &&
+            event.character!.runes.every(
+              (rune) => rune >= 0x20 && rune != 0x7f,
+            )) ||
+        event.logicalKey.keyLabel.runes.length == 1;
+    if (defaultTargetPlatform == TargetPlatform.windows &&
+        event is! KeyUpEvent &&
+        plainText &&
+        printable) {
+      return KeyEventResult.skipRemainingHandlers;
     }
     return KeyEventResult.ignored;
   }

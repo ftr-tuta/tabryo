@@ -23,6 +23,8 @@ final class WebSocketCodexConnection implements InteractiveCodexConnection {
   StreamSubscription<CodexEvent>? _subscription;
   int _generation = 0;
   bool _ready = false;
+  String? _version;
+  String? get version => _version;
 
   @override
   bool get connected => _ready && (_channel?.connected ?? false);
@@ -108,7 +110,7 @@ final class WebSocketCodexConnection implements InteractiveCodexConnection {
       _events.add(event);
     });
     try {
-      await channel.request('initialize', {
+      final initialized = await channel.request('initialize', {
         'clientInfo': {
           'name': clientName,
           'title': 'Tabryo',
@@ -119,6 +121,12 @@ final class WebSocketCodexConnection implements InteractiveCodexConnection {
       if (generation != _generation) {
         throw const CodexFailure('Connection cancelled.');
       }
+      final userAgent = initialized['userAgent'];
+      _version = userAgent is String
+          ? RegExp(r'^\S+/([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)\s')
+                .firstMatch(userAgent)
+                ?.group(1)
+          : null;
       channel.initialized();
       _ready = true;
     } catch (_) {
@@ -146,6 +154,7 @@ final class WebSocketCodexConnection implements InteractiveCodexConnection {
   Future<void> close() async {
     ++_generation;
     _ready = false;
+    _version = null;
     final channel = _channel;
     _channel = null;
     final subscription = _subscription;

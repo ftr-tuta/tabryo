@@ -364,10 +364,20 @@ final class _CollaborationScreenState extends State<CollaborationScreen> {
               '${participant['state']} · ${participant['connecting'] == true ? 'connecting' : status} · updated ${participant['updated']}',
             ),
             Text('${participant['objective']}'),
+            if (participant['codex_version'] != null)
+              Text('Connected Codex CLI: ${participant['codex_version']}'),
+            if (participant['last_turn_status'] == 'failed')
+              const Text('Last turn failed'),
             if (participant['error'] != null)
               Text(
                 '${participant['error']}',
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            if (participant['last_turn_status'] == 'failed')
+              const Text(
+                'After resolving the error, open this participant in a terminal '
+                'and ask Codex to continue. Connecting restores the session; '
+                'it does not retry failed work.',
               ),
             if (participant['last_message'] != null)
               Padding(
@@ -489,6 +499,16 @@ final class _CollaborationScreenState extends State<CollaborationScreen> {
                 ),
               ),
             if (model.connected) ...[
+              if (!model.sessionDiagnosticsAvailable)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text(
+                    'The running collaboration service predates session '
+                    'diagnostics. Stop the service and start it from this '
+                    'Tabryo installation to load the update. Saved threads '
+                    'and messages are kept.',
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Wrap(

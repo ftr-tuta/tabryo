@@ -126,7 +126,7 @@ jobs:
         shell: pwsh
         run: |
           $codexRoot = Join-Path $env:RUNNER_TEMP 'tabryo-codex'
-          npm install --prefix $codexRoot --no-save --ignore-scripts --no-audit --no-fund '@openai/codex@0.147.0'
+          npm install --prefix $codexRoot --no-save --ignore-scripts --no-audit --no-fund '@openai/codex@0.153.4'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $platform = if ($IsWindows) { 'win32' } else { 'linux' }
           $binary = if ($IsWindows) { 'codex.exe' } else { 'codex' }
