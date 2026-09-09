@@ -14,6 +14,7 @@ final class CollaborationViewModel extends DartitectViewModel {
   String? group;
   String? message;
   bool connected = false;
+  bool sessionDiagnosticsAvailable = false;
   bool busy = false;
   bool _disposed = false;
   bool _refreshing = false;
@@ -83,6 +84,8 @@ final class CollaborationViewModel extends DartitectViewModel {
         'checkpoint_after': checkpointAfter,
       });
       if (_disposed || selected != group) return;
+      sessionDiagnosticsAvailable = (value['capabilities'] as List? ?? [])
+          .contains('session_diagnostics');
       groups = (value['groups'] as List)
           .map((v) => Map<String, Object?>.from(v as Map))
           .toList();

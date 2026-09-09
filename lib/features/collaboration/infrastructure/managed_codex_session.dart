@@ -20,6 +20,21 @@ const collaborationEnvironmentKeys = [
   'TABRYO_COLLABORATION_DIRECTORY',
 ];
 
+/// Classify actionable failures without exposing raw provider payloads, which
+/// can contain credentials or request contents.
+String collaborationTurnFailure(Object? error) {
+  final message = error is Map ? error['message'] : null;
+  if (message is String &&
+      message.length <= 65536 &&
+      message.contains('requires a newer version of Codex')) {
+    return 'This turn was rejected because the selected model requires a newer '
+        'Codex CLI. Update Codex, then disconnect and reconnect this participant. '
+        'If it is already updated, continue the task in its terminal.';
+  }
+  return 'Codex could not complete this turn. Open its terminal for the error '
+      'and recovery action.';
+}
+
 /// One process and one conversation per participant; never controls arbitrary
 /// pre-existing CLIs. The Windows daemon owns a job that also contains children.
 final class ManagedCodexSession implements CollaborationSession {
@@ -47,16 +62,22 @@ final class ManagedCodexSession implements CollaborationSession {
         approvals.clear();
       }
       if (event.parameters['threadId'] != participant['thread']) return;
-      if (event.method == 'turn/completed') {
+      if (event.method == 'turn/started') {
+        _eventRevision++;
+        lastTurnStatus = 'inProgress';
+        lastError = null;
+      } else if (event.method == 'turn/completed') {
+        _eventRevision++;
         final turn = event.parameters['turn'];
         if (turn is Map) {
+          lastTurnStatus = turn['status'] as String?;
           lastError = turn['status'] == 'failed'
-              ? 'Codex could not complete this turn. Open its terminal for the error and recovery action.'
+              ? collaborationTurnFailure(turn['error'])
               : null;
         }
       } else if (event.method == 'error') {
-        lastError =
-            'Codex reported a session error. Open its terminal to inspect it.';
+        _eventRevision++;
+        lastError = collaborationTurnFailure(event.parameters['error']);
       }
       if (event.method == 'item/started' || event.method == 'item/completed') {
         final item = event.parameters['item'];
@@ -72,11 +93,13 @@ final class ManagedCodexSession implements CollaborationSession {
         if (item is Map &&
             item['type'] == 'agentMessage' &&
             item['text'] is String) {
+          _eventRevision++;
           final text = item['text'] as String;
           lastMessage = text.substring(0, text.length.clamp(0, 8000));
         }
       }
       if (event.method == 'thread/status/changed') {
+        _eventRevision++;
         _status = Map<String, Object?>.from(event.parameters['status'] as Map);
       }
     });
@@ -98,6 +121,9 @@ final class ManagedCodexSession implements CollaborationSession {
   Json _status = {'type': 'starting'};
   String? lastMessage;
   String? lastError;
+  String? lastTurnStatus;
+  bool _historyLoaded = false;
+  int _eventRevision = 0;
   Future<void>? _closing;
 
   void pauseDelivery(bool paused) {
@@ -217,6 +243,11 @@ final class ManagedCodexSession implements CollaborationSession {
       for (var attempt = 0; ; attempt++) {
         try {
           await managed.status();
+          if (!managed._historyLoaded) {
+            throw const CodexFailure(
+              'Codex session history is still reconciling.',
+            );
+          }
           break;
         } on CodexFailure {
           if (attempt >= 99) rethrow;
@@ -318,12 +349,34 @@ final class ManagedCodexSession implements CollaborationSession {
   Future<Json> status() async {
     if (!connection.connected) return {'type': 'disconnected'};
     try {
+      final revision = _eventRevision;
+      final loadHistory = !_historyLoaded;
       final result = await connection.request('thread/read', {
         'threadId': participant['thread'],
+        if (loadHistory) 'includeTurns': true,
       });
-      _status = Map<String, Object?>.from(
-        (result['thread'] as Map)['status'] as Map,
-      );
+      // A notification arriving during this read is newer than its snapshot.
+      if (revision == _eventRevision) {
+        final thread = result['thread'] as Map;
+        _status = Map<String, Object?>.from(thread['status'] as Map);
+        if (loadHistory) {
+          final turns = ((thread['turns'] as List?) ?? []).cast<Map>();
+          final latest = turns.lastOrNull;
+          lastTurnStatus = latest?['status'] as String?;
+          lastError = lastTurnStatus == 'failed'
+              ? collaborationTurnFailure(latest?['error'])
+              : null;
+          for (final turn in turns) {
+            for (final item in ((turn['items'] as List?) ?? []).cast<Map>()) {
+              if (item['type'] == 'agentMessage' && item['text'] is String) {
+                final text = item['text'] as String;
+                lastMessage = text.substring(0, text.length.clamp(0, 8000));
+              }
+            }
+          }
+          _historyLoaded = true;
+        }
+      }
     } on CodexFailure {
       // The CLI can temporarily expose an empty rollout while persisting the
       // first turn. Unknown status cannot authorize delivery or an idle wake.
@@ -334,6 +387,8 @@ final class ManagedCodexSession implements CollaborationSession {
 
   Json get snapshot => {
     'status': connection.connected ? _status : {'type': 'disconnected'},
+    'codex_version': connection.version,
+    'last_turn_status': lastTurnStatus,
     'last_message': lastMessage,
     'approvals': approvals.entries
         .map((entry) => {'id': entry.key, 'method': entry.value.method})

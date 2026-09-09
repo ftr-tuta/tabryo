@@ -5,6 +5,46 @@ import 'package:tabryo/features/collaboration/presentation/collaboration_screen.
 import 'package:tabryo/features/collaboration/presentation/collaboration_view_model.dart';
 
 void main() {
+  testWidgets('failed sessions keep their recovery guidance after reconnect', (
+    tester,
+  ) async {
+    final client = _Client()..failed = true;
+    final model = CollaborationViewModel(client)..group = 'group';
+    var terminals = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CollaborationScreen(
+          model: model,
+          onOpenTerminal: (_) async {
+            terminals++;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Last turn failed'), findsOneWidget);
+    expect(find.text('Connected Codex CLI: 0.153.4'), findsOneWidget);
+    expect(find.textContaining('does not retry failed work'), findsOneWidget);
+    final connect = find.text('Connect / resume');
+    await tester.ensureVisible(connect);
+    await tester.tap(connect);
+    await tester.pumpAndSettle();
+    expect(find.text('Last turn failed'), findsOneWidget);
+    final terminal = find.text('Open in Tabryo');
+    await tester.ensureVisible(terminal);
+    await tester.tap(terminal);
+    await tester.pumpAndSettle();
+    expect(terminals, 1);
+    expect(client.operations, containsAllInOrder(['connect', 'launch']));
+    expect(client.operations, isNot(contains('turn/start')));
+    client.diagnostics = false;
+    await model.refresh();
+    await tester.pump();
+    expect(find.textContaining('predates session diagnostics'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await model.disposeAsync();
+  });
   testWidgets(
     'collaboration panel exposes sessions, persisted delivery and approval controls',
     (tester) async {
@@ -46,6 +86,8 @@ void main() {
 
 final class _Client implements CollaborationClient {
   final operations = <String>[];
+  bool failed = false;
+  bool diagnostics = true;
   @override
   Future<void> connect({bool start = false}) async {}
   @override
@@ -60,6 +102,7 @@ final class _Client implements CollaborationClient {
     }
     if (operation == 'respond') return {};
     return {
+      'capabilities': [if (diagnostics) 'session_diagnostics'],
       'groups': [
         {'id': 'group', 'name': 'API + Flutter'},
       ],
@@ -72,6 +115,11 @@ final class _Client implements CollaborationClient {
           'auto_wake': 1,
           'state': 'active',
           'status': {'type': 'idle'},
+          if (failed) ...{
+            'last_turn_status': 'failed',
+            'codex_version': '0.153.4',
+            'error': 'The selected model requires a newer Codex CLI.',
+          },
           'objective': 'Pagination',
           'updated': 'now',
           'approvals': [

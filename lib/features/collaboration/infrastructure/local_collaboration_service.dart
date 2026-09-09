@@ -453,7 +453,7 @@ final class LocalCollaborationService {
       case 'snapshot':
         final group = args['group'] as String?;
         return {
-          'capabilities': ['editor_context'],
+          'capabilities': ['editor_context', 'session_diagnostics'],
           'groups': store.groups(),
           'participants': store
               .participants(group: group)

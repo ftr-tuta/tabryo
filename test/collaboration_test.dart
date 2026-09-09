@@ -9,6 +9,7 @@ import 'package:tabryo/features/collaboration/domain/collaboration.dart';
 import 'package:tabryo/features/collaboration/infrastructure/collaboration_tools.dart';
 import 'package:tabryo/features/collaboration/infrastructure/local_collaboration_client.dart';
 import 'package:tabryo/features/collaboration/infrastructure/local_collaboration_service.dart';
+import 'package:tabryo/features/collaboration/infrastructure/managed_codex_session.dart';
 import 'package:tabryo/features/collaboration/infrastructure/sqlite_collaboration_store.dart';
 
 final class _Session implements CollaborationSession {
@@ -50,6 +51,20 @@ Json _checkpoint(String clientId) => {
 };
 
 void main() {
+  test(
+    'turn diagnostics classify upgrades without displaying provider secrets',
+    () {
+      expect(
+        collaborationTurnFailure({'message': 'Bearer secret-fixture'}),
+        isNot(contains('secret-fixture')),
+      );
+      expect(collaborationTurnFailure(null), contains('Open its terminal'));
+      expect(
+        collaborationTurnFailure({'message': 42}),
+        contains('Open its terminal'),
+      );
+    },
+  );
   test('external Windows arguments preserve configuration through the native process parser', () async {
     final directory = await Directory.systemTemp.createTemp(
       'tabryo_external_arguments_',

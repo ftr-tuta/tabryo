@@ -11,6 +11,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/preview_cache.dart';
+import 'package:tabryo/core/presentation/native_web_surface.dart';
 import 'package:tabryo/features/debugger/application/debug_service.dart';
 import 'package:tabryo/features/debugger/domain/debug_session.dart';
 import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
@@ -649,10 +650,24 @@ void main() {
       await until(tester, () => buffer.controller.text == edited);
       visible.value = false;
       await until(tester, () => !state.surfaceVisible);
+      await NativeWebSurface.settle();
       visible.value = true;
       await until(tester, () => state.surfaceVisible);
-      await browser.runJavaScript(
-        "document.querySelector('textarea').focus(); document.execCommand('insertText', false, '// local\\n');",
+      await NativeWebSurface.settle();
+      // Host visibility can settle before the native browser regains focus,
+      // particularly under scaled WebKitGTK. Wait for its actual input target.
+      await expectWeb(
+        tester,
+        browser,
+        "document.hasFocus() && document.activeElement === document.querySelector('textarea')",
+        true,
+      );
+      expect(
+        await browser.runJavaScriptReturningResult(
+          "document.execCommand('insertText', false, '// local\\n')",
+        ),
+        true,
+        reason: 'The restored native editor must accept input.',
       );
       await until(tester, () => buffer.dirty);
       final close = confirmDocumentClose(

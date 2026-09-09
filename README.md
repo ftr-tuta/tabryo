@@ -443,6 +443,13 @@ ownership and retires the participant. Approvals are answered explicitly in the
 panel or connected CLI; another client's answer invalidates the pending request.
 Large or unavailable file-change reviews must be handled in the CLI.
 
+Failed turns and the last response remain visible after reconnection. The panel
+shows the connected CLI version and identifies model errors that require a Codex
+upgrade. After fixing the cause, open the participant's terminal and ask Codex to
+continue; reconnecting does not retry failed work. If the panel reports an older
+background service, stop it and start it from the updated Tabryo installation.
+Saved conversations and messages are retained.
+
 Closing the panel or Tabryo keeps the detached service running. **Stop service**
 explicitly stops the owned sessions and preserves pending data. Starting it again
 restores active participants and reconciles delivery; paused, disconnected and
@@ -471,7 +478,7 @@ acceptance evidence, and the recipient can read and acknowledge its mailbox.
 The service currently supports up to 16 non-completed participants and 100
 groups, with bounded message and checkpoint pages.
 
-This integration is qualified on Windows with Codex CLI **0.147.0**. The Codex
+This integration is qualified on Windows with Codex CLI **0.153.4**. The Codex
 WebSocket transport remains experimental. Collaboration is not yet enabled on
 Linux, and communication between computers is outside this release.
 
@@ -739,7 +746,7 @@ the platform build tools and a graphical session. Attach is exercised against
 a separately running Flutter application, with a verified source breakpoint
 and continued VM availability after disconnect. Backend cases also run native
 pytest tests through the Tasks service. Desktop CI runs these on Windows and
-Ubuntu, plus Codex CLI 0.147.0 context delivery and MCP integration with disposable
+Ubuntu, plus Codex CLI 0.153.4 context delivery and MCP integration with disposable
 configuration and a local simulated provider, without model calls.
 The disposable CI SDK enables its native desktop target and disables Android
 discovery; attached Android devices and emulators are not part of this matrix.
