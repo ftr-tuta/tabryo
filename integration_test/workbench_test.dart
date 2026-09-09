@@ -483,6 +483,8 @@ void main() {
       await model.openWorkspace(root);
       await tester.pumpAndSettle();
       expect(host.starts, 0);
+      await tester.ensureVisible(find.byTooltip('Projects and toolchains'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Projects and toolchains'));
       await until(tester, () => !projects.scanning && !projects.selecting);
       await tester.pumpAndSettle();

@@ -361,7 +361,7 @@ void main() {
   testWidgets('toolbar and keyboard create and split only after gestures', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.physicalSize = const Size(640, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -372,6 +372,18 @@ void main() {
     await model.openWorkspace(root);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    final palette = find.byTooltip('Command palette (Ctrl+Shift+P)');
+    expect(palette.hitTestable(), findsNothing);
+    await tester.ensureVisible(palette);
+    await tester.pumpAndSettle();
+    await tester.tap(palette);
+    await tester.pumpAndSettle();
+    expect(find.text('Command palette'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(host.specs, isEmpty);
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Shell'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, 'Shell'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
