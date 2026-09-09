@@ -473,6 +473,16 @@ void main() {
       reviewing.value = true;
       brightness.value = Brightness.dark;
       await tester.pump();
+      final background = workbenchTheme(
+        const Appearance(preset: ThemePreset.violet),
+        Brightness.dark,
+      ).colorScheme.surface.toARGB32();
+      await expectWeb(
+        tester,
+        browser,
+        "getComputedStyle(document.body).backgroundColor === 'rgb(${(background >> 16) & 255}, ${(background >> 8) & 255}, ${background & 255})'",
+        true,
+      );
       await expectWeb(
         tester,
         browser,

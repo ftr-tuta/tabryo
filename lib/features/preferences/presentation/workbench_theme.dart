@@ -3,6 +3,9 @@ import 'package:xterm2/xterm.dart';
 
 import '../domain/appearance.dart';
 
+/// Preview the user's chosen token inside the appearance editor.
+Color? appearanceSwatch(int? argb) => argb == null ? null : Color(argb);
+
 double contrast(Color a, Color b) {
   final x = a.computeLuminance(), y = b.computeLuminance();
   return ((x > y ? x : y) + .05) / ((x < y ? x : y) + .05);

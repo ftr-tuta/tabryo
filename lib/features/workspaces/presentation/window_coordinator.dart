@@ -37,6 +37,7 @@ final class WindowCoordinator extends WindowObserver
   Map<String, Object?> Function(ToolWindow)? readLayout;
   void Function(ToolWindow, Map<String, Object?>)? saveLayout;
   VoidCallback? presentationChanged;
+  Widget Function(Widget)? frameBuilder;
   void Function(Object)? onError;
   Timer? _metrics;
   bool _closing = false;
@@ -351,22 +352,25 @@ final class _ToolWindow extends StatelessWidget {
   final WindowCoordinator coordinator;
   final ToolPresentation record;
   @override
-  Widget build(BuildContext context) => WebSurfaceRoutes(
-    observer: record.routes,
-    child: Scaffold(
-      appBar: AppBar(
-        title: Text(record.title),
-        actions: [
-          TextButton(
-            onPressed: () => coordinator.reattach(record),
-            child: const Text('Return to panel'),
-          ),
-        ],
+  Widget build(BuildContext context) {
+    final surface = WebSurfaceRoutes(
+      observer: record.routes,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(record.title),
+          actions: [
+            TextButton(
+              onPressed: () => coordinator.reattach(record),
+              child: const Text('Return to panel'),
+            ),
+          ],
+        ),
+        body: coordinator.slot(
+          record,
+          window: MultiViewDesktop.getIdByContext(context),
+        ),
       ),
-      body: coordinator.slot(
-        record,
-        window: MultiViewDesktop.getIdByContext(context),
-      ),
-    ),
-  );
+    );
+    return coordinator.frameBuilder?.call(surface) ?? surface;
+  }
 }

@@ -1001,6 +1001,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
+        Theme.of(tester.element(find.text(preview.title))).brightness,
+        Brightness.dark,
+      );
+      expect(
         await browser.runJavaScriptReturningResult(
           'document.getElementById("value").value === "ação preserved"',
         ),
@@ -1025,7 +1029,9 @@ void main() {
       expect(model.sessions[session.id], same(session));
       expect(tester.takeException(), isNull);
       debugPrint(
-        'Shared windows: ${host.starts} PTY; one preserved browser; one Flutter engine; RSS ${ProcessInfo.currentRss ~/ (1024 * 1024)} MiB',
+        'Shared windows: ${host.starts} PTY; one preserved browser; one Flutter engine; '
+        'display scales ${binding.platformDispatcher.views.map((view) => view.devicePixelRatio).toList()}; '
+        'RSS ${ProcessInfo.currentRss ~/ (1024 * 1024)} MiB',
       );
       await tester.pumpWidget(const SizedBox.shrink());
     },

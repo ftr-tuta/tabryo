@@ -59,6 +59,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   int _opening = 0;
   int _request = 0;
   String? _reviewIdentity;
+  String? _themeIdentity;
   bool _reviewVisible = false;
   int _diffNavigation = 0;
   final _documents = <EditorBuffer, _WebDocument>{};
@@ -178,6 +179,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       _comparison = null;
       _comparisonDocument = null;
       _reviewIdentity = null;
+      _themeIdentity = null;
       _reviewVisible = false;
     });
     await WidgetsBinding.instance.endOfFrame;
@@ -290,8 +292,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       }
       String hex(Color color) =>
           '#${color.toARGB32().toRadixString(16).substring(2)}';
-      await _browser!.setBackgroundColor(colors.surface);
-      await _send({
+      final theme = <String, Object?>{
         'type': 'theme',
         'dark': colors.brightness == Brightness.dark,
         'colors': {
@@ -304,7 +305,13 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
           'diffEditor.insertedTextBackground': '${hex(semantic.added)}33',
           'diffEditor.removedTextBackground': '${hex(semantic.removed)}33',
         },
-      });
+      };
+      final themeIdentity = jsonEncode(theme);
+      if (_themeIdentity != themeIdentity) {
+        await _browser!.setBackgroundColor(colors.surface);
+        await _send(theme);
+        _themeIdentity = themeIdentity;
+      }
       _languageActions.removeWhere(
         (_, action) =>
             !model.buffers.contains(action.buffer) ||

@@ -32,7 +32,7 @@ final class TerminalSession extends ChangeNotifier {
         .listen(
           (value) {
             terminal.write(value);
-            if (!visible) {
+            if (!visible && !unseenOutput) {
               unseenOutput = true;
               notifyListeners();
             }

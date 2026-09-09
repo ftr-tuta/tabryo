@@ -417,6 +417,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     if (!_windowsInitialized && windows != null) {
       _windowsInitialized = true;
       windows.requestExit = _requestExit;
+      windows.frameBuilder = _toolTheme;
       windows.readLayout = (category) => model.preferences.restoreLayout
           ? model.preferences.activityLayouts['window.${category.name}'] ?? {}
           : {};

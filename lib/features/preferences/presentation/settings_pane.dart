@@ -424,7 +424,7 @@ final class _ColorField extends StatelessWidget {
         hintText: 'Automatic',
         prefixIcon: color == null
             ? null
-            : Icon(Icons.circle, color: Color(color!)),
+            : Icon(Icons.circle, color: appearanceSwatch(color)),
       ),
       maxLength: 6,
       onChanged: (text) {
