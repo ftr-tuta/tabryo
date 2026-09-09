@@ -67,6 +67,8 @@ final class LocalDebugInspection {
                   }
                 } on FormatException {
                   // SDK notices preceding the machine event are not protocol.
+                  end = buffered.indexOf('\n');
+                  continue;
                 }
                 end = buffered.indexOf('\n');
               }

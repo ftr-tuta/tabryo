@@ -79,11 +79,14 @@ final class _DebugPanelState extends State<DebugPanel> {
     await events?.cancel();
     await stopped;
     if (pending != null) {
+      late final FlutterDeviceDiscovery started;
       try {
-        await (await pending).close();
+        started = await pending;
       } catch (_) {
-        /* Cancelled startup reaps its child. */
+        // Startup already reaps its child and reports through the caller.
+        return;
       }
+      await started.close();
     }
   }
 
@@ -365,11 +368,11 @@ final class _DebugPanelState extends State<DebugPanel> {
           if (widget.project.kind == ProjectKind.python)
             DropdownButton<String>(
               value: profile,
-              items: [
-                'Script',
-                'Django',
-                'FastAPI',
-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+              items: const [
+                DropdownMenuItem(value: 'Script', child: Text('Script')),
+                DropdownMenuItem(value: 'Django', child: Text('Django')),
+                DropdownMenuItem(value: 'FastAPI', child: Text('FastAPI')),
+              ],
               onChanged: busy || service.active
                   ? null
                   : (v) => setState(() {

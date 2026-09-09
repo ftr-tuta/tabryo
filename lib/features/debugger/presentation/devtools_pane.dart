@@ -168,7 +168,10 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
     try {
       await previous?.dispose().timeout(const Duration(seconds: 5));
     } catch (_) {
-      /* A delayed native disposal does not prevent a retry. */
+      // Retain ownership for another close attempt; do not open a second view.
+      if (mounted) setState(() => _browser = previous);
+      _fail();
+      return;
     }
     if (mounted) await _open();
   }
