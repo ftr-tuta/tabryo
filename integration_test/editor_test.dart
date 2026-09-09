@@ -8,6 +8,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/preview_cache.dart';
 import 'package:tabryo/features/debugger/application/debug_service.dart';
@@ -241,6 +242,8 @@ Future<void> expectWeb(
     JSON.stringify({focus: document.activeElement?.className,
       page: document.body?.innerText.slice(0, 1000).replace(/https?:[^ ]+/g, '[endpoint]'),
       ready: document.readyState,
+      compiler: new URL(location.href).searchParams.get('compiler'),
+      assets: performance.getEntriesByType('resource').slice(-20).map(e => new URL(e.name).pathname),
       devTools: document.querySelector('flutter-view') ? {
         children: [...document.querySelector('flutter-view').children].map(e => e.tagName),
         shadow: [...(document.querySelector('flt-glass-pane')?.shadowRoot?.children ?? [])].map(e => e.tagName),
@@ -1173,6 +1176,44 @@ void main() {
       visible.value = false;
       await tester.pumpAndSettle();
       expect(state.surfaceVisible, isFalse);
+      await browser.runJavaScript(
+        "localStorage.setItem('tabryo-profile-check', 'owned')",
+      );
+      final isolated = WinWebViewController(
+        params: WindowsWebViewControllerCreationParams(
+          userDataFolder: p.join(root, 'other-web-profile'),
+          profileName: 'OtherWebProfile',
+        ),
+      );
+      try {
+        await isolated.setVisibility(false);
+        await isolated.setJavaScriptMode(JavaScriptMode.unrestricted);
+        var loaded = false;
+        await isolated.setNavigationDelegate(
+          WinNavigationDelegate(onPageFinished: (_) => loaded = true),
+        );
+        await isolated.loadRequest(
+          service.devToolsUri!.resolve('/favicon.png'),
+        );
+        await until(tester, () => loaded);
+        await expectWeb(
+          tester,
+          isolated,
+          "localStorage.getItem('tabryo-profile-check') === null",
+          true,
+        );
+        await expectWeb(
+          tester,
+          browser,
+          "localStorage.getItem('tabryo-profile-check') === 'owned'",
+          true,
+        );
+      } finally {
+        await isolated.dispose();
+        await browser.runJavaScript(
+          "localStorage.removeItem('tabryo-profile-check')",
+        );
+      }
       await tester.pumpWidget(const SizedBox.shrink());
       await service.stop();
       expect(service.devToolsUri, isNull);

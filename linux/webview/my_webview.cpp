@@ -231,10 +231,24 @@ MyWebView::MyWebView(GtkWidget* container, MyWebViewCreateParams params, const g
     m_createParams = params;
     
     m_user_content_manager = webkit_user_content_manager_new();
-    m_webview = webkit_web_view_new_with_user_content_manager(m_user_content_manager);
-
-    // NOTE: there is no way to set userDataFolder(cacheDir) and 'user_content_manager' at the same time...
-    if (userDataFolder) g_print("[webview_win_floating] 'userDataFolder' is not allowed in Linux\n");
+    // Both are construct-only WebView properties. A per-profile context keeps
+    // cookies, service workers and cached data out of other native surfaces.
+    WebKitWebContext *context;
+    if (userDataFolder && userDataFolder[0]) {
+        gchar *cache = g_build_filename(userDataFolder, "cache", NULL);
+        auto *data = webkit_website_data_manager_new(
+            "base-data-directory", userDataFolder,
+            "base-cache-directory", cache, NULL);
+        context = webkit_web_context_new_with_website_data_manager(data);
+        g_object_unref(data);
+        g_free(cache);
+    } else {
+        context = webkit_web_context_new_ephemeral();
+    }
+    m_webview = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+        "web-context", context,
+        "user-content-manager", m_user_content_manager, NULL));
+    g_object_unref(context);
 
     m_container = container; // GtkFixed   
     gtk_fixed_put(GTK_FIXED(m_container), m_webview, 50, 0); // left-top
@@ -496,7 +510,7 @@ void MyWebView::cancelNavigate() {
 }
 
 void MyWebView::clearCache() {
-    auto *context = webkit_web_context_get_default();
+    auto *context = webkit_web_view_get_context(WEBKIT_WEB_VIEW(m_webview));
     auto *manager = webkit_web_context_get_website_data_manager(context);
     webkit_website_data_manager_clear(manager, WEBKIT_WEBSITE_DATA_ALL, 0, NULL, NULL, NULL);
 }

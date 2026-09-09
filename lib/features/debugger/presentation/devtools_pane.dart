@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:webview_win_floating/webview_win_floating.dart';
@@ -41,7 +42,13 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   Future<void> _open() async {
     final opening = ++_opening;
     bool current() => mounted && opening == _opening;
-    final uri = widget.uri;
+    // Use the SDK's documented JavaScript fallback in embedded WebKit, where
+    // the default dart2wasm bootstrap can finish without creating the app view.
+    final uri = defaultTargetPlatform == TargetPlatform.linux
+        ? widget.uri.replace(
+            queryParameters: {...widget.uri.queryParameters, 'compiler': 'js'},
+          )
+        : widget.uri;
     if (uri.scheme != 'http' ||
         uri.host != '127.0.0.1' ||
         uri.port == 0 ||
@@ -56,6 +63,7 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
       final browser = WinWebViewController(
         params: WindowsWebViewControllerCreationParams(
           userDataFolder: widget.profileDirectory,
+          profileName: 'TabryoDevTools',
         ),
       );
       _browser = browser;

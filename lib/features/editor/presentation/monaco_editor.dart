@@ -91,6 +91,7 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       final browser = WinWebViewController(
         params: WindowsWebViewControllerCreationParams(
           userDataFolder: page.profileDirectory,
+          profileName: 'TabryoEditor',
         ),
       );
       _browser = browser;
