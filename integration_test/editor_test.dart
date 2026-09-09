@@ -245,6 +245,7 @@ Future<void> expectWeb(
       compiler: new URL(location.href).searchParams.get('compiler'),
       webgl: !!document.createElement('canvas').getContext('webgl2'),
       fonts: document.fonts.status,
+      languages: navigator.languages,
       bootstrapErrors: window.tabryoDevToolsErrors ?? [],
       assets: performance.getEntriesByType('resource').slice(-20).map(e => new URL(e.name).pathname),
       devTools: document.querySelector('flutter-view') ? {
@@ -1103,6 +1104,12 @@ void main() {
       final browser = tester
           .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
           .controller;
+      await expectWeb(
+        tester,
+        browser,
+        "(() => { try { return navigator.languages.length > 0 && navigator.languages.every(tag => !!new Intl.Locale(tag)); } catch (_) { return false; } })()",
+        true,
+      );
       await expectWeb(
         tester,
         browser,

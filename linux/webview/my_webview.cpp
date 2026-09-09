@@ -1,6 +1,40 @@
 // Derived from webview_win_floating 3.0.3; Copyright 2022 jakky1.
 // BSD-3-Clause; see LICENSE. Tabryo maintains navigation and WebKit ownership fixes.
 #include "my_webview.h"
+#include <algorithm>
+#include <vector>
+
+static void set_browser_languages(WebKitWebContext* context) {
+    // GLib locale names may be POSIX identifiers (C.UTF-8, en_US.UTF-8).
+    // Invalid BCP-47 tags in navigator.language abort Flutter web bootstrap.
+    std::vector<std::string> languages;
+    for (auto locale = g_get_language_names(); *locale && languages.size() < 16; ++locale) {
+        std::string tag(*locale);
+        const auto suffix = tag.find_first_of(".@");
+        if (suffix != std::string::npos) tag.erase(suffix);
+        std::replace(tag.begin(), tag.end(), '_', '-');
+        if (tag == "C" || tag == "POSIX" || tag.empty()) continue;
+        bool valid = true;
+        size_t start = 0;
+        while (start < tag.size()) {
+            auto end = tag.find('-', start);
+            if (end == std::string::npos) end = tag.size();
+            const auto length = end - start;
+            if (length < (start == 0 ? 2u : 1u) || length > 8) valid = false;
+            for (auto index = start; index < end; ++index) {
+                if (start == 0 ? !g_ascii_isalpha(tag[index]) : !g_ascii_isalnum(tag[index])) valid = false;
+            }
+            start = end + 1;
+        }
+        if (tag.back() == '-') valid = false;
+        if (valid && std::find(languages.begin(), languages.end(), tag) == languages.end()) languages.push_back(tag);
+    }
+    if (languages.empty()) languages.push_back("en-US");
+    std::vector<const gchar*> values;
+    for (const auto& language : languages) values.push_back(language.c_str());
+    values.push_back(nullptr);
+    webkit_web_context_set_preferred_languages(context, values.data());
+}
 
 GtkWidget* MyWebView::getWidget() {
     return m_webview;
@@ -245,6 +279,7 @@ MyWebView::MyWebView(GtkWidget* container, MyWebViewCreateParams params, const g
     } else {
         context = webkit_web_context_new_ephemeral();
     }
+    set_browser_languages(context);
     m_webview = GTK_WIDGET(g_object_new(WEBKIT_TYPE_WEB_VIEW,
         "web-context", context,
         "user-content-manager", m_user_content_manager, NULL));

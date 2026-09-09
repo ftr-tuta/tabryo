@@ -500,7 +500,11 @@ proteções do editor; teste Flutter Windows cobre seleção, linha de origem,
 reload/restart e encerramento do DTD. A CI de `8bf7b36` confirmou os adaptadores
 e frameworks nos dois sistemas, mas falhou na superfície DevTools: inicialização
 web no Linux e interação de aba no Windows. Correções e diagnóstico permanecem
-em validação; isso não constitui aceite dessas revisões.
+em validação; isso não constitui aceite dessas revisões. Na CI de `4cee571`,
+o Windows passou as integrações do editor/DevTools em Debug e Release; o Linux
+revelou o erro causal `invalid language tag` na inicialização web. A correção
+normaliza idiomas POSIX fornecidos ao WebKit e o teste Linux exige locale `C`
+com idiomas válidos para `Intl.Locale`, retomando a escolha de compilador do SDK.
 Teste nativo com Codex instalado conecta o MCP oficial Dart/Flutter a esse DTD,
 lista a aplicação e desconecta sem turno de modelo ou URI persistida no TOML.
 O Hub oferece registro revisado do SDK selecionado e conexão revisada à sessão,

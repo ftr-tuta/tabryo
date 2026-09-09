@@ -88,6 +88,8 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded
+        env:
+          LC_ALL: C
       - name: Linux HiDPI editor integration
         if: runner.os == 'Linux'
         timeout-minutes: 5
