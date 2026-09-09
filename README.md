@@ -546,6 +546,8 @@ and continued VM availability after disconnect. Backend cases also run native
 pytest tests through the Tasks service. Desktop CI runs these on Windows and
 Ubuntu, plus Codex CLI 0.147.0 context delivery and MCP integration with disposable
 configuration and a local simulated provider, without model calls.
+The disposable CI SDK enables its native desktop target and disables Android
+discovery; attached Android devices and emulators are not part of this matrix.
 
 ## Tasks and tests
 
