@@ -132,10 +132,60 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
       await showDialog<void>(
         context: context,
         useSafeArea: false,
-        builder: (_) => Dialog.fullscreen(child: McpHubScreen(model: hub)),
+        builder: (_) => Dialog.fullscreen(
+          child: McpHubScreen(
+            model: hub,
+            dartFlutterServer: model.dartFlutterMcpDraft,
+            connectDartSession: _connectDartMcpSession,
+          ),
+        ),
       );
     } finally {
       await hub.disconnect();
+    }
+  }
+
+  Future<void> _connectDartMcpSession() async {
+    final hub = model.mcpHub!;
+    final service = model.debugger;
+    final config = service?.configuration;
+    if (service == null ||
+        config == null ||
+        !service.active ||
+        model.workspace?.root != config.project.workspace) {
+      throw const StudioFailure(
+        'Start a Dart or Flutter debug session in this workspace first.',
+      );
+    }
+    final sdk = await model.dartFlutterMcpDraft();
+    if (!mounted ||
+        !hub.connected ||
+        !identical(service.configuration, config)) {
+      throw const StudioFailure('The session or Hub connection changed.');
+    }
+    await service.openDevTools(external: false);
+    final uri = service.dtdUri;
+    bool current() =>
+        mounted &&
+        hub.connected &&
+        service.active &&
+        identical(service.configuration, config) &&
+        service.dtdUri == uri &&
+        model.workspace?.root == config.project.workspace;
+    if (uri == null || !current()) {
+      throw const StudioFailure('The debug session changed.');
+    }
+    if (!await dialogs.confirm(
+      'Connect ${config.project.name} to Dart/Flutter MCP?',
+      'The SDK server can inspect and control this running application, including VM evaluation and reload.\n\n'
+          'Project: ${config.project.directory}\nSDK: ${sdk.command}\nSession: $uri\n\n'
+          'Stopping the debugger closes this session connection. Its address is not saved in configuration.',
+      'Connect session',
+    )) {
+      return;
+    }
+    if (!await hub.connectDartSession(sdk, uri, current)) {
+      throw StudioFailure(hub.message ?? 'Session connection failed.');
     }
   }
 
@@ -294,7 +344,13 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
       await showDialog<void>(
         context: context,
         useSafeArea: false,
-        builder: (_) => Dialog.fullscreen(child: McpHubScreen(model: hub)),
+        builder: (_) => Dialog.fullscreen(
+          child: McpHubScreen(
+            model: hub,
+            dartFlutterServer: model.dartFlutterMcpDraft,
+            connectDartSession: _connectDartMcpSession,
+          ),
+        ),
       );
     } finally {
       await hub.disconnect();

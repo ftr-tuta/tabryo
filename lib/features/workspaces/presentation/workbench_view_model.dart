@@ -21,6 +21,7 @@ import '../../debugger/application/debug_service.dart';
 import '../../debugger/domain/debug_session.dart';
 import '../../language/domain/language_server.dart';
 import '../../mcp/presentation/mcp_hub_view_model.dart';
+import '../../mcp/domain/mcp_server.dart';
 import '../../terminals/domain/terminal_ports.dart';
 import '../../terminals/presentation/terminal_session.dart';
 import '../domain/workspace.dart';
@@ -90,6 +91,65 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final TasksViewModel? tasks;
   final DebugService? debugger;
   final String? devToolsProfileDirectory;
+  Future<McpServerDraft> dartFlutterMcpDraft() async {
+    final manager = projects;
+    final config = debugger?.active == true ? debugger?.configuration : null;
+    final project = config?.project ?? manager?.selected;
+    final tools = config?.tools ?? manager?.selections[project?.id];
+    if (manager == null ||
+        project == null ||
+        tools == null ||
+        project.kind == ProjectKind.python ||
+        workspace?.root != project.workspace) {
+      throw const ProjectFailure(
+        'Select a Dart or Flutter project and apply its SDK first.',
+      );
+    }
+    final flutter = tools[ProjectTool.flutter];
+    final dart = project.kind == ProjectKind.flutter && flutter != null
+        ? p.join(
+            flutter,
+            'bin',
+            'cache',
+            'dart-sdk',
+            'bin',
+            manager.environment.windows ? 'dart.exe' : 'dart',
+          )
+        : tools[ProjectTool.dart];
+    if (dart == null) {
+      throw const ProjectFailure('Select the project Dart SDK first.');
+    }
+    await manager.environment.validateProject(project);
+    await manager.environment.validateSelection(
+      ToolchainSelection({
+        ProjectTool.dart: dart,
+        ProjectTool.flutter: ?flutter,
+      }),
+    );
+    if (_shutdown ||
+        workspace?.root != project.workspace ||
+        (config != null && !identical(config, debugger?.configuration)) ||
+        (config == null &&
+            (manager.selected != project ||
+                manager.selections[project.id] != tools))) {
+      throw const ProjectFailure(
+        'The project or SDK changed. Review its selection again.',
+      );
+    }
+    return McpServerDraft(
+      name: 'dart_flutter',
+      transport: McpTransport.stdio,
+      command: dart,
+      arguments: [
+        'mcp-server',
+        '--dart-sdk',
+        p.dirname(p.dirname(dart)),
+        if (flutter != null) ...['--flutter-sdk', flutter],
+      ],
+      workingDirectory: project.directory,
+    );
+  }
+
   bool devToolsVisible = false;
   Future<void> openDevToolsPane() async {
     final service = debugger;

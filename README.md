@@ -478,6 +478,13 @@ source through the editor's existing document and dependency protections.
 **Open selected widget source** repeats that navigation, and **Exit widget
 selection** returns the application to normal input. These controls require a
 running Flutter debug application with Inspector extensions.
+In **MCP Hub**, choose **Register Dart/Flutter SDK** to review the selected
+project's official `dart mcp-server` configuration. After registration and
+connection, **Connect running Dart/Flutter session** reviews the application and
+its capabilities before connecting the SDK's `dtd` tool to this session. A server
+with a different command, arguments or working directory is refused. The Hub
+never saves the temporary DTD URI in TOML. The SDK MCP exposes inspection and VM
+control, so connect only the application you intend to share.
 Debugger output and variables remain in memory, with bounded retained output.
 Adapters and SDKs are not bundled.
 

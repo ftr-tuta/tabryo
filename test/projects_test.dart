@@ -335,6 +335,65 @@ void main() {
     expect(host.processes.every((v) => v.ended), isTrue);
   });
 
+  test('official MCP draft follows the selected Flutter SDK without starting a command', () async {
+    await file(
+      'pubspec.yaml',
+      'name: example\ndependencies:\n  flutter:\n    sdk: flutter\n',
+    );
+    final sdk = p.join(root, 'sdk');
+    await executable(
+      p.join('sdk', 'bin', Platform.isWindows ? 'flutter.bat' : 'flutter'),
+    );
+    final dart = await executable(
+      p.join(
+        'sdk',
+        'bin',
+        'cache',
+        'dart-sdk',
+        'bin',
+        Platform.isWindows ? 'dart.exe' : 'dart',
+      ),
+    );
+    final projects = ProjectsViewModel(
+      LocalProjectEnvironment(environment: {}),
+    );
+    final host = MemoryHost();
+    final git = NoGit();
+    final model = WorkbenchViewModel(
+      host: host,
+      launcher: MemoryLauncher(),
+      files: MemoryFiles(),
+      gitReader: git,
+      gitMutator: git,
+      preferencesStore: MemoryPreferences(),
+      projects: projects,
+    );
+    addTearDown(model.shutdown);
+    await model.openWorkspace(root);
+    await projects.scan(root);
+    final project = projects.selected!;
+    projects.selections[project.id] = ToolchainSelection({
+      ProjectTool.flutter: sdk,
+    });
+    final draft = await model.dartFlutterMcpDraft();
+    expect(draft.command, dart);
+    expect(draft.arguments, [
+      'mcp-server',
+      '--dart-sdk',
+      p.dirname(p.dirname(dart)),
+      '--flutter-sdk',
+      sdk,
+    ]);
+    expect(draft.workingDirectory, root);
+    expect(host.specs, isEmpty);
+    projects.selections[project.id] = ToolchainSelection();
+    await expectLater(
+      model.dartFlutterMcpDraft(),
+      throwsA(isA<ProjectFailure>()),
+    );
+    expect(host.specs, isEmpty);
+  });
+
   testWidgets('setup shows its exact command and cancellation starts nothing', (
     tester,
   ) async {

@@ -118,21 +118,14 @@ void main() {
     'installed Codex connects official Dart Flutter MCP to the owned debug session without a model turn',
     () async {
       await hub.connect(workspace.path);
-      await hub.apply(
-        hub.configure(
-          McpServerDraft(
-            name: 'dart_flutter',
-            transport: McpTransport.stdio,
-            command: dart,
-            arguments: [
-              'mcp-server',
-              '--dart-sdk',
-              p.dirname(p.dirname(dart!)),
-            ],
-            workingDirectory: workspace.path,
-          ),
-        ),
+      final sdk = McpServerDraft(
+        name: 'dart_flutter',
+        transport: McpTransport.stdio,
+        command: dart,
+        arguments: ['mcp-server', '--dart-sdk', p.dirname(p.dirname(dart!))],
+        workingDirectory: workspace.path,
       );
+      await hub.apply(hub.configure(sdk));
       final official = hub.servers.single;
       expect(official.tools, contains('dtd'));
       expect(official.tools, contains('widget_inspector'));
@@ -165,12 +158,8 @@ void main() {
         }
         expect(debug.vmService, isNotNull);
         await debug.openDevTools(external: false);
-        final connected = jsonDecode(
-          await hub.callTool(official, 'dtd', {
-            'command': 'connect',
-            'uri': debug.dtdUri.toString(),
-          }),
-        ) as Map;
+        final connected =
+            jsonDecode(await hub.connectDartSession(sdk, debug.dtdUri!)) as Map;
         expect(connected['isError'], isNot(true));
         final apps = await hub.callTool(official, 'dtd', {
           'command': 'listConnectedApps',

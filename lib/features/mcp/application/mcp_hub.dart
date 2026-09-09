@@ -419,6 +419,44 @@ final class McpHub {
     return inspect(result);
   }
 
+  Future<String> connectDartSession(McpServerDraft sdk, Uri uri) async {
+    if (sdk.name != 'dart_flutter' ||
+        sdk.transport != McpTransport.stdio ||
+        sdk.arguments?.firstOrNull != 'mcp-server' ||
+        uri.scheme != 'ws' ||
+        !['127.0.0.1', '::1'].contains(uri.host) ||
+        !uri.hasPort ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      throw const CodexFailure('Choose the owned local Dart/Flutter session.');
+    }
+    final server = servers
+        .where((server) => server.name == sdk.name)
+        .firstOrNull;
+    if (server == null ||
+        !server.enabled ||
+        server.http ||
+        server.configuration['command'] != sdk.command ||
+        server.configuration['cwd'] != sdk.workingDirectory ||
+        jsonEncode(server.configuration['args']) != jsonEncode(sdk.arguments) ||
+        !server.tools.containsKey('dtd')) {
+      throw const CodexFailure(
+        'Register the selected Dart/Flutter SDK in this Hub and reconnect before sharing its session.',
+      );
+    }
+    final response = await callTool(server, 'dtd', {
+      'command': 'connect',
+      'uri': uri.toString(),
+    });
+    if ((jsonDecode(response) as Map)['isError'] == true) {
+      throw const CodexFailure(
+        'The Dart/Flutter MCP server could not connect to this session. Inspect its dtd tool for details.',
+      );
+    }
+    return response;
+  }
+
   String inspect(Object? value) {
     final text = const JsonEncoder.withIndent('  ').convert(_redact(value));
     return text.length > 128 * 1024

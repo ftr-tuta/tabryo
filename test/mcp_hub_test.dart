@@ -97,6 +97,11 @@ final class MemoryCodex implements CodexConnection {
                 'name': name,
                 'authStatus': 'unsupported',
                 'tools': {
+                  if (name == 'dart_flutter')
+                    'dtd': {
+                      'name': 'dtd',
+                      'inputSchema': {'type': 'object'},
+                    },
                   'echo': {
                     'name': 'echo',
                     'inputSchema': {'type': 'object'},
@@ -182,6 +187,49 @@ void main() {
     await model.selectWorkspace(root);
     expect(connection.connections, 0);
     expect(connection.requests, isEmpty);
+  });
+
+  test('Dart session sharing requires the selected SDK and rejects retired sessions or tool errors', () async {
+    final sdk = McpServerDraft(
+      name: 'dart_flutter',
+      transport: McpTransport.stdio,
+      command: '$root/dart',
+      arguments: ['mcp-server', '--dart-sdk', root],
+      workingDirectory: root,
+    );
+    connection.definitions['dart_flutter'] = {
+      'command': 'different-sdk',
+      'args': sdk.arguments,
+      'cwd': root,
+    };
+    await connect();
+    final uri = Uri.parse('ws://127.0.0.1:4321/session/');
+    int calls() => connection.requests
+        .where((request) => request.$1 == 'mcpServer/tool/call')
+        .length;
+    expect(await model.connectDartSession(sdk, uri, () => true), isFalse);
+    expect(calls(), 0);
+    (connection.definitions['dart_flutter'] as Map)['command'] = sdk.command;
+    await model.refresh();
+    expect(await model.connectDartSession(sdk, uri, () => false), isFalse);
+    expect(calls(), 0);
+    expect(await model.connectDartSession(sdk, uri, () => true), isTrue);
+    expect(connection.requests.last.$2['arguments'], {
+      'command': 'connect',
+      'uri': uri.toString(),
+    });
+    final result = connection.toolResult = Completer<Map<String, Object?>>();
+    var current = true;
+    final connecting = model.connectDartSession(sdk, uri, () => current);
+    await Future<void>.delayed(Duration.zero);
+    current = false;
+    result.complete({'content': [], 'isError': false});
+    expect(await connecting, isFalse);
+    expect(model.inspection, isNull);
+    connection.toolResult = Completer<Map<String, Object?>>()
+      ..complete({'isError': true, 'content': []});
+    expect(await model.connectDartSession(sdk, uri, () => true), isFalse);
+    expect(model.message, contains('could not connect'));
   });
 
   test(
@@ -476,6 +524,46 @@ void main() {
       expect(model.inspection, isNull);
       expect(model.servers, isEmpty);
       expect(model.connected, false);
+    },
+  );
+
+  testWidgets(
+    'Hub previews official SDK registration and cancellation leaves configuration intact',
+    (tester) async {
+      await connect();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: McpHubScreen(
+            model: model,
+            dartFlutterServer: () async => McpServerDraft(
+              name: 'dart_flutter',
+              transport: McpTransport.stdio,
+              command: '$root/dart',
+              arguments: const ['mcp-server'],
+              workingDirectory: root,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Register Dart/Flutter SDK'));
+      await tester.pumpAndSettle();
+      expect(find.text('Save and reconnect'), findsOneWidget);
+      expect(
+        connection.requests.any((r) => r.$1 == 'config/batchWrite'),
+        isFalse,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(connection.definitions, isNot(contains('dart_flutter')));
+      await tester.tap(find.text('Register Dart/Flutter SDK'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save and reconnect'));
+      await tester.pumpAndSettle();
+      expect((connection.definitions['dart_flutter'] as Map)['args'], [
+        'mcp-server',
+      ]);
+      expect(jsonEncode(connection.definitions), isNot(contains('ws://')));
+      expect(tester.takeException(), isNull);
     },
   );
 

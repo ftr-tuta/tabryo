@@ -503,7 +503,9 @@ web no Linux e interação de aba no Windows. Correções e diagnóstico permane
 em validação; isso não constitui aceite dessas revisões.
 Teste nativo com Codex instalado conecta o MCP oficial Dart/Flutter a esse DTD,
 lista a aplicação e desconecta sem turno de modelo ou URI persistida no TOML.
-Atalho dessa conexão no Hub, contexto de testes/sessões e
+O Hub oferece registro revisado do SDK selecionado e conexão revisada à sessão,
+recusando configuração diferente e respostas após encerramento/troca da sessão.
+Contexto de testes/sessões e
 aceites físicos IME/DPI continuam pendentes na matriz Python/Dart/Flutter.
 Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
 seu planejamento independente permanece em CODEX-02. Operações de arquivo em

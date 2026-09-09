@@ -8,14 +8,33 @@ import '../domain/mcp_server.dart';
 import 'mcp_hub_view_model.dart';
 
 final class McpHubScreen extends StatefulWidget {
-  const McpHubScreen({required this.model, super.key});
+  const McpHubScreen({
+    required this.model,
+    this.dartFlutterServer,
+    this.connectDartSession,
+    super.key,
+  });
   final McpHubViewModel model;
+  final Future<McpServerDraft> Function()? dartFlutterServer;
+  final Future<void> Function()? connectDartSession;
   @override
   State<McpHubScreen> createState() => _McpHubScreenState();
 }
 
 final class _McpHubScreenState extends State<McpHubScreen> {
   McpHubViewModel get model => widget.model;
+  bool _sdkBusy = false;
+  Future<void> _sdkAction(Future<void> Function() action) async {
+    if (_sdkBusy || model.busy) return;
+    setState(() => _sdkBusy = true);
+    try {
+      await action();
+    } catch (error) {
+      if (mounted) _error('$error');
+    } finally {
+      if (mounted) setState(() => _sdkBusy = false);
+    }
+  }
 
   Future<void> _review(McpConfigChange Function() prepare) async {
     McpConfigChange change;
@@ -372,6 +391,31 @@ final class _McpHubScreenState extends State<McpHubScreen> {
                       : model.disconnect,
                   child: const Text('Disconnect'),
                 ),
+                if (widget.dartFlutterServer != null)
+                  OutlinedButton(
+                    onPressed: !model.connected || model.busy || _sdkBusy
+                        ? null
+                        : () => _sdkAction(() async {
+                            final draft = await widget.dartFlutterServer!();
+                            if (!mounted) return;
+                            await _review(
+                              () => model.prepare(
+                                draft,
+                                editing: model.servers.any(
+                                  (server) => server.name == draft.name,
+                                ),
+                              ),
+                            );
+                          }),
+                    child: const Text('Register Dart/Flutter SDK'),
+                  ),
+                if (widget.connectDartSession != null)
+                  OutlinedButton(
+                    onPressed: !model.connected || model.busy || _sdkBusy
+                        ? null
+                        : () => _sdkAction(widget.connectDartSession!),
+                    child: const Text('Connect running Dart/Flutter session'),
+                  ),
               ],
             ),
             if (model.busy)

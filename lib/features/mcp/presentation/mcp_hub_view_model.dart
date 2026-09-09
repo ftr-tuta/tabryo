@@ -122,6 +122,25 @@ final class McpHubViewModel extends DartitectViewModel {
     inspection = await hub.readResource(server, uri);
   });
 
+  Future<bool> connectDartSession(
+    McpServerDraft sdk,
+    Uri uri,
+    bool Function() isCurrent,
+  ) => _run(() async {
+    if (!isCurrent()) {
+      throw const CodexFailure(
+        'The debug session changed. Review the connection again.',
+      );
+    }
+    inspection = await hub.connectDartSession(sdk, uri);
+    if (!isCurrent()) {
+      inspection = null;
+      throw const CodexFailure(
+        'The debug session stopped or changed during connection.',
+      );
+    }
+  });
+
   String inspect(Object? value) => hub.inspect(value);
   String safeText(String value) => hub.safeText(value);
 
