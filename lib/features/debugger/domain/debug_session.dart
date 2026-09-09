@@ -28,6 +28,7 @@ final class DebugConfiguration {
     this.pythonModule,
     this.django = false,
     this.attachUri,
+    this.attachPid,
     this.workingDirectory,
     this.flavor,
     this.flutterMode = 'debug',
@@ -53,7 +54,12 @@ final class DebugConfiguration {
   final String? pythonModule;
   final bool django;
   final Uri? attachUri;
-  bool get isAttach => attachUri != null;
+  final int? attachPid;
+  bool get isAttach => attachUri != null || attachPid != null;
+  bool get codeLldb =>
+      project.native &&
+      tools[ProjectTool.lldbDap] == null &&
+      tools[ProjectTool.codeLldb] != null;
   final String? workingDirectory;
   String get directory => workingDirectory ?? project.directory;
   final String? flavor;

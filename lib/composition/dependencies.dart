@@ -29,6 +29,9 @@ import '../features/language/infrastructure/lsp_connection.dart';
 import '../features/language/infrastructure/local_language_sources.dart';
 import '../features/debugger/application/debug_service.dart';
 import '../features/debugger/infrastructure/dap_connection.dart';
+import '../features/games/application/game_service.dart';
+import '../features/games/infrastructure/local_game_workspace.dart';
+import '../features/games/infrastructure/local_game_processes.dart';
 import '../features/terminals/infrastructure/native_terminal.dart';
 import '../features/terminals/infrastructure/local_text_clipboard.dart';
 import '../features/workspaces/presentation/workbench_view_model.dart';
@@ -43,6 +46,7 @@ WorkbenchViewModel createWorkbench() {
     cache: cache,
   );
   return WorkbenchViewModel(
+    games: GameService(LocalGameWorkspace(), LocalGameProcesses()),
     debugger: DebugService(LocalDebugAdapters()),
     devToolsProfileDirectory: p.join(
       Platform.isWindows

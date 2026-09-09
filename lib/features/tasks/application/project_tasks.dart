@@ -20,6 +20,11 @@ final class ProjectTasks {
     TaskReport? report,
     TaskConfiguration? configuration,
   }) {
+    if (project.native) {
+      throw const ProjectFailure(
+        'Use Game development to build and test native projects.',
+      );
+    }
     final python = project.kind == ProjectKind.python;
     final flutter = project.kind == ProjectKind.flutter;
     final coverage = report?.coveragePath != null;

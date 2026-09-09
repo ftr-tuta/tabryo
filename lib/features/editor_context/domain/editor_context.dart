@@ -138,6 +138,7 @@ final class EditorProjectContext {
     required this.includesTests,
     required this.includesSessions,
     this.limited = false,
+    this.gameContext,
     List<EditorTestContext> tests = const [],
     List<EditorSessionContext> sessions = const [],
   }) : tests = List.unmodifiable(tests),
@@ -146,11 +147,13 @@ final class EditorProjectContext {
   final bool includesTests;
   final bool includesSessions;
   final bool limited;
+  final Map<String, Object?>? gameContext;
   final List<EditorTestContext> tests;
   final List<EditorSessionContext> sessions;
   Map<String, Object?> toJson() => {
     'root': root,
     'limited': limited,
+    if (gameContext != null) 'game': gameContext,
     if (includesTests) 'testRuns': [for (final run in tests) run.toJson()],
     if (includesSessions)
       'runningSessions': [for (final session in sessions) session.toJson()],

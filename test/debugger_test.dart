@@ -27,12 +27,142 @@ import 'package:tabryo/features/tasks/application/shared_tasks.dart';
 import 'package:tabryo/features/tasks/infrastructure/local_task_files.dart';
 import 'package:tabryo/features/tasks/presentation/tasks_view_model.dart';
 import 'package:tabryo/features/tasks/domain/project_task.dart';
+import 'package:tabryo/features/games/application/game_service.dart';
+import 'package:tabryo/features/games/domain/game_workspace.dart';
+import 'package:tabryo/features/terminals/domain/terminal_ports.dart';
+
+import 'game_development_test.dart' show MemoryGameFiles, MemoryGameProcesses;
 
 import 'workbench_test.dart'
     show MemoryHost, MemoryLauncher, MemoryFiles, NoGit, MemoryPreferences;
 import 'projects_test.dart' show runSetupCommand;
 
 void main() {
+  test('debugger shares an owned game session lease only when attaching to its PID', () async {
+    final directory = await Directory.systemTemp.createTemp('native_debug_');
+    addTearDown(() => directory.delete(recursive: true));
+    final root = await directory.resolveSymbolicLinks();
+    await File(p.join(root, 'CMakeLists.txt')).writeAsString('project(Game)');
+    final project = DevelopmentProject(
+      workspace: root,
+      directory: root,
+      name: 'Game',
+      kind: ProjectKind.cpp,
+      manifests: const ['CMakeLists.txt'],
+    );
+    final tools = ToolchainSelection({
+      ProjectTool.lldbDap: Platform.resolvedExecutable,
+    });
+    final projects = ProjectsViewModel(LocalProjectEnvironment());
+    final host = MemoryGameProcesses();
+    final games = GameService(MemoryGameFiles(), host);
+    final adapters = MemoryAdapters();
+    final debugger = DebugService(adapters);
+    final git = NoGit();
+    final workbench = WorkbenchViewModel(
+      host: MemoryHost(),
+      launcher: MemoryLauncher(),
+      files: MemoryFiles(),
+      gitReader: git,
+      gitMutator: git,
+      preferencesStore: MemoryPreferences(),
+      projects: projects,
+      games: games,
+      debugger: debugger,
+    );
+    addTearDown(workbench.shutdown);
+    await workbench.openWorkspace(root);
+    projects.selections[project.id] = tools;
+    final plan = GamePlan(
+      workspace: GameWorkspace(
+        project: project,
+        configuration: GameConfiguration(),
+        configurationSource: '{}',
+      ),
+      title: 'Server',
+      toolPaths: tools.paths,
+      processes: [
+        GameProcessSpec(
+          'Server',
+          LaunchSpec(
+            executable: Platform.resolvedExecutable,
+            workingDirectory: root,
+          ),
+          persistent: true,
+        ),
+      ],
+    );
+    await workbench.runGamePlan(plan);
+    await expectLater(
+      workbench.startDebugger(
+        debugProfile(
+          project: project,
+          tools: tools,
+          program: Platform.resolvedExecutable,
+          attachPid: 99999,
+        ),
+      ),
+      throwsA(isA<ProjectFailure>()),
+    );
+    await workbench.startDebugger(
+      debugProfile(
+        project: project,
+        tools: tools,
+        program: Platform.resolvedExecutable,
+        attachPid: host.started.single.pid,
+      ),
+    );
+    expect(adapters.starts, 1);
+    await expectLater(
+      workbench.runGamePlan(plan),
+      throwsA(isA<ProjectFailure>()),
+    );
+    await debugger.stop();
+    expect(host.started.single.closed, false);
+    await games.stopWorkspace(root);
+    expect(host.started.single.closed, true);
+  });
+
+  test('C++ debugger uses LLDB launch and PID attach without Dart options', () {
+    final root = p.absolute('native');
+    final project = DevelopmentProject(
+      workspace: root,
+      directory: root,
+      name: 'Game',
+      kind: ProjectKind.cpp,
+    );
+    final tools = ToolchainSelection({
+      ProjectTool.lldbDap: p.join(root, 'lldb-dap.exe'),
+    });
+    final service = DebugService(MemoryAdapters());
+    addTearDown(service.dispose);
+    final config = debugProfile(
+      project: project,
+      tools: tools,
+      program: p.join(root, 'game.exe'),
+      arguments: const ['map'],
+    );
+    expect(
+      LocalDebugAdapters().command(project, tools, 'debug_adapter').arguments,
+      isEmpty,
+    );
+    final launch = service.launchArguments(config);
+    expect(launch['type'], 'lldb-dap');
+    expect(launch['args'], ['map']);
+    expect(launch.containsKey('debugSdkLibraries'), false);
+    final attach = service.launchArguments(
+      debugProfile(
+        project: project,
+        tools: tools,
+        program: config.program,
+        attachPid: 4821,
+      ),
+    );
+    expect(attach['request'], 'attach');
+    expect(attach['pid'], 4821);
+    expect(attach.containsKey('vmServiceUri'), false);
+    expect(attach.containsKey('env'), false);
+  });
   // This suite exercises real loopback servers as well as widgets. Widget
   // binding initialization installs a global HTTP mock; native protocols must
   // use dart:io transport even when those widget tests are filtered out.
@@ -1691,7 +1821,7 @@ final class MemoryDebugConnection implements DebugConnection {
     if (command == 'initialize') {
       return {'supportsConfigurationDoneRequest': true};
     }
-    if (command == 'launch') emit('initialized');
+    if (command == 'launch' || command == 'attach') emit('initialized');
     if (command == 'stackTrace') {
       return {
         'stackFrames': [

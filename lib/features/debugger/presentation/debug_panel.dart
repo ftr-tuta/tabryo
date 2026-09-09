@@ -39,12 +39,15 @@ final class DebugPanel extends StatefulWidget {
 
 final class _DebugPanelState extends State<DebugPanel> {
   late final program = TextEditingController(
-    text: widget.project.kind == ProjectKind.flutter
+    text: widget.project.native
+        ? ''
+        : widget.project.kind == ProjectKind.flutter
         ? 'lib/main.dart'
         : 'main.${widget.project.kind == ProjectKind.python ? 'py' : 'dart'}',
   );
   final arguments = TextEditingController(text: '[]');
   final breakpoints = TextEditingController();
+  final breakpointSource = TextEditingController();
   final expression = TextEditingController();
   final port = TextEditingController(text: '8000');
   final attachEndpoint = TextEditingController();
@@ -198,6 +201,7 @@ final class _DebugPanelState extends State<DebugPanel> {
     program.dispose();
     arguments.dispose();
     breakpoints.dispose();
+    breakpointSource.dispose();
     expression.dispose();
     port.dispose();
     attachEndpoint.dispose();
@@ -271,7 +275,12 @@ final class _DebugPanelState extends State<DebugPanel> {
       port: int.parse(port.text),
       device: device,
       noDebug: noDebug,
-      attachUri: attach ? Uri.parse(attachEndpoint.text.trim()) : null,
+      attachUri: attach && !widget.project.native
+          ? Uri.parse(attachEndpoint.text.trim())
+          : null,
+      attachPid: attach && widget.project.native
+          ? int.parse(attachEndpoint.text.trim())
+          : null,
       workingDirectory: p.normalize(
         p.isAbsolute(directory.text)
             ? directory.text
@@ -287,7 +296,14 @@ final class _DebugPanelState extends State<DebugPanel> {
       breakpoints: lines.isEmpty
           ? {}
           : {
-              path: [
+              (widget.project.native
+                  ? p.normalize(
+                      p.join(
+                        widget.project.directory,
+                        breakpointSource.text.trim(),
+                      ),
+                    )
+                  : path): [
                 for (final line in lines)
                   DebugBreakpoint(
                     line,
@@ -393,7 +409,9 @@ final class _DebugPanelState extends State<DebugPanel> {
               controller: attachEndpoint,
               enabled: !busy && !service.active,
               decoration: InputDecoration(
-                labelText: widget.project.kind == ProjectKind.python
+                labelText: widget.project.native
+                    ? 'Local process ID (PID)'
+                    : widget.project.kind == ProjectKind.python
                     ? 'debugpy endpoint (tcp://127.0.0.1:5678)'
                     : 'Local Dart VM service URI',
                 helperText:
@@ -403,8 +421,10 @@ final class _DebugPanelState extends State<DebugPanel> {
           TextField(
             controller: program,
             enabled: !busy && !service.active,
-            decoration: const InputDecoration(
-              labelText: 'Debug entrypoint (project-relative path)',
+            decoration: InputDecoration(
+              labelText: widget.project.native
+                  ? 'Native executable (project path or selected Unreal Editor)'
+                  : 'Debug entrypoint (project-relative path)',
             ),
           ),
           TextField(
@@ -444,7 +464,8 @@ final class _DebugPanelState extends State<DebugPanel> {
                       'Example: {"5":"count > 2"}. Requires adapter support.',
                 ),
               ),
-              if (widget.project.kind != ProjectKind.python)
+              if (widget.project.kind != ProjectKind.python &&
+                  !widget.project.native)
                 TextField(
                   controller: toolArguments,
                   enabled: !attach && !busy && !service.active,
@@ -484,6 +505,14 @@ final class _DebugPanelState extends State<DebugPanel> {
               controller: port,
               enabled: !busy && !service.active,
               decoration: const InputDecoration(labelText: 'Local server port'),
+            ),
+          if (widget.project.native)
+            TextField(
+              controller: breakpointSource,
+              enabled: !busy && !service.active,
+              decoration: const InputDecoration(
+                labelText: 'Breakpoint C++ source (project-relative path)',
+              ),
             ),
           TextField(
             controller: breakpoints,

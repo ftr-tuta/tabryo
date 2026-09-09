@@ -143,7 +143,9 @@ final class ProjectCreationDialog extends StatefulWidget {
 
 final class _ProjectCreationDialogState extends State<ProjectCreationDialog> {
   late final String workspace = widget.model.workspace!;
-  late ProjectKind kind = widget.model.selected?.kind ?? ProjectKind.dart;
+  late ProjectKind kind = widget.model.selected?.native == true
+      ? ProjectKind.dart
+      : widget.model.selected?.kind ?? ProjectKind.dart;
   String name = '';
   late ToolchainSelection tools = ToolchainSelection({
     for (final entry in widget.model.hints.candidates.entries)
@@ -213,6 +215,11 @@ final class _ProjectCreationDialogState extends State<ProjectCreationDialog> {
                 DropdownButton<ProjectKind>(
                   value: kind,
                   items: ProjectKind.values
+                      .where(
+                        (value) =>
+                            value != ProjectKind.cpp &&
+                            value != ProjectKind.unreal,
+                      )
                       .map(
                         (value) => DropdownMenuItem(
                           value: value,
@@ -238,6 +245,7 @@ final class _ProjectCreationDialogState extends State<ProjectCreationDialog> {
                   ProjectKind.dart => [ProjectTool.dart],
                   ProjectKind.flutter => [ProjectTool.flutter],
                   ProjectKind.python => [ProjectTool.python, ProjectTool.uv],
+                  ProjectKind.cpp || ProjectKind.unreal => <ProjectTool>[],
                 }) ...[
                   TextFormField(
                     key: ValueKey('${kind.name}:${tool.name}:${tools[tool]}'),

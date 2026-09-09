@@ -44,11 +44,23 @@ final class LocalLanguageSources implements LanguageSources {
     }
     if (!p.isAbsolute(path) ||
         !p.isAbsolute(spec.executable) ||
-        !['.dart', '.py', '.pyi'].contains(p.extension(path).toLowerCase())) {
-      throw const LanguageFailure('Select a Dart or Python dependency source.');
+        !(spec.kind == LanguageServerKind.clangd
+            ? spec.supportsPath(path)
+            : [
+                '.dart',
+                '.py',
+                '.pyi',
+              ].contains(p.extension(path).toLowerCase()))) {
+      throw const LanguageFailure('Select a supported dependency source file.');
     }
     final roots = <String>[];
-    if (spec.kind == LanguageServerKind.dart) {
+    if (spec.kind == LanguageServerKind.clangd) {
+      if (spec.sourceRoots.length > 8 ||
+          spec.sourceRoots.any((r) => !p.isAbsolute(r))) {
+        throw const LanguageFailure('Invalid native dependency roots.');
+      }
+      roots.addAll(spec.sourceRoots);
+    } else if (spec.kind == LanguageServerKind.dart) {
       roots.add(p.join(p.dirname(p.dirname(spec.executable)), 'lib'));
       final config = p.join(spec.root, '.dart_tool', 'package_config.json');
       final text = await _text(config);

@@ -6,6 +6,8 @@ import 'dart:ui' show AppExitResponse;
 
 import 'dart:async';
 
+import '../../games/presentation/game_panel.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -25,6 +27,7 @@ import '../domain/workspace.dart';
 import 'workbench_dialogs.dart';
 import 'workbench_view_model.dart';
 import '../../debugger/presentation/debug_panel.dart';
+import '../../debugger/application/debug_profiles.dart';
 import '../../debugger/presentation/devtools_pane.dart';
 
 final class WorkbenchScreen extends StatefulWidget {
@@ -105,6 +108,7 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
     ('Push', '', () => dialogs.remote('push')),
     ('Preferences', '', dialogs.preferences),
     ('Projects and toolchains', '', _openProjects),
+    ('Game development · Unreal / C++', '', _openProjects),
     ('Recover documents', '', dialogs.recoverDocuments),
   ];
 
@@ -206,6 +210,31 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
               ? null
               : (project, selection) => Column(
                   children: [
+                    if (project.native && model.games != null)
+                      GamePanel(
+                        key: ValueKey('games:${project.id}'),
+                        service: model.games!,
+                        project: project,
+                        tools: selection,
+                        windows: projects.environment.windows,
+                        onRun: model.runGamePlan,
+                        onAttach: model.debugger == null
+                            ? null
+                            : (executable, pid) => model.startDebugger(
+                                debugProfile(
+                                  project: project,
+                                  tools: selection,
+                                  program: executable,
+                                  attachPid: pid,
+                                ),
+                              ),
+                        onOpen: (path, line) async {
+                          await model.openGameSource(path, line);
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                      ),
                     if (model.debugger != null)
                       DebugPanel(
                         key: ValueKey('debug:${project.id}'),
@@ -230,29 +259,40 @@ final class _WorkbenchScreenState extends State<WorkbenchScreen> {
                           }
                         },
                       ),
-                    TasksPanel(
-                      key: ValueKey(project.id),
-                      model: model.tasks!,
-                      project: project,
-                      projects: projects.discovery.projects,
-                      selection: selection,
-                      onRun: model.runTask,
-                      onOpenConfiguration: () async {
-                        await model.openFile(
-                          p.join(project.directory, '.tabryo', 'project.json'),
-                        );
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
-                      },
-                      onStop: model.stopTask,
-                      onTerminal: (task) {
-                        model.showTaskTerminal(task);
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
-                      },
-                      onOpen: (task, result) async {
-                        await model.openTestResult(task, result);
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
-                      },
-                    ),
+                    if (!project.native)
+                      TasksPanel(
+                        key: ValueKey(project.id),
+                        model: model.tasks!,
+                        project: project,
+                        projects: projects.discovery.projects,
+                        selection: selection,
+                        onRun: model.runTask,
+                        onOpenConfiguration: () async {
+                          await model.openFile(
+                            p.join(
+                              project.directory,
+                              '.tabryo',
+                              'project.json',
+                            ),
+                          );
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                        onStop: model.stopTask,
+                        onTerminal: (task) {
+                          model.showTaskTerminal(task);
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                        onOpen: (task, result) async {
+                          await model.openTestResult(task, result);
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                      ),
                   ],
                 ),
           onRun: (project, command) async {

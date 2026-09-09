@@ -3,7 +3,7 @@ import 'dart:convert';
 import '../../../core/cancellation.dart';
 import '../../editor/domain/document_files.dart';
 
-enum LanguageServerKind { dart, pyright, ruff }
+enum LanguageServerKind { dart, pyright, ruff, clangd }
 
 final class LanguageServerSpec {
   const LanguageServerSpec({
@@ -14,6 +14,9 @@ final class LanguageServerSpec {
     this.module,
     this.python,
     this.excludedRoots = const [],
+    this.compilationDatabase,
+    this.sourceRoots = const [],
+    this.environmentScript,
   });
   final LanguageServerKind kind;
   final String workspace;
@@ -22,12 +25,41 @@ final class LanguageServerSpec {
   final String? module;
   final String? python;
   final List<String> excludedRoots;
-  String get language => kind == LanguageServerKind.dart ? 'dart' : 'python';
+  final String? compilationDatabase;
+  final List<String> sourceRoots;
+  final String? environmentScript;
+  String get language => switch (kind) {
+    LanguageServerKind.dart => 'dart',
+    LanguageServerKind.clangd => 'cpp',
+    _ => 'python',
+  };
+  bool supportsPath(String path) {
+    final extension = path.split('.').last.toLowerCase();
+    return kind == LanguageServerKind.clangd
+        ? const {
+            'c',
+            'cc',
+            'cpp',
+            'cxx',
+            'h',
+            'hh',
+            'hpp',
+            'hxx',
+            'inl',
+          }.contains(extension)
+        : extension == (language == 'dart' ? 'dart' : 'py');
+  }
+
   String get id => '${kind.name}:$workspace:$root';
   List<String> get arguments => switch (kind) {
     LanguageServerKind.dart => ['language-server', '--protocol=lsp'],
     LanguageServerKind.pyright => [module!, '--stdio'],
     LanguageServerKind.ruff => ['server'],
+    LanguageServerKind.clangd => [
+      '--background-index',
+      if (compilationDatabase != null)
+        '--compile-commands-dir=$compilationDatabase',
+    ],
   };
 }
 
