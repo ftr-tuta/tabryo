@@ -121,7 +121,9 @@ final class LocalDevTools implements DebugTools {
                   }
                 }
               } on FormatException {
-                /* SDK startup notices are not protocol events. */
+                // Consume a non-protocol SDK startup notice and keep parsing.
+                end = buffered.indexOf('\n');
+                continue;
               }
               end = buffered.indexOf('\n');
             }

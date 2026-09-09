@@ -755,7 +755,7 @@ final class DebugService {
           })
           .timeout(const Duration(seconds: 3));
     } catch (_) {
-      /* The owned process tree is the final stop boundary. */
+      error ??= 'Debug adapter did not confirm disconnect. Closing its owned process.';
     }
     await _release();
     status = DebugStatus.terminated;
@@ -840,8 +840,10 @@ final class DebugService {
             DebugConnection? pendingConnection;
             try {
               pendingConnection = await pendingAdapter;
-            } catch (_) {
-              /* Adapter creation failed before ownership transfer. */
+            } catch (failure) {
+              if (failure is! Cancelled) {
+                error ??= 'Debug adapter startup failed while closing.';
+              }
             }
             await pendingConnection?.close();
           }
@@ -850,8 +852,10 @@ final class DebugService {
           if (pendingDevTools != null) {
             try {
               await (await pendingDevTools).close();
-            } catch (_) {
-              /* Cancelled startup has reaped its process. */
+            } catch (failure) {
+              if (failure is! Cancelled) {
+                error ??= 'DevTools did not close cleanly.';
+              }
             }
           }
           await devTools?.close();

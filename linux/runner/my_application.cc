@@ -1,4 +1,5 @@
 #include "my_application.h"
+#include <initializer_list>
 
 #include <flutter_linux/flutter_linux.h>
 #include <multiview_desktop/multiview_desktop_runner.h>
@@ -14,6 +15,14 @@ struct _MyApplication {
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+static void display_changed(GdkDisplay*, GdkMonitor*, gpointer messenger) {
+  g_autoptr(FlStringCodec) codec = fl_string_codec_new();
+  g_autoptr(FlBasicMessageChannel) channel = fl_basic_message_channel_new(
+      FL_BINARY_MESSENGER(messenger), "tabryo/windows", FL_MESSAGE_CODEC(codec));
+  g_autoptr(FlValue) event = fl_value_new_string("displaysChanged");
+  fl_basic_message_channel_send(channel, event, nullptr, nullptr, nullptr);
+}
 
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
@@ -76,6 +85,11 @@ static void my_application_activate(GApplication* application) {
   // strand the GTK thread waiting for a frame from the previous compositor.
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
   multiview_desktop_linux_runner_register_primary(window, view);
+  auto* messenger = fl_engine_get_binary_messenger(fl_view_get_engine(view));
+  for (const char* signal : {"monitor-added", "monitor-removed"}) {
+    g_signal_connect_object(gdk_display_get_default(), signal,
+        G_CALLBACK(display_changed), G_OBJECT(messenger), G_CONNECT_DEFAULT);
+  }
 
   // Map the GTK window before waiting for Dart to paint. A hidden window can
   // leave the first frame waiting for the allocation/lifecycle events that

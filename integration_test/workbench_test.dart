@@ -925,6 +925,9 @@ void main() {
       await windows.detach(execution);
       expect(execution.window, id);
       final window = MultiViewDesktop.fromId(id);
+      await window.setPosition(const Offset(-8000, -8000));
+      await windows.recoverPosition(execution);
+      expect((await window.getBounds()).left, greaterThan(-8000));
       await window.minimize();
       await tester.pump(const Duration(milliseconds: 500));
       expect(

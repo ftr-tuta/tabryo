@@ -69,6 +69,22 @@ void main() {
       ]),
       isTrue,
     );
+    // A removed 200% monitor cannot leave its window apparently visible on a
+    // remaining 100% monitor merely because the logical rectangles overlap.
+    for (final scale in [1.0, 1.5, 2.0]) {
+      expect(
+        WindowCoordinator.reachable(Rect.fromLTWH(1920 / scale, 20, 800, 600), [
+          const Rect.fromLTWH(0, 0, 1920, 1080),
+        ], scale: scale),
+        isFalse,
+      );
+      expect(
+        WindowCoordinator.reachable(const Rect.fromLTWH(40, 20, 800, 600), [
+          const Rect.fromLTWH(0, 0, 1920, 1080),
+        ], scale: scale),
+        isTrue,
+      );
+    }
   });
   test(
     'preferences are opt-in, revocable, atomic and corruption-safe',

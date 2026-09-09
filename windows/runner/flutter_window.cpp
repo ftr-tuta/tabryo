@@ -66,6 +66,12 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               LPARAM const lparam) noexcept {
   if (!hidden_) {
     LRESULT result = 0;
+    if (message == WM_DISPLAYCHANGE && MultiViewDesktopGetEngineRef()) {
+      constexpr char event[] = "displaysChanged";
+      FlutterDesktopMessengerSend(
+          FlutterDesktopEngineGetMessenger(MultiViewDesktopGetEngineRef()),
+          "tabryo/windows", reinterpret_cast<const uint8_t*>(event), sizeof(event) - 1);
+    }
     if (message == WM_FONTCHANGE) {
       FlutterDesktopEngineReloadSystemFonts(MultiViewDesktopGetEngineRef());
     }
