@@ -1152,15 +1152,20 @@ void main() {
         await browser.runJavaScriptReturningResult("""
         (() => {
           const tab = [...document.querySelectorAll('flt-semantics-host [role=tab]')].find(e => (e.getAttribute('aria-label') ?? e.textContent).includes('Debugger'));
-          const r = tab.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2];
+          const r = tab.getBoundingClientRect();
+          return [(r.x + r.width / 2) / innerWidth, (r.y + r.height / 2) / innerHeight];
         })()
       """) as String,
       ) as List;
+      // WebKit CSS pixels and Flutter logical pixels can have different scale
+      // factors. Map through the actual surface, then let native input convert
+      // that logical point to device pixels exactly once.
+      final surface = tester.getSize(find.byType(WinWebViewWidget));
       await clickNativeSurface(
         tester,
         Offset(
-          (tabBounds[0] as num).toDouble(),
-          (tabBounds[1] as num).toDouble(),
+          (tabBounds[0] as num).toDouble() * surface.width,
+          (tabBounds[1] as num).toDouble() * surface.height,
         ),
       );
       await expectWeb(
