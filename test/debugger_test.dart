@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dtd/dtd.dart';
+import 'package:vm_service/vm_service_io.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/core/cancellation.dart';
 import 'package:tabryo/core/preview_cache.dart';
@@ -23,6 +25,36 @@ import 'workbench_test.dart'
     show MemoryHost, MemoryLauncher, MemoryFiles, NoGit, MemoryPreferences;
 
 void main() {
+  test(
+    'Inspector source locations reject remote, malformed and encoded NUL paths',
+    () {
+      final source = File(p.join(Directory.systemTemp.path, 'inspector.dart'))
+          .uri;
+      final valid = {'fileUri': source.toString(), 'line': 3, 'column': 5};
+      expect(
+        DebugSourceLocation.fromInspector(valid)?.path,
+        source.toFilePath(),
+      );
+      for (final file in [
+        'https://example.invalid/a.dart',
+        'file://server/share/a.dart',
+        'file:relative.dart',
+        '$source%00',
+        '$source?read=true',
+      ]) {
+        expect(
+          DebugSourceLocation.fromInspector({...valid, 'fileUri': file}),
+          isNull,
+          reason: file,
+        );
+      }
+      expect(DebugSourceLocation.fromInspector({...valid, 'line': 0}), isNull);
+      expect(
+        DebugSourceLocation.fromInspector({...valid, 'column': '1'}),
+        isNull,
+      );
+    },
+  );
   test('debug configuration rejects external endpoints, escaped directories and breakpoints in run mode', () async {
     final temporary = await Directory.systemTemp.createTemp(
       'tabryo_debug_config_',
@@ -353,6 +385,82 @@ void main() {
             'Flutter startup: ${service.status}, appStarted=${service.appStarted}, error=${service.error}\n${service.output}',
       );
       expect(service.vmService, isNotNull);
+      await service.selectWidget(true);
+      final daemon = await DartToolingDaemon.connect(service.dtdUri!);
+      final inspector = await vmServiceConnectUri(
+        service.vmService!
+            .replace(
+              scheme: 'ws',
+              path:
+                  '${service.vmService!.path.replaceFirst(RegExp(r'/ws$'), '').replaceFirst(RegExp(r'/$'), '')}/ws',
+            )
+            .toString(),
+      );
+      addTearDown(() async {
+        await inspector.dispose();
+        await daemon.close();
+      });
+      expect(
+        (await daemon.getVmServices()).vmServicesInfos.single.uri,
+        service.vmService.toString(),
+      );
+      final isolate = (await inspector.getVM()).isolates!.first.id!;
+      const group = 'inspection-source-test';
+      final tree = await inspector.callServiceExtension(
+        'ext.flutter.inspector.getRootWidgetSummaryTree',
+        isolateId: isolate,
+        args: {'objectGroup': group},
+      );
+      Map? sourceWidget(Object? node) {
+        if (node is! Map) return null;
+        final location = DebugSourceLocation.fromInspector(
+          node['creationLocation'],
+        );
+        if (location != null && p.equals(location.path, source.path)) {
+          return node;
+        }
+        for (final child in (node['children'] as List? ?? [])) {
+          final found = sourceWidget(child);
+          if (found != null) return found;
+        }
+        return null;
+      }
+
+      final selected = sourceWidget(tree.json?['result']);
+      expect(
+        selected,
+        isNotNull,
+        reason: 'The real Inspector tree must include project widgets.',
+      );
+      await inspector.callServiceExtension(
+        'ext.flutter.inspector.setSelectionById',
+        isolateId: isolate,
+        args: {'arg': selected!['valueId'], 'objectGroup': group},
+      );
+      await _until(
+        () => editor.active?.path == source.path,
+        describe: () => service.error ?? 'Inspector did not navigate.',
+      );
+      final location = DebugSourceLocation.fromInspector(
+        selected['creationLocation'],
+      )!;
+      expect(
+        editor.active!.controller.selection.baseOffset,
+        editor.active!.controller.text
+                .split('\n')
+                .take(location.line - 1)
+                .fold<int>(0, (n, line) => n + line.length + 1) +
+            location.column -
+            1,
+      );
+      await service.openSelectedWidgetSource();
+      expect(service.error, isNull);
+      await inspector.callServiceExtension(
+        'ext.flutter.inspector.disposeGroup',
+        isolateId: isolate,
+        args: {'objectGroup': group},
+      );
+      await service.selectWidget(false);
       final states = RegExp('STATE_CREATED').allMatches(service.output).length;
       final boots = RegExp('BOOT_READY').allMatches(service.output).length;
       await editor.open(root, source.path);
@@ -368,6 +476,8 @@ void main() {
       );
       await service.stop();
       expect(service.active, isFalse);
+      expect(service.dtdUri, isNull);
+      await daemon.done.timeout(const Duration(seconds: 10));
     },
     skip: Platform.environment['TABRYO_TEST_FLUTTER_DEBUG'] != '1',
     timeout: const Timeout(Duration(minutes: 5)),
@@ -637,6 +747,58 @@ void main() {
   );
 
   test(
+    'Inspector navigation coalesces selections and Stop retires queued source',
+    () async {
+      final adapters = MemoryAdapters();
+      final service = DebugService(adapters);
+      addTearDown(service.dispose);
+      await service.start(memoryConfiguration());
+      adapters.connection.emit('dart.debuggerUris', {
+        'vmServiceUri': 'http://127.0.0.1:1234/token/',
+      });
+      await _until(() => service.vmService != null);
+      adapters.toolsReady.complete(adapters.tools);
+      await service.openDevTools(external: false);
+      final opened = <String>[];
+      final held = Completer<void>();
+      service.onInspectorSource = (location) async {
+        opened.add(location.path);
+        if (opened.length == 1) await held.future;
+      };
+      adapters.tools.sources.add(const DebugSourceLocation('first.dart', 1, 1));
+      await _until(() => opened.isNotEmpty);
+      adapters.tools.sources.add(
+        const DebugSourceLocation('superseded.dart', 1, 1),
+      );
+      adapters.tools.sources.add(
+        const DebugSourceLocation('latest.dart', 1, 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+      held.complete();
+      await _until(() => opened.length == 2);
+      expect(opened, ['first.dart', 'latest.dart']);
+      final stopped = Completer<void>();
+      service.onInspectorSource = (location) async {
+        opened.add(location.path);
+        await stopped.future;
+      };
+      adapters.tools.sources.add(
+        const DebugSourceLocation('active.dart', 1, 1),
+      );
+      await _until(() => opened.length == 3);
+      adapters.tools.sources.add(
+        const DebugSourceLocation('retired.dart', 1, 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await service.stop();
+      stopped.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(opened, ['first.dart', 'latest.dart', 'active.dart']);
+      expect(service.dtdUri, isNull);
+    },
+  );
+
+  test(
     'DAP frames Unicode and refuses reverse requests and orphan replies',
     () async {
       final parser = DapFramer();
@@ -755,6 +917,24 @@ void main() {
         cancellation,
       );
       try {
+        final dtd = await DartToolingDaemon.connect(devTools.dtdUri);
+        try {
+          final apps = await dtd.getVmServices();
+          expect(apps.vmServicesInfos.single.uri, service.vmService.toString());
+          final roots = await dtd.getIDEWorkspaceRoots();
+          expect(
+            roots.ideWorkspaceRoots.map((uri) => p.normalize(uri.toFilePath())),
+            [p.normalize(root)],
+          );
+          await expectLater(
+            dtd.setIDEWorkspaceRoots('not-the-owner', [
+              Uri.directory(Directory.systemTemp.path),
+            ]),
+            throwsA(isA<Exception>()),
+          );
+        } finally {
+          await dtd.close();
+        }
         expect(
           devTools.uri.queryParameters['uri'],
           service.vmService.toString(),
@@ -967,6 +1147,16 @@ final class MemoryDebugConnection implements DebugConnection {
 }
 
 final class MemoryDebugTools implements DebugTools {
+  @override
+  Uri get dtdUri => Uri.parse('ws://127.0.0.1:1236/');
+  final sources = StreamController<DebugSourceLocation>.broadcast();
+  @override
+  Stream<DebugSourceLocation> get sourceLocations => sources.stream;
+  @override
+  Future<void> selectWidget(bool enabled) async {}
+  @override
+  Future<DebugSourceLocation> selectedWidgetSource() async =>
+      throw const DebugFailure('No selection.');
   bool opened = false;
   bool closed = false;
   @override
@@ -979,6 +1169,7 @@ final class MemoryDebugTools implements DebugTools {
   @override
   Future<void> close() async {
     closed = true;
+    await sources.close();
   }
 }
 

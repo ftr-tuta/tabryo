@@ -28,10 +28,12 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   ModalRoute<dynamic>? _route;
   bool _covered = false;
   bool _ready = false;
+  bool _documentReady = false;
   String? _error;
   Timer? _timeout;
   int _opening = 0;
-  bool get surfaceVisible => _ready && !_covered && widget.visible;
+  bool get surfaceVisible =>
+      _documentReady && _error == null && !_covered && widget.visible;
 
   @override
   void initState() {
@@ -73,6 +75,25 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
       if (!current()) return;
       await browser.setNavigationDelegate(
         WinNavigationDelegate(
+          onPageStarted: (_) {
+            if (!current()) return;
+            unawaited(
+              browser
+                  .runJavaScript("""
+              if (!window.tabryoDevToolsErrors) {
+                window.tabryoDevToolsErrors = [];
+                const record = message => {
+                  if (window.tabryoDevToolsErrors.length < 8) {
+                    window.tabryoDevToolsErrors.push(String(message).slice(0, 500).replace(/(?:https?|wss?):[^ ]+/g, '[endpoint]'));
+                  }
+                };
+                window.addEventListener('error', e => record(e.message));
+                window.addEventListener('unhandledrejection', e => record(e.reason));
+              }
+            """)
+                  .catchError((Object _) {}),
+            );
+          },
           onNavigationRequest: (request) {
             final target = Uri.tryParse(request.url);
             return request.isMainFrame &&
@@ -91,9 +112,9 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
                 loaded?.port != uri.port) {
               return;
             }
-            _timeout?.cancel();
-            setState(() => _ready = true);
+            setState(() => _documentReady = true);
             _visibility();
+            unawaited(_waitForApplication(browser, opening));
           },
           onWebResourceError: (error) {
             if (current() && error.isForMainFrame == true) _fail();
@@ -105,6 +126,28 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
       await browser.loadRequest(uri);
     } catch (_) {
       if (current()) _fail();
+    }
+  }
+
+  Future<void> _waitForApplication(
+    WinWebViewController browser,
+    int opening,
+  ) async {
+    try {
+      while (mounted && opening == _opening && _error == null && !_ready) {
+        final rendered = await browser.runJavaScriptReturningResult(
+          "(document.querySelector('flt-glass-pane')?.shadowRoot?.querySelector('canvas')?.width ?? 0) > 0",
+        );
+        if (!mounted || opening != _opening || _error != null) return;
+        if (rendered == true) {
+          _timeout?.cancel();
+          setState(() => _ready = true);
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    } catch (_) {
+      if (mounted && opening == _opening) _fail();
     }
   }
 
@@ -125,6 +168,7 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
     setState(() {
       _browser = null;
       _ready = false;
+      _documentReady = false;
       _error = null;
     });
     await WidgetsBinding.instance.endOfFrame;

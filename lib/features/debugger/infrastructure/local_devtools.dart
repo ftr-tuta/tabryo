@@ -8,9 +8,27 @@ import 'package:ffi/ffi.dart';
 import '../domain/debug_session.dart';
 import '../../../core/cancellation.dart';
 import 'debug_process.dart';
+import 'local_debug_inspection.dart';
 
 final class LocalDevTools implements DebugTools {
-  LocalDevTools._(this.child, this._output, this._errors, this.uri);
+  LocalDevTools._(
+    this.child,
+    this._output,
+    this._errors,
+    this.uri,
+    this._inspection,
+  );
+  final LocalDebugInspection _inspection;
+  Future<void>? _closing;
+  @override
+  Uri get dtdUri => _inspection.uri;
+  @override
+  Stream<DebugSourceLocation> get sourceLocations => _inspection.sources;
+  @override
+  Future<void> selectWidget(bool enabled) => _inspection.selectWidget(enabled);
+  @override
+  Future<DebugSourceLocation> selectedWidgetSource() =>
+      _inspection.selectedWidgetSource();
   final DebugProcess child;
   final StreamSubscription<String> _output;
   final StreamSubscription<List<int>> _errors;
@@ -28,15 +46,29 @@ final class LocalDevTools implements DebugTools {
         service.userInfo.isNotEmpty) {
       throw const DebugFailure('DevTools requires this local debug session.');
     }
-    final child = await DebugProcess.start(dart, [
-      'devtools',
-      '--machine',
-      '--host',
-      '127.0.0.1',
-      '--port',
-      '0',
-      '--no-launch-browser',
-    ], root);
+    final inspection = await LocalDebugInspection.start(
+      dart,
+      root,
+      service,
+      cancellation,
+    );
+    late final DebugProcess child;
+    try {
+      child = await DebugProcess.start(dart, [
+        'devtools',
+        '--machine',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        '0',
+        '--no-launch-browser',
+        '--dtd-uri',
+        inspection.uri.toString(),
+      ], root);
+    } catch (_) {
+      await inspection.close();
+      rethrow;
+    }
     final ready = Completer<Uri>();
     final cancelled = Timer.periodic(const Duration(milliseconds: 30), (_) {
       if (cancellation.isCancelled && !ready.isCompleted) {
@@ -104,11 +136,12 @@ final class LocalDevTools implements DebugTools {
     try {
       final uri = await ready.future.timeout(const Duration(seconds: 45));
       cancellation.check();
-      return LocalDevTools._(child, output, errors, uri);
+      return LocalDevTools._(child, output, errors, uri, inspection);
     } catch (_) {
       await child.close();
       await output.cancel();
       await errors.cancel();
+      await inspection.close();
       rethrow;
     } finally {
       cancelled.cancel();
@@ -156,9 +189,13 @@ final class LocalDevTools implements DebugTools {
   }
 
   @override
-  Future<void> close() async {
-    await child.close();
-    await _output.cancel();
-    await _errors.cancel();
-  }
+  Future<void> close() => _closing ??= () async {
+    try {
+      await child.close();
+      await _output.cancel();
+      await _errors.cancel();
+    } finally {
+      await _inspection.close();
+    }
+  }();
 }

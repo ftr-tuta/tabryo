@@ -20,6 +20,68 @@ final class DebugService {
   Cancellation? _devToolsCancellation;
   Future<DebugTools>? _pendingDevTools;
   Uri? get devToolsUri => _devTools?.uri;
+  Uri? get dtdUri => _devTools?.dtdUri;
+  StreamSubscription<DebugSourceLocation>? _sourceEvents;
+  Future<void> Function(DebugSourceLocation)? onInspectorSource;
+  (DebugSourceLocation, int)? _pendingSource;
+  bool _openingSource = false;
+
+  Future<void> _openInspectorSource(
+    DebugSourceLocation location,
+    int generation,
+  ) async {
+    if (_disposed || generation != _generation || !active) return;
+    _pendingSource = (location, generation);
+    if (_openingSource) return;
+    _openingSource = true;
+    try {
+      while (_pendingSource != null && !_disposed && active) {
+        final (next, owner) = _pendingSource!;
+        _pendingSource = null;
+        if (owner != _generation) continue;
+        await onInspectorSource?.call(next);
+      }
+    } catch (failure) {
+      if (!_disposed && generation == _generation && active) {
+        error = 'Could not open Inspector source: $failure';
+        _changed();
+      }
+    } finally {
+      _pendingSource = null;
+      _openingSource = false;
+    }
+  }
+
+  Future<void> selectWidget(bool enabled) async {
+    if (configuration?.project.kind != ProjectKind.flutter ||
+        status == DebugStatus.paused) {
+      throw const DebugFailure(
+        'Resume the Flutter application before selecting a widget.',
+      );
+    }
+    final generation = _generation;
+    await openDevTools(external: false);
+    if (generation != _generation || !active) return;
+    await _devTools?.selectWidget(enabled);
+  }
+
+  Future<void> openSelectedWidgetSource() async {
+    if (configuration?.project.kind != ProjectKind.flutter ||
+        status == DebugStatus.paused) {
+      throw const DebugFailure(
+        'Resume the Flutter application before inspecting a widget.',
+      );
+    }
+    final generation = _generation;
+    await openDevTools(external: false);
+    final tools = _devTools;
+    if (generation != _generation || !active || tools == null) return;
+    final location = await tools.selectedWidgetSource();
+    if (identical(tools, _devTools)) {
+      await _openInspectorSource(location, generation);
+    }
+  }
+
   Completer<void>? _initialized;
   bool _disposed = false;
   int _generation = 0;
@@ -707,7 +769,12 @@ final class DebugService {
         await tools.close();
         return;
       }
-      _devTools = tools;
+      if (!identical(_devTools, tools)) {
+        _devTools = tools;
+        _sourceEvents = tools.sourceLocations.listen((location) {
+          unawaited(_openInspectorSource(location, generation));
+        });
+      }
       if (external) await tools.open();
       _changed();
     } finally {
@@ -727,6 +794,9 @@ final class DebugService {
       final pendingAdapter = _pendingAdapter;
       final events = _events;
       final devTools = _devTools;
+      final sourceEvents = _sourceEvents;
+      _sourceEvents = null;
+      _pendingSource = null;
       _devToolsCancellation?.cancel();
       final pendingDevTools = _pendingDevTools;
       _devTools = null;
@@ -738,25 +808,29 @@ final class DebugService {
       _connection = null;
       _events = null;
       try {
-        await events?.cancel();
-        if (pendingAdapter != null) {
-          DebugConnection? pendingConnection;
-          try {
-            pendingConnection = await pendingAdapter;
-          } catch (_) {
-            /* Adapter creation failed before ownership transfer. */
+        try {
+          await sourceEvents?.cancel();
+          await events?.cancel();
+          if (pendingAdapter != null) {
+            DebugConnection? pendingConnection;
+            try {
+              pendingConnection = await pendingAdapter;
+            } catch (_) {
+              /* Adapter creation failed before ownership transfer. */
+            }
+            await pendingConnection?.close();
           }
-          await pendingConnection?.close();
-        }
-        await connection?.close();
-        if (pendingDevTools != null) {
-          try {
-            await (await pendingDevTools).close();
-          } catch (_) {
-            /* Cancelled startup has reaped its process. */
+          await connection?.close();
+        } finally {
+          if (pendingDevTools != null) {
+            try {
+              await (await pendingDevTools).close();
+            } catch (_) {
+              /* Cancelled startup has reaped its process. */
+            }
           }
+          await devTools?.close();
         }
-        await devTools?.close();
       } finally {
         _releasingConnection = false;
         _changed();
@@ -765,6 +839,7 @@ final class DebugService {
   }
 
   Future<void> dispose() async {
+    onInspectorSource = null;
     await stop();
     _disposed = true;
     await _changes.close();

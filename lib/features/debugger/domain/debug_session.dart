@@ -111,6 +111,55 @@ abstract interface class DebugAdapters {
 
 abstract interface class DebugTools {
   Uri get uri;
+  Uri get dtdUri;
+  Stream<DebugSourceLocation> get sourceLocations;
+  Future<void> selectWidget(bool enabled);
+  Future<DebugSourceLocation> selectedWidgetSource();
   Future<void> open();
   Future<void> close();
+}
+
+final class DebugSourceLocation {
+  const DebugSourceLocation(this.path, this.line, this.column);
+  final String path;
+  final int line;
+  final int column;
+
+  static DebugSourceLocation? fromInspector(Object? value) {
+    if (value is! Map) return null;
+    final file = value['fileUri'] ?? value['file'];
+    final line = value['line'];
+    final column = value['column'];
+    if (file is! String ||
+        file.length > 32768 ||
+        !file.startsWith('file:///') ||
+        line is! int ||
+        line < 1 ||
+        line > 10000000 ||
+        column is! int ||
+        column < 1 ||
+        column > 10000000) {
+      return null;
+    }
+    final uri = Uri.tryParse(file);
+    if (uri == null ||
+        uri.scheme != 'file' ||
+        uri.host.isNotEmpty ||
+        !uri.hasAbsolutePath ||
+        uri.path.contains('\u0000') ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        file.contains('\u0000')) {
+      return null;
+    }
+    try {
+      final path = uri.toFilePath();
+      if (path.contains('\u0000')) return null;
+      return DebugSourceLocation(path, line, column);
+    } on UnsupportedError {
+      return null;
+    } on ArgumentError {
+      return null;
+    }
+  }
 }

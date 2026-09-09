@@ -10,6 +10,10 @@ import 'package:tabryo/features/editor_context/domain/editor_context.dart';
 import 'package:tabryo/features/editor_context/infrastructure/local_editor_context.dart';
 import 'package:tabryo/features/mcp/application/mcp_hub.dart';
 import 'package:tabryo/features/mcp/domain/mcp_server.dart';
+import 'package:tabryo/features/debugger/application/debug_service.dart';
+import 'package:tabryo/features/debugger/domain/debug_session.dart';
+import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
+import 'package:tabryo/features/projects/domain/project.dart';
 
 // The fixture implements real MCP messages. It has no access to user files or
 // credentials and does not invoke a model. Both transports share its responses.
@@ -109,6 +113,85 @@ void main() {
       }
     }
   });
+
+  test(
+    'installed Codex connects official Dart Flutter MCP to the owned debug session without a model turn',
+    () async {
+      await hub.connect(workspace.path);
+      await hub.apply(
+        hub.configure(
+          McpServerDraft(
+            name: 'dart_flutter',
+            transport: McpTransport.stdio,
+            command: dart,
+            arguments: [
+              'mcp-server',
+              '--dart-sdk',
+              p.dirname(p.dirname(dart!)),
+            ],
+            workingDirectory: workspace.path,
+          ),
+        ),
+      );
+      final official = hub.servers.single;
+      expect(official.tools, contains('dtd'));
+      expect(official.tools, contains('widget_inspector'));
+      expect(official.tools, contains('vm_service'));
+      expect(await config.readAsString(), isNot(contains('ws://')));
+      final root = await workspace.resolveSymbolicLinks();
+      final source = await File(p.join(root, 'app.dart')).writeAsString(
+        "import 'dart:async'; void main() { Timer.periodic(const Duration(seconds: 1), (_) {}); }",
+      );
+      final debug = DebugService(LocalDebugAdapters());
+      try {
+        await debug.start(
+          DebugConfiguration(
+            project: DevelopmentProject(
+              workspace: root,
+              directory: root,
+              name: 'MCP inspection',
+              kind: ProjectKind.dart,
+            ),
+            tools: ToolchainSelection({ProjectTool.dart: dart}),
+            program: source.path,
+          ),
+        );
+        for (
+          var attempt = 0;
+          attempt < 300 && debug.vmService == null;
+          attempt++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(debug.vmService, isNotNull);
+        await debug.openDevTools(external: false);
+        final connected = jsonDecode(
+          await hub.callTool(official, 'dtd', {
+            'command': 'connect',
+            'uri': debug.dtdUri.toString(),
+          }),
+        ) as Map;
+        expect(connected['isError'], isNot(true));
+        final apps = await hub.callTool(official, 'dtd', {
+          'command': 'listConnectedApps',
+        });
+        expect(apps, contains(root.replaceAll('\\', '\\\\')));
+        expect(apps, isNot(contains('"isError": true')));
+        await hub.callTool(official, 'dtd', {
+          'command': 'disconnect',
+          'uri': debug.dtdUri.toString(),
+        });
+        expect(
+          await config.readAsString(),
+          isNot(contains(debug.dtdUri.toString())),
+        );
+      } finally {
+        await debug.dispose();
+      }
+    },
+    skip: enabled ? false : 'Set TABRYO_TEST_CODEX and TABRYO_TEST_DART for isolated Codex protocol tests.',
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
   test(
     'installed Codex preserves TOML, rejects a stale version and removes only the selected server',

@@ -243,6 +243,9 @@ Future<void> expectWeb(
       page: document.body?.innerText.slice(0, 1000).replace(/https?:[^ ]+/g, '[endpoint]'),
       ready: document.readyState,
       compiler: new URL(location.href).searchParams.get('compiler'),
+      webgl: !!document.createElement('canvas').getContext('webgl2'),
+      fonts: document.fonts.status,
+      bootstrapErrors: window.tabryoDevToolsErrors ?? [],
       assets: performance.getEntriesByType('resource').slice(-20).map(e => new URL(e.name).pathname),
       devTools: document.querySelector('flutter-view') ? {
         children: [...document.querySelector('flutter-view').children].map(e => e.tagName),
@@ -1114,7 +1117,7 @@ void main() {
         true,
       );
       await browser.runJavaScript(
-        "document.querySelector('flt-glass-pane')?.shadowRoot?.querySelector('flt-semantics-placeholder')?.click();",
+        "document.querySelector('flt-semantics-placeholder')?.click();",
       );
       await expectWeb(
         tester,
@@ -1131,7 +1134,28 @@ void main() {
         window.editorFailures = [];
         window.addEventListener('error', e => window.editorFailures.push(e.message));
       """);
-      await clickNativeSurface(tester, const Offset(470, 16));
+      await expectWeb(
+        tester,
+        browser,
+        "[...document.querySelectorAll('flt-semantics-host [role=tab]')].some(e => (e.getAttribute('aria-label') ?? e.textContent).includes('Debugger'))",
+        true,
+        attempts: 300,
+      );
+      final tabBounds = jsonDecode(
+        await browser.runJavaScriptReturningResult("""
+        (() => {
+          const tab = [...document.querySelectorAll('flt-semantics-host [role=tab]')].find(e => (e.getAttribute('aria-label') ?? e.textContent).includes('Debugger'));
+          const r = tab.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2];
+        })()
+      """) as String,
+      ) as List;
+      await clickNativeSurface(
+        tester,
+        Offset(
+          (tabBounds[0] as num).toDouble(),
+          (tabBounds[1] as num).toDouble(),
+        ),
+      );
       await expectWeb(
         tester,
         browser,

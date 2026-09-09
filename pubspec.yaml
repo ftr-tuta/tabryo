@@ -53,6 +53,8 @@ dependencies:
   webview_win_floating: 3.0.3
   webview_flutter_platform_interface: 2.15.1
   xml: 6.6.1
+  dtd: 4.0.0
+  vm_service: 15.3.0
 
 dev_dependencies:
   dartitect_lints:

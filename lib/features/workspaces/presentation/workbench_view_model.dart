@@ -45,6 +45,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.debugger,
     this.devToolsProfileDirectory,
   }) {
+    debugger?.onInspectorSource = (location) =>
+        openDebugSource(location.path, location.line, location.column);
     editor?.addListener(_editorChanged);
     editor?.onSaved = (saved) {
       final service = debugger;
@@ -691,6 +693,11 @@ final class WorkbenchViewModel extends DartitectViewModel {
     }
     await _checkProjectDocuments(config.project.directory);
     final root = config.project.workspace;
+    if (_shutdown ||
+        !identical(config, debugger?.configuration) ||
+        workspace?.root != root) {
+      return;
+    }
     final python = config.project.kind == ProjectKind.python;
     if (p.isWithin(root, path)) {
       await openFile(path);
@@ -715,7 +722,13 @@ final class WorkbenchViewModel extends DartitectViewModel {
       );
     }
     final buffer = editor!.active;
-    if (buffer == null) return;
+    if (buffer == null ||
+        !p.equals(buffer.path, path) ||
+        _shutdown ||
+        !identical(config, debugger?.configuration) ||
+        workspace?.root != root) {
+      return;
+    }
     final offset = languageOffset(buffer.controller.text, {
       'line': line - 1,
       'character': column - 1,
@@ -1353,6 +1366,7 @@ final class WorkbenchViewModel extends DartitectViewModel {
   Future<void> shutdown() => _shutdownFuture ??= () async {
     _shutdown = true;
     editor?.onSaved = null;
+    debugger?.onInspectorSource = null;
     await debugger?.dispose();
     await _debugChanges?.cancel();
     _selection?.cancel();

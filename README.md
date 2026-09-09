@@ -470,6 +470,14 @@ breakpoints and reload require debug mode.
 opens a resizable pane for this session's VM service. The pane has a separate
 browser profile, permits navigation only on that server and hides while a dialog
 covers it. Closing the pane keeps the session; Stop closes its DevTools server.
+The session also owns a Dart Tooling Daemon (DTD), registers its VM service and
+restricts DTD file access to that project's root. Its address and owner credential
+remain in memory; stopping the session closes the daemon. **Select widget in app**
+enables the real Flutter Inspector. Selection events navigate to the widget's
+source through the editor's existing document and dependency protections.
+**Open selected widget source** repeats that navigation, and **Exit widget
+selection** returns the application to normal input. These controls require a
+running Flutter debug application with Inspector extensions.
 Debugger output and variables remain in memory, with bounded retained output.
 Adapters and SDKs are not bundled.
 
@@ -482,7 +490,7 @@ are also available as separately reviewed tasks using the project's manage.py.
 Native tests exercise Dart 3.13.2, Flutter 3.47.2, debugpy 1.8.21, Django 6.1.1,
 FastAPI 0.140.6 and uvicorn 0.52.4. `TABRYO_TEST_DEBUG_PYTHON=1` enables the Python
 adapter/framework cases; `TABRYO_TEST_FLUTTER_DEBUG=1` enables the desktop Flutter
-run/reload/restart case, which requires the platform build tools and a graphical
+run/Inspector/source navigation/reload/restart case, which requires the platform build tools and a graphical
 session. Desktop CI runs both on Windows and Ubuntu.
 
 ## Tasks and tests

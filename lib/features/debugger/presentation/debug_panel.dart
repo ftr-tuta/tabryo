@@ -397,6 +397,31 @@ final class _DebugPanelState extends State<DebugPanel> {
             ),
           ],
           if (here) ...[
+            if (widget.project.kind == ProjectKind.flutter &&
+                service.vmService != null)
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: busy
+                        ? null
+                        : () => _act(() => service.selectWidget(true)),
+                    child: const Text('Select widget in app'),
+                  ),
+                  OutlinedButton(
+                    onPressed: busy
+                        ? null
+                        : () => _act(() => service.selectWidget(false)),
+                    child: const Text('Exit widget selection'),
+                  ),
+                  OutlinedButton(
+                    onPressed: busy
+                        ? null
+                        : () => _act(service.openSelectedWidgetSource),
+                    child: const Text('Open selected widget source'),
+                  ),
+                ],
+              ),
             if (service.vmService != null)
               OutlinedButton(
                 onPressed: busy

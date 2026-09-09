@@ -493,7 +493,17 @@ o processo externo ao desconectar. Condições de breakpoint exigem capacidade
 anunciada pelo adaptador; watches descartam resultados após continuação ou troca
 de frame. Diretório e ambiente dos perfis backend têm configuração explícita;
 Flutter oferece flavor, argumentos do SDK e modo conforme suporte do alvo.
-Navegação Flutter via DTD, contexto de testes/sessões e
+DTD próprio registra a VM e limita o acesso de arquivos à raiz do projeto;
+URI e credencial não são persistidas e o encerramento fecha o daemon. O Inspector
+real seleciona widgets e navega pelo evento oficial ToolEvent da VM, usando as
+proteções do editor; teste Flutter Windows cobre seleção, linha de origem,
+reload/restart e encerramento do DTD. A CI de `8bf7b36` confirmou os adaptadores
+e frameworks nos dois sistemas, mas falhou na superfície DevTools: inicialização
+web no Linux e interação de aba no Windows. Correções e diagnóstico permanecem
+em validação; isso não constitui aceite dessas revisões.
+Teste nativo com Codex instalado conecta o MCP oficial Dart/Flutter a esse DTD,
+lista a aplicação e desconecta sem turno de modelo ou URI persistida no TOML.
+Atalho dessa conexão no Hub, contexto de testes/sessões e
 aceites físicos IME/DPI continuam pendentes na matriz Python/Dart/Flutter.
 Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
 seu planejamento independente permanece em CODEX-02. Operações de arquivo em
