@@ -62,12 +62,12 @@ final class LocalCodexConnection implements InteractiveCodexConnection {
       final launchEnvironment = {...Platform.environment, ...?environment};
       // This is an independent client. A Tabryo launched from Codex must not
       // attach its new server to the parent Desktop task's private tools pipe.
+      // CLI permission policy and user configuration still apply to this client.
       for (final name in const [
         'CODEX_APP_TOOLS_PIPE_PATH',
         'CODEX_THREAD_ID',
         'CODEX_SESSION_ID',
         'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
-        'CODEX_PERMISSION_PROFILE',
       ]) {
         launchEnvironment.remove(name);
       }
