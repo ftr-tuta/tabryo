@@ -40,6 +40,16 @@ GtkWidget* MyWebView::getWidget() {
     return m_webview;
 }
 
+void MyWebView::setContainer(GtkWidget* container) {
+    if (container == m_container) return;
+    gtk_widget_hide(m_webview);
+    g_object_ref(m_webview);
+    gtk_container_remove(GTK_CONTAINER(m_container), m_webview);
+    m_container = container;
+    gtk_fixed_put(GTK_FIXED(m_container), m_webview, 0, 0);
+    g_object_unref(m_webview);
+}
+
 gboolean on_decide_policy(WebKitWebView *web_view,
                           WebKitPolicyDecision *decision,
                           WebKitPolicyDecisionType decisionType, 

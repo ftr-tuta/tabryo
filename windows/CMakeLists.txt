@@ -57,6 +57,14 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# View-aware host for the pinned webview_win_floating Dart API. No cache edits.
+get_target_property(WEBVIEW_SOURCE_DIR webview_win_floating_plugin SOURCE_DIR)
+set_property(TARGET webview_win_floating_plugin PROPERTY SOURCES
+  "${CMAKE_CURRENT_SOURCE_DIR}/webview/webview_win_floating_plugin.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/webview/my_webview.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/webview/webview_win_floating_plugin_c_api.cpp")
+target_include_directories(webview_win_floating_plugin PRIVATE "${WEBVIEW_SOURCE_DIR}")
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

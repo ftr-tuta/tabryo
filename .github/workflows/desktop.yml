@@ -29,7 +29,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool
+        # All required packages come from Ubuntu. Unrelated runner repositories
+        # (for example Chrome) can have temporarily inconsistent package indexes.
+        run: |
+          sources=/etc/apt/sources.list.d/ubuntu.sources
+          test -f "$sources"
+          sudo apt-get -o Dir::Etc::sourcelist="$sources" -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist="$sources" -o Dir::Etc::sourceparts=- install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool openbox
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -136,7 +142,7 @@ jobs:
           } else {
             $env:LD_LIBRARY_PATH = "${PWD}/build/linux/x64/debug/bundle/lib:$env:LD_LIBRARY_PATH"
           }
-          flutter test test/collaboration_sessions_test.dart test/codex_sessions_test.dart test/mcp_codex_test.dart --concurrency=1 --name 'installed Codex uses authenticated collaboration MCP|steering reaches the active turn|installed Codex|standalone client'
+          flutter test test/collaboration_sessions_test.dart test/codex_sessions_test.dart test/mcp_codex_test.dart --concurrency=1 --name 'installed Codex uses authenticated collaboration MCP|steering reaches the active turn|installed Codex|native approval is shared|standalone client'
           exit $LASTEXITCODE
       - name: Windows desktop integration
         if: runner.os == 'Windows'
@@ -147,17 +153,19 @@ jobs:
         run: flutter test integration_test/editor_test.dart -d windows
       - name: Linux desktop integration
         if: runner.os == 'Linux'
-        run: xvfb-run -a flutter test integration_test/workbench_test.dart -d linux
+        run: xvfb-run -a sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; flutter test integration_test/workbench_test.dart -d linux'
       - name: Linux embedded editor integration
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded
         env:
           LC_ALL: C
-      - name: Linux HiDPI editor integration
+      - name: Linux HiDPI editor and shared windows integration
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a -s '-screen 0 2560x1600x24' flutter test integration_test/editor_test.dart -d linux --reporter expanded
+        run: |
+          xvfb-run -a -s '-screen 0 2560x1600x24' flutter test integration_test/editor_test.dart -d linux --reporter expanded
+          xvfb-run -a -s '-screen 0 2560x1600x24' sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; flutter test integration_test/workbench_test.dart -d linux --plain-name "shared windows" --reporter expanded'
         env:
           GDK_SCALE: '2'
           GDK_DPI_SCALE: '0.5'
@@ -167,6 +175,16 @@ jobs:
         run: |
           flutter build linux --release -t integration_test/editor_test.dart
           xvfb-run -a build/linux/x64/release/bundle/tabryo
+      - name: Preserve Linux editor integration for Arch compatibility
+        if: runner.os == 'Linux'
+        run: tar -czf "$RUNNER_TEMP/editor-linux.tar.gz" -C build/linux/x64/release/bundle .
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: editor-linux-${{ github.sha }}
+          path: ${{ runner.temp }}/editor-linux.tar.gz
+          retention-days: 7
+          if-no-files-found: error
       - name: Windows Release editor integration
         if: runner.os == 'Windows'
         timeout-minutes: 5
@@ -188,7 +206,17 @@ jobs:
       - name: Linux Release integration and memory
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a build/linux/x64/release/bundle/tabryo
+        run: xvfb-run -a sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; build/linux/x64/release/bundle/tabryo'
+      - name: Preserve Linux workbench integration for Arch compatibility
+        if: runner.os == 'Linux'
+        run: tar -czf "$RUNNER_TEMP/workbench-linux.tar.gz" -C build/linux/x64/release/bundle .
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: workbench-linux-${{ github.sha }}
+          path: ${{ runner.temp }}/workbench-linux.tar.gz
+          retention-days: 7
+          if-no-files-found: error
       - run: flutter build ${{ matrix.device }} --release
       - name: Package Windows
         if: runner.os == 'Windows'
@@ -244,3 +272,79 @@ jobs:
           name: tabryo-${{ matrix.device }}-${{ github.sha }}
           path: tabryo-0.1.0-*
           if-no-files-found: error
+
+  archlinux:
+    name: desktop (archlinux, linux)
+    needs: desktop
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install current signed Arch desktop packages
+        run: |
+          pacman -Syu --noconfirm --needed git curl unzip jq which gtk3 webkit2gtk-4.1 mesa ttf-dejavu xorg-server-xvfb xorg-xauth xdotool openbox dbus
+          useradd --create-home desktop
+          pacman -Q glibc gtk3 webkit2gtk-4.1 mesa
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+          pub-cache-path: /home/desktop/.pub-cache
+      - uses: actions/download-artifact@v4
+        with:
+          name: editor-linux-${{ github.sha }}
+          path: .archlinux/editor
+      - uses: actions/download-artifact@v4
+        with:
+          name: workbench-linux-${{ github.sha }}
+          path: .archlinux/workbench
+      - uses: actions/download-artifact@v4
+        with:
+          name: tabryo-linux-${{ github.sha }}
+          path: .archlinux/release
+      - name: Prepare native integration dependencies as an ordinary user
+        run: |
+          for bundle in editor workbench release; do
+            tar -xzf .archlinux/$bundle/*.tar.gz -C .archlinux/$bundle
+          done
+          mkdir -p "$PUB_CACHE"
+          chown -R desktop:desktop "$GITHUB_WORKSPACE" "$FLUTTER_ROOT" "$PUB_CACHE"
+          runuser -u desktop -- env PATH="$FLUTTER_ROOT/bin:$PATH" bash -euo pipefail <<'TESTS'
+          git config --global --add safe.directory "$FLUTTER_ROOT"
+          flutter config --enable-linux-desktop --no-enable-android
+          flutter pub get --enforce-lockfile
+          TESTS
+      - name: Arch Release editor and DevTools at 100 and 200 percent
+        timeout-minutes: 6
+        run: |
+          runuser -u desktop -- env PATH="$FLUTTER_ROOT/bin:$PATH" bash -euo pipefail <<'TESTS'
+          dbus-run-session -- xvfb-run -a .archlinux/editor/tabryo
+          GDK_SCALE=2 GDK_DPI_SCALE=0.5 dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24' .archlinux/editor/tabryo
+          TESTS
+      - name: Arch Release workbench resources and shared windows
+        timeout-minutes: 6
+        run: |
+          runuser -u desktop -- env PATH="$FLUTTER_ROOT/bin:$PATH" bash -euo pipefail <<'TESTS'
+          dbus-run-session -- xvfb-run -a sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; .archlinux/workbench/tabryo'
+          GDK_SCALE=2 GDK_DPI_SCALE=0.5 dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24' sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; .archlinux/workbench/tabryo'
+          TESTS
+      - name: Arch extracted distribution startup and shutdown
+        run: |
+          runuser -u desktop -- env PATH="$FLUTTER_ROOT/bin:$PATH" bash -euo pipefail <<'TESTS'
+          dbus-run-session -- xvfb-run -a sh -eu -c '
+            cd .archlinux/release
+            ./tabryo & app=$!
+            trap "kill $app 2>/dev/null || true" EXIT
+            sleep 3
+            kill -0 "$app"
+            test -z "$(cat /proc/$app/task/$app/children)"
+            awk "/VmRSS/ {print \"Arch extracted Release app RSS: \" \$2 \" KiB; child processes: 0\"}" /proc/$app/status
+            kill "$app"
+            wait "$app" || test "$?" -eq 143
+          '
+          TESTS

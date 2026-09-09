@@ -1,5 +1,3 @@
-// Derived from webview_win_floating 3.0.3; Copyright 2022 jakky1.
-// BSD-3-Clause; see LICENSE.
 #pragma once
 
 #include <gtk/gtk.h>
@@ -66,6 +64,7 @@ public:
 	void setUserAgent(gchar* userAgent);
 
 	void updateBounds(RECT& bounds);
+    void setContainer(GtkWidget* container);
 	//HRESULT getBounds(RECT& bounds);
 	void setVisible(bool isVisible);
 	void setBackgroundColor(int32_t argb);

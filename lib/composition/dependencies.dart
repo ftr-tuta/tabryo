@@ -36,6 +36,8 @@ import '../features/terminals/infrastructure/native_terminal.dart';
 import '../features/terminals/infrastructure/local_text_clipboard.dart';
 import '../features/workspaces/presentation/workbench_view_model.dart';
 import '../features/codex/infrastructure/local_codex_connection.dart';
+import '../features/codex/application/conversation_service.dart';
+import '../features/git/presentation/git_review_view_model.dart';
 import '../features/mcp/application/mcp_hub.dart';
 import '../features/mcp/presentation/mcp_hub_view_model.dart';
 
@@ -46,6 +48,13 @@ WorkbenchViewModel createWorkbench() {
     cache: cache,
   );
   return WorkbenchViewModel(
+    chat: ConversationService(
+      LocalCodexConnection(
+        executable: findExecutable(['codex.exe', 'codex']),
+        interactive: true,
+      ),
+    ),
+    review: GitReviewViewModel(git, git, git),
     games: GameService(LocalGameWorkspace(), LocalGameProcesses()),
     debugger: DebugService(LocalDebugAdapters()),
     devToolsProfileDirectory: p.join(

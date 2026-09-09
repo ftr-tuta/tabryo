@@ -5,6 +5,7 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 import 'package:webview_win_floating/webview_win_floating.dart';
 
 import '../../../core/web_surface_routes.dart';
+import '../../../core/presentation/native_web_surface.dart';
 
 /// A separate local DevTools surface. It installs no JavaScript channels.
 final class DevToolsPane extends StatefulWidget {
@@ -12,11 +13,13 @@ final class DevToolsPane extends StatefulWidget {
     required this.uri,
     required this.profileDirectory,
     this.visible = true,
+    this.preview = false,
     super.key,
   });
   final Uri uri;
   final String profileDirectory;
   final bool visible;
+  final bool preview;
 
   @override
   State<DevToolsPane> createState() => DevToolsPaneState();
@@ -25,14 +28,20 @@ final class DevToolsPane extends StatefulWidget {
 final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   WinWebViewController? _browser;
   ModalRoute<dynamic>? _route;
+  WebSurfaceRouteObserver _routes = editorRoutes;
   bool _covered = false;
+  bool _presentationEnabled = true;
   bool _ready = false;
   bool _documentReady = false;
   String? _error;
   Timer? _timeout;
   int _opening = 0;
   bool get surfaceVisible =>
-      _documentReady && _error == null && !_covered && widget.visible;
+      _documentReady &&
+      _error == null &&
+      !_covered &&
+      widget.visible &&
+      _presentationEnabled;
 
   @override
   void initState() {
@@ -44,8 +53,8 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
     final opening = ++_opening;
     bool current() => mounted && opening == _opening;
     final uri = widget.uri;
-    if (uri.scheme != 'http' ||
-        uri.host != '127.0.0.1' ||
+    if (!(uri.scheme == 'http' || widget.preview && uri.scheme == 'https') ||
+        !['127.0.0.1', 'localhost', '::1', '[::1]'].contains(uri.host) ||
         uri.port == 0 ||
         uri.userInfo.isNotEmpty) {
       _fail();
@@ -58,7 +67,7 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
       final browser = WinWebViewController(
         params: WindowsWebViewControllerCreationParams(
           userDataFolder: widget.profileDirectory,
-          profileName: 'TabryoDevTools',
+          profileName: widget.preview ? 'TabryoPreview' : 'TabryoDevTools',
         ),
       );
       _browser = browser;
@@ -70,6 +79,7 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
         WinNavigationDelegate(
           onPageStarted: (_) {
             if (!current()) return;
+            if (widget.preview) return;
             unawaited(
               browser
                   .runJavaScript("""
@@ -107,7 +117,12 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
             }
             setState(() => _documentReady = true);
             _visibility();
-            unawaited(_waitForApplication(browser, opening));
+            if (widget.preview) {
+              _timeout?.cancel();
+              setState(() => _ready = true);
+            } else {
+              unawaited(_waitForApplication(browser, opening));
+            }
           },
           onWebResourceError: (error) {
             if (current() && error.isForMainFrame == true) _fail();
@@ -149,7 +164,9 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
     _timeout?.cancel();
     setState(() {
       _ready = false;
-      _error = 'DevTools could not load. The debug session remains available.';
+      _error = widget.preview
+          ? 'The local preview could not load.'
+          : 'DevTools could not load. The debug session remains available.';
     });
     unawaited(_browser?.setVisibility(false));
   }
@@ -186,11 +203,14 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _presentationEnabled = TickerMode.valuesOf(context).enabled;
     final route = ModalRoute.of(context);
-    if (_route != route) {
-      editorRoutes.unsubscribe(this);
+    final routes = WebSurfaceRoutes.of(context);
+    if (_route != route || _routes != routes) {
+      _routes.unsubscribe(this);
+      _routes = routes;
       _route = route;
-      if (route != null) editorRoutes.subscribe(this, route);
+      if (route != null) _routes.subscribe(this, route);
     }
     _covered = _route?.isCurrent != true;
     _visibility();
@@ -216,7 +236,7 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   @override
   void didPopNext() {
     unawaited(
-      editorRoutes.settled.then((_) {
+      _routes.settled.then((_) {
         if (!mounted) return;
         _covered = _route?.isCurrent != true;
         _visibility();
@@ -228,7 +248,7 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   void dispose() {
     ++_opening;
     _timeout?.cancel();
-    editorRoutes.unsubscribe(this);
+    _routes.unsubscribe(this);
     unawaited(_browser?.setVisibility(false));
     unawaited(_browser?.dispose());
     super.dispose();
@@ -238,17 +258,30 @@ final class DevToolsPaneState extends State<DevToolsPane> with RouteAware {
   Widget build(BuildContext context) => Stack(
     children: [
       if (_browser != null)
-        Positioned.fill(child: WinWebViewWidget(controller: _browser!)),
+        Positioned.fill(
+          child: NativeWebSurface(
+            controller: _browser!,
+            visible: surfaceVisible && TickerMode.valuesOf(context).enabled,
+            onError: _fail,
+          ),
+        ),
       if (!_ready)
         Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_error ?? 'Loading local DevTools…'),
+              Text(
+                _error ??
+                    (widget.preview
+                        ? 'Loading local preview…'
+                        : 'Loading local DevTools…'),
+              ),
               if (_error != null)
                 TextButton(
                   onPressed: _retry,
-                  child: const Text('Reconnect DevTools'),
+                  child: Text(
+                    widget.preview ? 'Reload preview' : 'Reconnect DevTools',
+                  ),
                 ),
             ],
           ),

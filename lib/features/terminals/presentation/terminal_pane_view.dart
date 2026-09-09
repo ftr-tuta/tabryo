@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:xterm2/xterm.dart';
 
 import '../../preferences/domain/preferences.dart';
+import '../../preferences/presentation/workbench_theme.dart';
 import 'terminal_session.dart';
 
 final class TerminalPaneView extends StatefulWidget {
@@ -37,6 +38,7 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
   final _scroll = ScrollController();
   final _query = TextEditingController();
   bool _searching = false;
+  bool _visible = false;
   int _matchIndex = 0;
   List<TerminalSearchMatch> _matches = [];
   @override
@@ -50,10 +52,18 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
     if (_focus.hasFocus) widget.onFocus();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible && !_visible) _requestFocus();
+    _visible = visible;
+  }
+
   void _requestFocus() {
     if (widget.focused) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _focus.requestFocus();
+        if (mounted && _visible && widget.focused) _focus.requestFocus();
       });
     }
   }
@@ -259,7 +269,7 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
               fontFamily: widget.preferences.fontFamily,
               fontSize: widget.preferences.fontSize,
             ),
-            theme: TerminalThemes.defaultTheme,
+            theme: terminalTheme(context),
             padding: const EdgeInsets.all(8),
             onKeyEvent: _key,
             shortcuts: const <ShortcutActivator, Intent>{},

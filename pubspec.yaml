@@ -55,6 +55,8 @@ dependencies:
   xml: 6.6.1
   dtd: 4.0.0
   vm_service: 15.3.0
+  multiview_desktop: 1.2.2
+  flutter_markdown_plus: 1.0.12
 
 dev_dependencies:
   dartitect_lints:

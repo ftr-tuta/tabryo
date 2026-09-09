@@ -14,6 +14,8 @@ import '../../mcp_studio/domain/studio_project.dart';
 import '../../mcp_studio/presentation/mcp_studio_view_model.dart';
 import '../../files/domain/workspace_files.dart';
 import '../../git/domain/git_ports.dart';
+import '../../git/presentation/git_review_view_model.dart';
+import '../../codex/application/conversation_service.dart';
 import '../../preferences/domain/preferences.dart';
 import '../../projects/domain/project.dart';
 import '../../projects/presentation/projects_view_model.dart';
@@ -31,6 +33,8 @@ import '../../terminals/presentation/terminal_session.dart';
 import '../domain/workspace.dart';
 
 enum SidebarPage { files, changes, history, worktrees }
+
+enum WorkbenchActivity { develop, converse, review }
 
 final class WorkbenchViewModel extends DartitectViewModel {
   WorkbenchViewModel({
@@ -50,7 +54,26 @@ final class WorkbenchViewModel extends DartitectViewModel {
     this.debugger,
     this.games,
     this.devToolsProfileDirectory,
+    this.chat,
+    this.review,
   }) {
+    _chatChanges = chat?.changes.listen((_) {
+      for (final conversation in chat!.conversations.values) {
+        if (_draftsRestored.add(conversation.id)) {
+          conversation.draft =
+              preferences.chatDrafts[conversation.id] ?? conversation.draft;
+        }
+      }
+      final pending = chat!.conversations.values.fold(
+        0,
+        (count, conversation) => count + conversation.requests.length,
+      );
+      if (pending != chatPending) {
+        chatPending = pending;
+        if (!_shutdown) notifyListeners();
+      }
+    });
+    review?.addListener(_editorChanged);
     _gameChanges = games?.changes.listen((_) {
       if (!_shutdown) notifyListeners();
     });
@@ -103,6 +126,35 @@ final class WorkbenchViewModel extends DartitectViewModel {
     });
   }
   final PtyHost host;
+  final ConversationService? chat;
+  int chatPending = 0;
+  final GitReviewViewModel? review;
+  StreamSubscription<void>? _chatChanges;
+  Timer? _draftSave;
+  final _draftsRestored = <String>{};
+  void saveChatDrafts() {
+    _draftSave?.cancel();
+    _draftSave = Timer(const Duration(milliseconds: 500), () {
+      _captureDrafts();
+      unawaited(_save());
+    });
+  }
+
+  void _captureDrafts() {
+    final drafts = {...preferences.chatDrafts};
+    for (final conversation in chat?.conversations.values ?? <Conversation>[]) {
+      drafts.remove(conversation.id);
+      if (conversation.draft.isNotEmpty) {
+        drafts[conversation.id] = conversation.draft;
+      }
+    }
+    preferences = preferences.copyWith(
+      chatDrafts: Map.fromEntries(
+        drafts.entries.toList().reversed.take(30).toList().reversed,
+      ),
+    );
+  }
+
   final ProjectsViewModel? projects;
   final TasksViewModel? tasks;
   final DebugService? debugger;
@@ -559,6 +611,49 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final McpStudioViewModel? studio;
   final CollaborationViewModel? collaboration;
   bool editing = false;
+  WorkbenchActivity activity = WorkbenchActivity.develop;
+  bool settingsOpen = false;
+  void selectActivity(WorkbenchActivity value) {
+    activity = value;
+    settingsOpen = false;
+    _preferencesPreview = null;
+    if (value == WorkbenchActivity.review && workspace != null) {
+      unawaited(review?.selectWorkspace(workspace!.root));
+    }
+    _visibility();
+    notifyListeners();
+  }
+
+  void showSettings(bool value) {
+    settingsOpen = value;
+    if (!value) _preferencesPreview = null;
+    _visibility();
+    notifyListeners();
+  }
+
+  Map<String, Object?> get activityLayout =>
+      preferences.activityLayouts[activity.name] ?? const {};
+  void updateActivityLayout(Map<String, Object?> values) {
+    preferences = preferences.copyWith(
+      activityLayouts: {
+        ...preferences.activityLayouts,
+        activity.name: {...activityLayout, ...values},
+      },
+    );
+    notifyListeners();
+    unawaited(_save());
+  }
+
+  void updateWindowLayout(String category, Map<String, Object?> values) {
+    preferences = preferences.copyWith(
+      activityLayouts: {
+        ...preferences.activityLayouts,
+        'window.$category': values,
+      },
+    );
+    unawaited(_save());
+  }
+
   final _studioRuns = <String, int>{};
   final _projectRuns = <String, int>{};
   void _editorChanged() {
@@ -566,6 +661,9 @@ final class WorkbenchViewModel extends DartitectViewModel {
   }
 
   void showEditor(bool value) {
+    activity = WorkbenchActivity.develop;
+    settingsOpen = false;
+    _preferencesPreview = null;
     editing = value;
     _visibility();
     notifyListeners();
@@ -575,6 +673,13 @@ final class WorkbenchViewModel extends DartitectViewModel {
   final sessions = <int, TerminalSession>{};
   final restoredSessions = <int, String>{};
   Preferences preferences = const Preferences();
+  Preferences? _preferencesPreview;
+  Preferences get displayPreferences => _preferencesPreview ?? preferences;
+  void previewPreferences(Preferences? value) {
+    _preferencesPreview = value;
+    notifyListeners();
+  }
+
   int activeWorkspace = 0;
   int? focusedSession;
   SidebarPage sidebar = SidebarPage.files;
@@ -775,6 +880,11 @@ final class WorkbenchViewModel extends DartitectViewModel {
     _preview?.cancel();
     final cancellation = _selection = Cancellation();
     final current = workspace;
+    if (activity == WorkbenchActivity.review &&
+        current != null &&
+        review?.loading != true) {
+      await review?.selectWorkspace(current.root);
+    }
     repository = null;
     changes = [];
     worktrees = [];
@@ -1649,7 +1759,8 @@ final class WorkbenchViewModel extends DartitectViewModel {
   }
 
   void _visibility() {
-    final visible = editing
+    final visible =
+        editing || activity != WorkbenchActivity.develop || settingsOpen
         ? const <int>[]
         : tab?.panes.sessions ?? const <int>[];
     for (final entry in sessions.entries) {
@@ -1657,9 +1768,10 @@ final class WorkbenchViewModel extends DartitectViewModel {
     }
   }
 
-  void selectTab(int index) {
-    workspace?.activeTab = index;
-    focusedSession = tab?.panes.sessions.firstOrNull;
+  void selectTab(int index, {Workspace? owner}) {
+    final target = owner ?? workspace;
+    target?.activeTab = index;
+    focusedSession = target?.selectedTab?.panes.sessions.firstOrNull;
     _visibility();
     notifyListeners();
     unawaited(guarded(_save));
@@ -1929,6 +2041,13 @@ final class WorkbenchViewModel extends DartitectViewModel {
   Future<void>? _shutdownFuture;
   Future<void> shutdown() => _shutdownFuture ??= () async {
     _shutdown = true;
+    _draftSave?.cancel();
+    _captureDrafts();
+    await _save();
+    await _chatChanges?.cancel();
+    await chat?.close();
+    review?.removeListener(_editorChanged);
+    await review?.disposeAsync();
     tasks?.removeListener(_taskContextChanged);
     editor?.onSaved = null;
     editor?.captureProjectContext = null;

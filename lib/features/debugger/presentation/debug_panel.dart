@@ -549,14 +549,13 @@ final class _DebugPanelState extends State<DebugPanel> {
               DropdownButton<String>(
                 value: device,
                 hint: const Text('Choose a device'),
-                items: devices
-                    .map(
-                      (d) => DropdownMenuItem(
-                        value: d.id,
-                        child: Text('${d.name} · ${d.platform}'),
-                      ),
-                    )
-                    .toList(),
+                items: [
+                  for (final d in devices)
+                    DropdownMenuItem(
+                      value: d.id,
+                      child: Text('${d.name} · ${d.platform}'),
+                    ),
+                ],
                 onChanged: busy || service.active
                     ? null
                     : (v) => setState(() => device = v),

@@ -1,7 +1,7 @@
 # Tabryo
 
 A local desktop workbench for shells, the installed Codex CLI, files, Git and
-worktrees. Target platforms: Windows 11 x64 and Ubuntu 24.04 x64.
+worktrees. Target platforms: Windows 11 x64, Ubuntu 24.04 x64 and Arch Linux x64.
 
 ## Install
 
@@ -18,6 +18,8 @@ Ubuntu 24.04 requires a graphical session and the GTK/OpenGL runtime:
 `sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libstdc++6 libgl1`.
 The [Ubuntu GTK package](https://packages.ubuntu.com/noble/libgtk-3-0t64)
 provides its dependent desktop libraries. Git and Codex are separate installations.
+Arch Linux uses the same Linux archive with `gtk3`, `webkit2gtk-4.1` and `mesa`
+from its official repositories (`sudo pacman -Syu gtk3 webkit2gtk-4.1 mesa`).
 
 Compare `Get-FileHash <archive> -Algorithm SHA256` on Windows or run
 `sha256sum --check SHA256SUMS` after downloading both archives on Linux.
@@ -61,16 +63,19 @@ ship inside the application and are served on a private loopback endpoint;
 editing needs no CDN or internet connection. The embedded surface hides during
 Flutter dialogs and inactive activities. Language intelligence can be started
 explicitly from **Projects and toolchains → Language intelligence**.
-The native editor scenario passes in Debug and Release on Windows and Ubuntu
-24.04, including reconnection and Dart formatting. The
-[desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/runs/34247734251)
-also passes terminal/workbench integration, packaging and extracted-bundle startup
-and shutdown on both platforms. Composition-aware synchronization waits for IME
+The [desktop CI qualification](https://github.com/ftr-tuta/tabryo/actions/workflows/desktop.yml)
+exercises the native editor in Debug and Release on Windows and Ubuntu 24.04,
+including reconnection and Dart formatting, terminal/workbench integration,
+packaging and extracted-bundle startup and shutdown. An Arch Linux container
+runs the same Linux Release editor, workbench and distribution binaries with
+current signed Arch packages, as an ordinary desktop user.
+Composition-aware synchronization waits for IME
 commit and preserves composing text when a host replacement arrives. Native
 tests exercise browser composition events and viewport dimensions. Linux GTK
 bounds convert physical pixels to logical coordinates, with a dedicated 200%
-scale CI case. Physical IME candidate windows and moving between monitors with
-different scales still need desktop acceptance; the full IDE matrix is unfinished.
+scale CI case. Automated composition and 100%/150%/200% geometry checks cover the
+input and positioning contracts. Physical IME candidate windows and moving
+between real monitors remain additional coverage, not prerequisites for release.
 It retains up to 12 open documents, each within 512 KiB; an oversized edit is
 refused without truncating the buffer. Binary, invalid UTF-8, mixed-newline and
 larger files use bounded read-only previews. **Document actions** can compare
@@ -125,6 +130,43 @@ and offer a disk comparison. F5 also refreshes open documents with watching off.
 Input arriving while a replacement crosses the native bridge is retained and
 requires an explicit **Keep local edits** or reload choice before saving.
 Terminal output cannot silently access the clipboard, open links or download files.
+
+## Activities, appearance and shared windows
+
+**Develop**, **Converse** and **Review** share the same workspace and open buffers.
+Use Ctrl+Alt+1/2/3 to change activity, Ctrl+B to toggle navigation and Ctrl+Alt+M
+to maximize the main area. The command palette also restores the activity layout.
+Drag the panel dividers to resize them; narrow windows use a navigation popup and
+tool tabs. **Settings** opens a tab with category search, System/Light/Dark modes,
+Tabryo/Ocean/Violet presets and independent advanced colors for each mode.
+Previewing is temporary; **Apply**, **Cancel**, contrast correction and restoration
+keep the existing persistence choices in control.
+
+**Review** groups conflicts, staged, unstaged and untracked files. History starts
+at the current branch, supports filters and loads pages from pinned commit IDs.
+Choose a commit, a merge parent or two references, then a file for the shared
+Monaco diff. Local staged and unstaged versions remain distinct. F5 checks the
+current comparison for disk, index or reference changes; historical pages retain
+their original anchors until the history is refreshed.
+
+**Converse** starts the installed Codex CLI's App Server only after **Connect CLI**
+or **New conversation**. The CLI supplies models, permissions, account limits and
+history. Direct chat messages are separate from collaboration envelopes. Only
+conversations created by this client are controlled. An idle conversation marked
+by the CLI as a Tabryo chat offers explicit resumption after reopening Tabryo;
+external and collaboration sessions remain history only. Reconnection reconciles item IDs and uncertain
+sends without automatic replay. Context is attached only through explicit review.
+Up to 200 recent turns, 2,000 items and 2 MiB of text per conversation are retained for display;
+the CLI keeps the full history. Draft persistence follows remembered preferences.
+
+Execution, DevTools and a chosen local web preview can **Open in window**,
+**Bring to front** or **Return to panel**. Each category has at most one detached
+window and keeps its original workspace/session. Closing an auxiliary window
+returns its content without stopping the process. Windows share one Flutter
+engine and isolate (`multiview_desktop` 1.2.2); moving a WebView preserves its
+controller and profile through the local Windows/Linux host adapters. Preview
+requires an explicit loopback URL and uses a separate profile without editor
+bridges. Saved disposition never starts a command or service on its own.
 
 ## Projects and toolchains
 
@@ -365,9 +407,9 @@ after configuration changes. Disabling/removing a definition does not revoke
 credentials at its provider. Server-initiated approvals and elicitation forms are
 explicitly refused in this initial inspector; use the Codex terminal for those
 flows. Authenticated remote provider flows remain unqualified.
-The editor can now publish a reviewed excerpt through its local MCP endpoint;
-graphical Codex conversations remain planned.
-see [metas e objetivos](TABRYO_METAS_E_OBJETIVOS.adoc).
+The editor can publish a reviewed excerpt through its local MCP endpoint;
+direct graphical conversations use **Converse**, with their own approval flow.
+See [metas e objetivos](TABRYO_METAS_E_OBJETIVOS.adoc).
 
 The native `test/mcp_codex_test.dart` checks the real App Server with disposable
 configuration and local STDIO/HTTP fixtures, without invoking a model or using
@@ -600,8 +642,8 @@ stays in collaboration history after the editor endpoint is revoked.
 
 **Revoke editor context**, closing the source document, changing workspace and
 closing Tabryo revoke the endpoint. Clients cannot browse arbitrary files or
-apply edits through MCP. The endpoint is local and temporary; remote exposure and
-graphical agent conversations remain outside this slice.
+apply edits through MCP. The endpoint is local and temporary; remote exposure
+remains outside this slice. **Converse** also supports explicitly attached context.
 Native tests cover authentication, revocation, stale edits, real Codex MCP calls
 and Monaco review/undo without invoking a model.
 
@@ -830,10 +872,14 @@ flutter build windows --release
 Use Node.js 22 or newer to bundle the pinned editor before Flutter builds.
 On Ubuntu install Flutter's Linux desktop dependencies plus `libwebkit2gtk-4.1-dev`, use `-d linux` and
 `flutter build linux --release`. Native editor keyboard tests also require
-`xdotool`; headless integration tests use `xvfb-run -a`.
+`xdotool`; headless integration tests use `xvfb-run -a` and Openbox for native
+focus, minimization and shared-window behavior.
 The Desktop workflow runs the native tests and packages the entire Release
-bundle on both operating systems. Distribute every file in the bundle, not just
-the executable. Builds are unsigned.
+bundle on Windows and Ubuntu. Arch Linux then runs those Linux Release
+integration binaries at 100% and 200%, followed by the extracted distribution;
+this checks compatibility of the archive actually distributed. Its GTK/WebKit
+versions are recorded in the job output. Distribute every file in the bundle,
+not just the executable. Builds are unsigned.
 
 ## Limits and release status
 
@@ -846,7 +892,8 @@ startup of extracted bundles without child processes. See the
 
 Real Codex CLI interaction was accepted on Windows 11: TUI, accented input,
 resizing, an approval interaction and Ctrl+C. Linux validation is automated on
-Ubuntu 24.04 with Xvfb; it is not manual desktop or authenticated Codex acceptance.
+Ubuntu 24.04 and Arch Linux with Xvfb. These checks qualify the automated release
+matrix without claiming manual desktop or authenticated Codex acceptance.
 
 Release observations on Windows 11 (Flutter 3.47.2, September 2026): the actual
 empty app used 104.7 MiB working set. The Release desktop integration entrypoint
@@ -869,7 +916,7 @@ Native input is limited to 256 KiB per session and 2 MiB across sessions;
 a rejected paste is reported without silently truncating it. File previews stop
 at 512 KiB; the shared file/Git preview cache is limited to 24 MiB. Git reads are
 bounded and cancellable, with two readers globally and one writer per common Git
-directory. History retains one page of 100 commits. Per-tab splits are limited
+directory. History loads 100 commits per page and retains at most 2,000. Per-tab splits are limited
 to four panes. Working-set targets require measurement on Release builds and
 are not guarantees derived from these bounds.
 

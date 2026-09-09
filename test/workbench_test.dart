@@ -11,6 +11,7 @@ import 'package:tabryo/features/collaboration/presentation/collaboration_view_mo
 import 'package:tabryo/features/files/domain/workspace_files.dart';
 import 'package:tabryo/features/git/domain/git_ports.dart';
 import 'package:tabryo/features/preferences/domain/preferences.dart';
+import 'package:tabryo/features/preferences/domain/appearance.dart';
 import 'package:tabryo/features/terminals/domain/terminal_ports.dart';
 import 'package:tabryo/features/terminals/presentation/terminal_session.dart';
 import 'package:tabryo/features/workspaces/domain/workspace.dart';
@@ -360,7 +361,7 @@ void main() {
   testWidgets('toolbar and keyboard create and split only after gestures', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.physicalSize = const Size(640, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -371,6 +372,18 @@ void main() {
     await model.openWorkspace(root);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    final palette = find.byTooltip('Command palette (Ctrl+Shift+P)');
+    expect(palette.hitTestable(), findsNothing);
+    await tester.ensureVisible(palette);
+    await tester.pumpAndSettle();
+    await tester.tap(palette);
+    await tester.pumpAndSettle();
+    expect(find.text('Command palette'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(host.specs, isEmpty);
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Shell'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, 'Shell'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -389,4 +402,34 @@ void main() {
     await closing;
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'settings preview cancels without persistence and activities retain sessions',
+    (tester) async {
+      await tester.pumpWidget(TabryoApp(createViewModel: () => model));
+      await tester.pumpAndSettle();
+      await model.openWorkspace(root);
+      await model.openTerminal();
+      final session = model.activeSession;
+      model.showSettings(true);
+      await tester.pumpAndSettle();
+      final writes = preferences.writes;
+      await tester.tap(find.text('Violet'));
+      await tester.pumpAndSettle();
+      expect(model.displayPreferences.appearance.preset, ThemePreset.violet);
+      expect(model.preferences.appearance.preset, ThemePreset.tabryo);
+      expect(preferences.writes, writes);
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(model.displayPreferences.appearance.preset, ThemePreset.tabryo);
+      model.selectActivity(WorkbenchActivity.converse);
+      model.selectActivity(WorkbenchActivity.review);
+      model.selectActivity(WorkbenchActivity.develop);
+      await tester.pumpAndSettle();
+      expect(model.sessions.values, [session]);
+      expect(host.specs, hasLength(1));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }

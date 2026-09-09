@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tabryo/features/codex/domain/codex_connection.dart';
 import 'package:tabryo/features/codex/application/codex_session.dart';
+import 'package:tabryo/features/codex/application/conversation_service.dart';
+import 'package:tabryo/features/codex/infrastructure/local_codex_connection.dart';
 import 'package:tabryo/features/codex/infrastructure/websocket_codex_connection.dart';
 import 'package:terminal_host/terminal_host.dart';
 import 'package:tabryo/features/terminals/presentation/terminal_session.dart';
@@ -66,6 +68,7 @@ void main() {
   Future<Uri> startServer(
     String name, {
     bool live = false,
+    bool launch = true,
     List<String> disabledServers = const [],
   }) async {
     final workspace = await Directory(p.join(temporary.path, name)).create();
@@ -173,6 +176,7 @@ supports_websockets = false
 [projects.${jsonEncode(workspace.path)}]
 trust_level = "trusted"
 ''');
+    if (!launch) return Uri();
     final reservation = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,
       0,
@@ -523,6 +527,83 @@ trust_level = "trusted"
       );
       expect(received, contains('message-124'));
       expect(received, contains('ação 🌱'));
+    },
+    skip: codex == null
+        ? 'Set TABRYO_TEST_CODEX for native App Server tests.'
+        : false,
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
+
+  test(
+    'installed Codex graphical chat uses local streaming and authoritative history',
+    () async {
+      await startServer('graphical', launch: false);
+      final root = p.join(temporary.path, 'graphical');
+      final connection = LocalCodexConnection(
+        executable: codex,
+        interactive: true,
+        environment: {
+          'CODEX_HOME': p.join(root, 'codex'),
+          'OPENAI_API_KEY': '',
+        },
+      );
+      final service = ConversationService(connection);
+      addTearDown(service.close);
+      final thread = await service.create(root);
+      expect(thread.controlled, isTrue);
+      expect(thread.configuration['approvalPolicy'], 'on-request');
+      final done = connection.events.firstWhere(
+        (e) => e.method == 'turn/completed',
+      );
+      service.draft(thread.id, 'Direct user request ação');
+      await service.send(thread.id, thread.draft);
+      expect(service.error, isNull);
+      await done.timeout(const Duration(seconds: 30));
+      await service.select(thread.id);
+      expect(
+        thread.items.values
+            .where((item) => item['type'] == 'agentMessage')
+            .map(itemText)
+            .join(),
+        contains('checkpoint ready'),
+      );
+      expect(
+        thread.items.values
+            .where((item) => item['type'] == 'userMessage')
+            .map(itemText)
+            .join(),
+        contains('Direct user request ação'),
+      );
+      final messages = thread.items.keys.toSet();
+      await service.select(thread.id);
+      expect(thread.items.keys.toSet(), messages);
+      await service.list(root);
+      expect(service.conversations.keys, contains(thread.id));
+      expect(modelInputs['graphical'], hasLength(1));
+      await service.close();
+      final reopened = ConversationService(
+        LocalCodexConnection(
+          executable: codex,
+          interactive: true,
+          environment: {
+            'CODEX_HOME': p.join(root, 'codex'),
+            'OPENAI_API_KEY': '',
+          },
+        ),
+      );
+      addTearDown(reopened.close);
+      await reopened.list(root);
+      await reopened.select(thread.id);
+      expect(reopened.selected!.resumable, isTrue);
+      expect(reopened.selected!.controlled, isFalse);
+      await reopened.resumeCreatedConversation(thread.id);
+      expect(reopened.selected!.controlled, isTrue);
+      final resumedTurn = reopened.connection.events.firstWhere(
+        (e) => e.method == 'turn/completed',
+      );
+      await reopened.send(thread.id, 'Continue the conversation');
+      await resumedTurn.timeout(const Duration(seconds: 30));
+      expect(modelInputs['graphical'], hasLength(2));
     },
     skip: codex == null
         ? 'Set TABRYO_TEST_CODEX for native App Server tests.'

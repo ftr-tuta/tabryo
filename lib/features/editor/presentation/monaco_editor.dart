@@ -11,6 +11,9 @@ import '../domain/editor_assets.dart';
 import 'editor_view_model.dart';
 import '../../../core/cancellation.dart';
 import '../../../core/web_surface_routes.dart';
+import '../../../core/presentation/native_web_surface.dart';
+import '../../preferences/presentation/workbench_theme.dart';
+import '../../git/domain/git_ports.dart';
 import '../../language/domain/language_server.dart';
 export '../../../core/web_surface_routes.dart' show editorRoutes;
 
@@ -21,9 +24,20 @@ final class EditorShortcutIntent extends Intent {
 
 /// One web surface holds all models, so activity switches keep native undo state.
 final class MonacoEditor extends StatefulWidget {
-  const MonacoEditor({required this.model, required this.visible, super.key});
+  const MonacoEditor({
+    required this.model,
+    required this.visible,
+    this.reviewMode = false,
+    this.reviewDiff,
+    this.sideBySide = true,
+    this.diffNavigation = 0,
+    super.key,
+  });
   final EditorViewModel model;
   final bool visible;
+  final bool reviewMode, sideBySide;
+  final GitFileDiff? reviewDiff;
+  final int diffNavigation;
   @override
   State<MonacoEditor> createState() => MonacoEditorState();
 }
@@ -44,6 +58,10 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   Timer? _loadTimeout;
   int _opening = 0;
   int _request = 0;
+  String? _reviewIdentity;
+  String? _themeIdentity;
+  bool _reviewVisible = false;
+  int _diffNavigation = 0;
   final _documents = <EditorBuffer, _WebDocument>{};
   final _pending = <int, Completer<void>>{};
   final _languageRequests = <int, Cancellation>{};
@@ -160,6 +178,9 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
       _documents.clear();
       _comparison = null;
       _comparisonDocument = null;
+      _reviewIdentity = null;
+      _themeIdentity = null;
+      _reviewVisible = false;
     });
     await WidgetsBinding.instance.endOfFrame;
     try {
@@ -260,6 +281,37 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   Future<void> _syncDocuments() async {
     final revision = _syncRevision;
     try {
+      final colors = Theme.of(context).colorScheme;
+      final semantic = WorkbenchColors.of(context);
+      if (_reviewVisible &&
+          (!widget.reviewMode || widget.reviewDiff?.textual != true)) {
+        await _send({'type': 'closeReview'});
+        _reviewVisible = false;
+        _reviewIdentity = null;
+        _comparisonDocument = null;
+      }
+      String hex(Color color) =>
+          '#${color.toARGB32().toRadixString(16).substring(2)}';
+      final theme = <String, Object?>{
+        'type': 'theme',
+        'dark': colors.brightness == Brightness.dark,
+        'colors': {
+          'editor.background': hex(colors.surface),
+          'editor.foreground': hex(colors.onSurface),
+          'editorLineNumber.foreground': hex(colors.onSurfaceVariant),
+          'editorCursor.foreground': hex(semantic.focus),
+          'focusBorder': hex(semantic.focus),
+          'editor.selectionBackground': '${hex(colors.primary)}55',
+          'diffEditor.insertedTextBackground': '${hex(semantic.added)}33',
+          'diffEditor.removedTextBackground': '${hex(semantic.removed)}33',
+        },
+      };
+      final themeIdentity = jsonEncode(theme);
+      if (_themeIdentity != themeIdentity) {
+        await _browser!.setBackgroundColor(colors.surface);
+        await _send(theme);
+        _themeIdentity = themeIdentity;
+      }
       _languageActions.removeWhere(
         (_, action) =>
             !model.buffers.contains(action.buffer) ||
@@ -334,10 +386,11 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
         'type': 'sync',
         'documents': documents,
         'active': _documents[model.active]?.id,
-        'dark': Theme.of(context).brightness == Brightness.dark,
+        'dark': colors.brightness == Brightness.dark,
       });
-      if (_comparison != model.active?.diskText ||
-          _comparisonDocument != model.active) {
+      if (!widget.reviewMode &&
+          (_comparison != model.active?.diskText ||
+              _comparisonDocument != model.active)) {
         _comparisonDocument = model.active;
         _comparison = model.active?.diskText;
         await _send(
@@ -345,6 +398,29 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
               ? {'type': 'command', 'command': 'closeDiff'}
               : {'type': 'compare', 'text': _comparison},
         );
+      }
+      final review = widget.reviewDiff;
+      final reviewIdentity =
+          '${review?.path}:${review?.identity}:${widget.sideBySide}';
+      if (widget.reviewMode && review?.textual == true) {
+        if (_reviewIdentity != reviewIdentity || !_reviewVisible) {
+          await _send({
+            'type': 'reviewDiff',
+            'original': review!.original.text,
+            'modified': review.modified.text,
+            'path': review.path,
+            'sideBySide': widget.sideBySide,
+          });
+          _reviewIdentity = reviewIdentity;
+          _reviewVisible = true;
+        }
+        if (_diffNavigation != widget.diffNavigation) {
+          await _send({
+            'type': 'diffNavigate',
+            'forward': widget.diffNavigation > _diffNavigation,
+          });
+          _diffNavigation = widget.diffNavigation;
+        }
       }
       final visible = _ready && widget.visible && !_covered;
       if (visible != _presented) await _browser?.setVisibility(visible);
@@ -967,7 +1043,13 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
   Widget build(BuildContext context) => Stack(
     children: [
       if (_browser != null)
-        Positioned.fill(child: WinWebViewWidget(controller: _browser!)),
+        Positioned.fill(
+          child: NativeWebSurface(
+            controller: _browser!,
+            visible: _ready && widget.visible && !_covered,
+            onError: _fail,
+          ),
+        ),
       if (!_ready)
         Center(
           child: Column(

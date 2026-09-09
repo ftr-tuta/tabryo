@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
+import 'package:crypto/crypto.dart';
 
 import '../../../core/cancellation.dart';
 import '../../../core/preview_cache.dart';
@@ -25,7 +26,7 @@ final class _Result {
   String get text => utf8.decode(output);
 }
 
-final class LocalGit implements GitReader, GitMutator {
+final class LocalGit implements GitReader, GitReviewReader, GitMutator {
   LocalGit({
     required this.executable,
     required this.cache,
@@ -329,6 +330,372 @@ final class LocalGit implements GitReader, GitMutator {
     ], cancellation: cancellation)).text;
     cache.put(key, text);
     return text;
+  }
+
+  Future<String?> _resolve(
+    GitRepository repo,
+    String reference,
+    Cancellation? cancellation, {
+    bool optional = false,
+  }) async {
+    _literal(reference);
+    final result = await _run(
+      repo.root,
+      ['rev-parse', '--verify', '--end-of-options', '$reference^{commit}'],
+      cancellation: cancellation,
+      allowFailure: optional,
+    );
+    return result.code == 0 ? result.text.trim() : null;
+  }
+
+  @override
+  Future<List<GitReference>> references(
+    GitRepository repo, {
+    Cancellation? cancellation,
+  }) async {
+    final result = await _run(repo.root, [
+      'for-each-ref',
+      '--count=512',
+      '--format=%(refname)%00%(objectname)',
+      'refs/heads',
+      'refs/remotes',
+      'refs/tags',
+    ], cancellation: cancellation);
+    return [
+      for (final line in const LineSplitter().convert(result.text))
+        if (line.split('\x00') case [final name, final hash])
+          GitReference(name, hash),
+    ];
+  }
+
+  @override
+  Future<GitHistoryPage> historyPage(
+    GitRepository repo,
+    GitHistoryQuery query, {
+    List<String>? anchors,
+    int offset = 0,
+    Cancellation? cancellation,
+  }) async {
+    if (offset < 0 || offset > 100000) {
+      throw ArgumentError('Invalid history offset.');
+    }
+    final roots =
+        anchors ??
+        (query.allReferences
+            ? <String>{
+                for (final reference in await references(
+                  repo,
+                  cancellation: cancellation,
+                ))
+                  if (await _resolve(
+                        repo,
+                        reference.name,
+                        cancellation,
+                        optional: true,
+                      )
+                      case final String hash)
+                    hash,
+              }.toList()
+            : [
+                if (await _resolve(
+                      repo,
+                      query.reference,
+                      cancellation,
+                      optional: true,
+                    )
+                    case final String hash)
+                  hash,
+              ]);
+    for (final root in roots) {
+      if (!RegExp(r'^[a-f0-9]{40,64}$').hasMatch(root)) {
+        throw ArgumentError('Invalid history anchor.');
+      }
+    }
+    if (roots.isEmpty) return const GitHistoryPage([], [], null);
+    final result = await _run(repo.root, [
+      'log',
+      '--topo-order',
+      '--decorate=full',
+      '-z',
+      '-n',
+      '101',
+      '--skip=$offset',
+      '--format=%H%x00%an%x00%aI%x00%s%x00%P%x00%D',
+      if (query.author.isNotEmpty) '--author=${query.author}',
+      if (query.since.isNotEmpty) '--since=${query.since}',
+      if (query.until.isNotEmpty) '--until=${query.until}',
+      if (query.message.isNotEmpty) ...[
+        '--fixed-strings',
+        '--grep=${query.message}',
+      ],
+      ...roots,
+      '--',
+      if (query.path.isNotEmpty) query.path,
+    ], cancellation: cancellation);
+    final fields = result.text.split('\x00');
+    final commits = <GitCommit>[];
+    for (var i = 0; i + 5 < fields.length; i += 6) {
+      commits.add(
+        GitCommit(
+          fields[i],
+          fields[i + 1],
+          fields[i + 2],
+          fields[i + 3],
+          parents: fields[i + 4].split(' ').where((v) => v.isNotEmpty).toList(),
+          references: fields[i + 5]
+              .split(', ')
+              .where((v) => v.isNotEmpty)
+              .toList(),
+        ),
+      );
+    }
+    return GitHistoryPage(
+      commits.take(100).toList(),
+      roots,
+      commits.length > 100 ? offset + 100 : null,
+    );
+  }
+
+  @override
+  Future<GitComparison> compare(
+    GitRepository repo,
+    String target, {
+    String? base,
+    int parent = 0,
+    Cancellation? cancellation,
+  }) async {
+    final targetId = (await _resolve(repo, target, cancellation))!;
+    String? baseId;
+    if (base != null) {
+      baseId = await _resolve(repo, base, cancellation);
+    } else {
+      final row = (await _run(repo.root, [
+        'rev-list',
+        '--parents',
+        '-n',
+        '1',
+        targetId,
+      ], cancellation: cancellation)).text.trim().split(' ');
+      if (parent < 0 || (row.length > 1 && parent >= row.length - 1)) {
+        throw ArgumentError('Invalid merge parent.');
+      }
+      if (row.length > 1) baseId = row[parent + 1];
+    }
+    final prefix = baseId == null
+        ? ['diff-tree', '--root', '--no-commit-id', '-r', targetId]
+        : ['diff', baseId, targetId];
+    final names = (await _run(repo.root, [
+      ...prefix,
+      '--no-ext-diff',
+      '--no-textconv',
+      '--find-renames',
+      '--name-status',
+      '-z',
+      '--',
+    ], cancellation: cancellation)).text.split('\x00');
+    final stats = (await _run(repo.root, [
+      ...prefix,
+      '--no-ext-diff',
+      '--no-textconv',
+      '--find-renames',
+      '--numstat',
+      '-z',
+      '--',
+    ], cancellation: cancellation)).text.split('\x00');
+    final counts = <String, (int?, int?)>{};
+    for (var i = 0; i < stats.length; i++) {
+      final parts = stats[i].split('\t');
+      if (parts.length < 3) continue;
+      var path = parts.skip(2).join('\t');
+      if (path.isEmpty && i + 2 < stats.length) {
+        i += 2;
+        path = stats[i];
+      }
+      counts[path] = (int.tryParse(parts[0]), int.tryParse(parts[1]));
+    }
+    final files = <GitFileChange>[];
+    for (var i = 0; i + 1 < names.length;) {
+      final status = names[i++];
+      if (status.isEmpty) break;
+      final original = names[i++];
+      final rename = status.startsWith('R') || status.startsWith('C');
+      final path = rename && i < names.length ? names[i++] : original;
+      files.add(
+        GitFileChange(
+          path,
+          status,
+          originalPath: rename ? original : null,
+          additions: counts[path]?.$1,
+          deletions: counts[path]?.$2,
+        ),
+      );
+    }
+    return GitComparison(target: targetId, base: baseId, files: files);
+  }
+
+  GitContent _content(List<int> bytes, String identity) {
+    if (bytes.contains(0)) {
+      return GitContent(GitContentKind.binary, identity, bytes: bytes.length);
+    }
+    try {
+      return GitContent(
+        GitContentKind.text,
+        identity,
+        text: utf8.decode(bytes),
+        bytes: bytes.length,
+      );
+    } on FormatException {
+      return GitContent(GitContentKind.binary, identity, bytes: bytes.length);
+    }
+  }
+
+  Future<GitContent> _blob(
+    GitRepository repo,
+    String? revision,
+    String path,
+    Cancellation? cancellation, {
+    bool index = false,
+  }) async {
+    if (revision == null && !index) {
+      return const GitContent(GitContentKind.missing, 'absent');
+    }
+    _literal(path);
+    final spec = index ? ':$path' : '$revision:$path';
+    final idResult = await _run(
+      repo.root,
+      ['rev-parse', '--verify', '--end-of-options', spec],
+      cancellation: cancellation,
+      allowFailure: true,
+    );
+    if (idResult.code != 0) {
+      return const GitContent(GitContentKind.missing, 'absent');
+    }
+    final id = idResult.text.trim();
+    if (!RegExp(r'^[a-f0-9]{40,64}$').hasMatch(id)) {
+      throw GitFailure('Invalid blob identity.');
+    }
+    final objectType = (await _run(repo.root, [
+      'cat-file',
+      '-t',
+      id,
+    ], cancellation: cancellation)).text.trim();
+    if (objectType != 'blob') return GitContent(GitContentKind.unavailable, id);
+    final size = int.parse(
+      (await _run(repo.root, [
+        'cat-file',
+        '-s',
+        id,
+      ], cancellation: cancellation)).text.trim(),
+    );
+    if (size > 512 * 1024) {
+      return GitContent(GitContentKind.large, id, bytes: size);
+    }
+    return _content(
+      (await _run(repo.root, [
+        'cat-file',
+        'blob',
+        id,
+      ], cancellation: cancellation)).output,
+      id,
+    );
+  }
+
+  Future<GitContent> _workingContent(
+    GitRepository repo,
+    String path,
+    Cancellation? cancellation,
+  ) async {
+    final full = p.normalize(p.join(repo.root, path));
+    if (!p.isWithin(repo.root, full)) {
+      throw GitFailure('The file is outside this repository.');
+    }
+    final type = await FileSystemEntity.type(full, followLinks: false);
+    if (type == FileSystemEntityType.notFound) {
+      return const GitContent(GitContentKind.missing, 'absent');
+    }
+    if (type == FileSystemEntityType.link) {
+      final target = utf8.encode(await Link(full).target());
+      return _content(target, sha256.convert(target).toString());
+    }
+    if (type != FileSystemEntityType.file) {
+      return const GitContent(GitContentKind.unavailable, 'not-file');
+    }
+    final file = File(full);
+    if (!p.isWithin(repo.root, await file.resolveSymbolicLinks())) {
+      throw GitFailure('Linked file leaves this repository.');
+    }
+    final stat = await file.stat();
+    if (stat.size > 512 * 1024) {
+      return GitContent(
+        GitContentKind.large,
+        '${stat.size}:${stat.modified.microsecondsSinceEpoch}',
+        bytes: stat.size,
+      );
+    }
+    final handle = await file.open();
+    late final Uint8List bytes;
+    try {
+      bytes = await handle.read(512 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
+    cancellation?.check();
+    if (bytes.length > 512 * 1024) {
+      return GitContent(
+        GitContentKind.large,
+        'grew:${stat.modified}',
+        bytes: bytes.length,
+      );
+    }
+    return _content(bytes, sha256.convert(bytes).toString());
+  }
+
+  @override
+  Future<GitFileDiff> revisionDiff(
+    GitRepository repo,
+    GitComparison comparison,
+    GitFileChange file, {
+    Cancellation? cancellation,
+  }) async => GitFileDiff(
+    file.path,
+    await _blob(
+      repo,
+      comparison.base,
+      file.originalPath ?? file.path,
+      cancellation,
+    ),
+    await _blob(repo, comparison.target, file.path, cancellation),
+    originalPath: file.originalPath,
+  );
+
+  @override
+  Future<GitFileDiff> localDiff(
+    GitRepository repo,
+    GitChange change, {
+    required bool staged,
+    Cancellation? cancellation,
+  }) async {
+    if (change.conflicted) {
+      throw GitFailure(
+        'Resolve the conflict or inspect its index stages in Git before comparing.',
+      );
+    }
+    final original = staged || change.worktree == 'R'
+        ? change.originalPath ?? change.path
+        : change.path;
+    final head = staged
+        ? await _resolve(repo, 'HEAD', cancellation, optional: true)
+        : null;
+    return GitFileDiff(
+      change.path,
+      change.untracked
+          ? const GitContent(GitContentKind.missing, 'absent')
+          : await _blob(repo, head, original, cancellation, index: !staged),
+      staged
+          ? await _blob(repo, null, change.path, cancellation, index: true)
+          : await _workingContent(repo, change.path, cancellation),
+      originalPath: original == change.path ? null : original,
+    );
   }
 
   @override

@@ -866,6 +866,8 @@ Future<void> main(List<String> args) async {
     await model.openWorkspace(p.join(root, 'other'));
     await model.selectWorkspace(0);
     await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Toggle navigation'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Close workspace'));
     await tester.pumpAndSettle();
     await model.selectWorkspace(1);

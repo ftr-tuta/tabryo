@@ -10,6 +10,11 @@ abstract interface class CodexConnection {
   Future<void> close();
 }
 
+abstract interface class InteractiveCodexConnection implements CodexConnection {
+  Stream<CodexServerRequest> get requests;
+  void respond(Object requestId, Map<String, Object?> response);
+}
+
 final class CodexEvent {
   const CodexEvent(this.method, this.parameters);
   final String method;

@@ -86,7 +86,8 @@ Fontes locais: <<fonte-readme>>, <<fonte-versao>>, <<fonte-arquitetura>> e <<fon
 == Progresso da implementação
 
 O código atual inclui editor Monaco, serviços LSP/DAP, tarefas compartilhadas, testes, contexto do editor, Hub/Studio MCP e colaboração pelo App Server.
-O README acompanha as qualificações por plataforma. A evolução abaixo acrescenta Unreal/C++, conteúdo e sessões de jogo; os sistemas do jogo ainda serão criados em seu próprio repositório.
+O README acompanha as qualificações por plataforma. A evolução inclui Unreal/C++, conteúdo e sessões de jogo; os sistemas do jogo ainda serão criados em seu próprio repositório.
+A evolução de UX acrescenta atividades, aparência, revisão Git, chat direto e ferramentas destacáveis com um único motor Flutter. Seu aceite permanece separado da entrega dos sistemas do jogo.
 
 [cols="1,2,4,4",options="header"]
 |===
@@ -102,15 +103,15 @@ O README acompanha as qualificações por plataforma. A evolução abaixo acresc
 |<<codex-01,CODEX-01>>
 |Em implementação
 |Inicialização local, inspeção MCP, sessões WebSocket autenticadas e colaboração Windows. Serviço separado da janela, SQLite, ferramentas MCP com identidade por conexão, mensagens idempotentes, checkpoints versionados com estado Git/local e painel de participantes/aprovações. Entregas armazenadas, encaminhadas, confirmadas e incertas são distintas. Retomada de conversas, interrupção e troca real entre agentes exercitadas com Codex 0.147.0.
-|Transporte WebSocket experimental; Linux e comunicação entre computadores ainda sem qualificação. Histórico gráfico completo de conversas fora do painel de colaboração continua pendente. O inspetor MCP mantém a recusa explícita das interações não suportadas.
+|Transporte WebSocket experimental; comunicação entre computadores ainda sem qualificação. O chat direto usa uma conexão própria descrita em CODEX-02. O inspetor MCP mantém a recusa explícita das interações não suportadas.
 |<<mcp-01,MCP-01>>
 |Em implementação
 |Hub com STDIO/HTTP, administração de entradas de usuário, configuração revisável, inventário, ferramentas/recursos, início do fluxo OAuth e reconexão.
 |Escrita por projeto, OAuth com provedor real, revogação de credenciais no provedor, diagnóstico ampliado e validação Linux. A CLI 0.147.0 recusa escrita em camadas de projeto pelo App Server; essas origens ficam somente leitura.
 |<<edit-01,EDIT-01>>
-|Em validação
+|Implementado, com qualificação por CI
 |Abas, edição UTF-8, indicação de pendências, desfazer/refazer, Ctrl+S/Ctrl+Tab, comparação/releitura de disco, confirmação ao fechar e preservação entre workspaces/atividades; BOM e LF/CRLF preservados. Limites de 12 documentos e 512 KiB por documento.
-|Aceite físico de IME e mudança entre monitores com escalas distintas. O README registra qualificação nativa Debug/Release Windows e Linux, incluindo HiDPI; não representa a matriz completa de uma IDE.
+|A qualificação nativa Debug/Release Windows/Ubuntu e a compatibilidade Release no Arch Linux são executadas no CI, incluindo HiDPI. IME físico e troca entre monitores são cobertura adicional, sem impedir release; isso não representa a matriz completa de uma IDE.
 |<<mcp-02,MCP-02>>
 |Em implementação
 |Criação revisada de projetos Dart, Python e TypeScript, sem sobrescrever pastas; exemplos de ferramenta, recurso e prompt; testes nativos; execução revisada no terminal; registro no Hub e chamada da ferramenta pelo Codex real em configuração isolada.
@@ -127,10 +128,22 @@ O README acompanha as qualificações por plataforma. A evolução abaixo acresc
 |Implementado no Tabryo
 |Descoberta .uproject/CMake, targets/módulos/plugins, toolchains, build/test/cook/package; laboratório que executa o núcleo nativo e identifica código/dados; conteúdo Blender/Unreal com origem, intercâmbio, prévia, dependências e LFS; grupos de processos com prontidão, perfis de cenário/build e backend; abertura de Insights, pipeline existente e contexto para investigação/Codex.
 |Criar o jogo e implementar suas regras, assets e backend; qualificar cliente/servidor, combate, carreira, playtest, distribuição e 128/256 conexões com o conteúdo real. Esses aceites não são substituídos pelos testes do Tabryo.
+|<<ui-01,UI-01>>
+|Implementado, com qualificação por CI
+|Atividades Desenvolver/Conversar/Revisar, navegação contextual, divisores, ocultar/maximizar/restaurar, paleta e atalhos; Configurações com busca, prévia de temas Sistema/Claro/Escuro, presets e contraste. Tokens compartilhados por Flutter, Monaco, terminal, chat e diffs. Execução, DevTools e Preview destacam e retornam preservando serviços e superfícies, com multiview_desktop 1.2.2 e Flutter 3.47.2.
+|Testes nativos no GitHub Actions cobrem ciclo das janelas, teclado, clipboard, minimização e recuperação; a geometria cobre 100%, 150% e 200%. Arch Linux executa os mesmos binários Release do Ubuntu em 100% e 200%. A falta de monitores físicos ou Linux na máquina local não impede release; a matriz física permanece cobertura adicional.
+|<<rev-01,REV-01>> e <<git-01,GIT-01>>
+|Implementado no recorte de revisão e histórico
+|Grupos de alterações com árvore/lista, stage/unstage, histórico incremental, grafo, referências e filtros; comparação local, commit/pai e referências imutáveis. Monaco somente leitura para revisão; tratamento de renomes, merge, binários, arquivos grandes e resultados desatualizados. Listas permanecem virtualizadas e painéis pequenos permitem rolar filtros e detalhes.
+|A UX integrada é qualificada no CI Windows/Ubuntu e com os binários Release no Arch Linux. Blame, seleção de hunks para stage e demais objetivos além desse recorte continuam planejados.
+|<<codex-02,CODEX-02>>
+|Implementado no recorte de chat direto
+|Chat Flutter com histórico paginado da CLI, Markdown, rascunhos, contexto explícito, trabalho realizado, aprovações/perguntas, streaming, interrupção e direcionamento. Identificadores consolidam eventos; envios incertos não são repetidos automaticamente. Conversas criadas aqui admitem retomada explícita após reiniciar; sessões externas e de colaboração continuam para consulta. Testes com CLI 0.147.0 e modelo local exercitam retomada e aprovação compartilhada.
+|A CLI real com fixtures locais é qualificada no CI Windows/Ubuntu. Interação autenticada com provedor remoto no Linux permanece cobertura adicional. A configuração avançada e múltiplas tarefas de CODEX-03 permanecem independentes.
 |Demais metas
 |Planejada
 |Base existente preservada.
-|Objetivos ainda não cobertos nas linhas acima, incluindo experiência gráfica completa e extensibilidade.
+|Objetivos ainda não cobertos nas linhas acima, incluindo extensibilidade e configuração avançada.
 |===
 
 Os testes nativos de integração exercitam o Codex CLI 0.147.0 no Windows com configuração descartável, servidor STDIO e endpoint Streamable HTTP em loopback.
