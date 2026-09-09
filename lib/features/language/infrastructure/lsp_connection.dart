@@ -140,7 +140,7 @@ final class LocalLanguageServers implements LanguageServers {
   }
 }
 
-final class LspConnection implements LanguageConnection {
+final class LspConnection implements LanguageConnection, LanguageRefactors {
   LspConnection(
     Stream<List<int>> input,
     this._write, {
@@ -184,6 +184,53 @@ final class LspConnection implements LanguageConnection {
   int _next = 0;
   bool _closed = false;
   Future<void>? _closing;
+  _RefactorProposal? _refactor;
+
+  @override
+  Future<Map<String, Object?>> proposeRefactor(
+    List<Object?> arguments, {
+    Cancellation? cancellation,
+  }) async {
+    if (_refactor != null) {
+      throw const LanguageFailure('Wait for the current refactoring proposal.');
+    }
+    cancellation?.check();
+    final proposal = _refactor = _RefactorProposal();
+    try {
+      try {
+        await request('workspace/executeCommand', {
+          'command': 'refactor.perform',
+          'arguments': arguments,
+        }, cancellation: cancellation);
+      } on LanguageFailure {
+        // Dart reports the explicitly negative applyEdit acknowledgement as an
+        // error. A captured edit is still only a proposal for native review.
+        if (proposal.edit == null) rethrow;
+      }
+      cancellation?.check();
+      if (_closed ||
+          !proposal.replied ||
+          proposal.count != 1 ||
+          proposal.edit == null) {
+        throw const LanguageFailure(
+          'The server did not return one reviewable refactoring.',
+        );
+      }
+      return proposal.edit!;
+    } finally {
+      if (!proposal.replied && !_closed) {
+        // applyEdit has no originating request ID. After cancellation/timeout,
+        // retire the transport so a late edit cannot belong to another review.
+        _fail(
+          const LanguageFailure(
+            'Refactoring did not finish. Restart the language server.',
+          ),
+        );
+      }
+      if (identical(_refactor, proposal)) _refactor = null;
+    }
+  }
+
   @override
   Stream<Map<String, dynamic>> get notifications => _events.stream;
 
@@ -214,6 +261,7 @@ final class LspConnection implements LanguageConnection {
       throw const LanguageFailure('Too many pending language requests.');
     }
     final id = ++_next;
+    if (method == 'workspace/executeCommand') _refactor?.requestId = id;
     final completion = Completer<Object?>();
     _pending[id] = completion;
     final timer = Timer(timeout, () {
@@ -250,6 +298,13 @@ final class LspConnection implements LanguageConnection {
   void _receive(Map<String, dynamic> value) {
     if (value['method'] is String) {
       if (value.containsKey('id')) {
+        final proposal = _refactor;
+        if (value['method'] == 'workspace/applyEdit' && proposal != null) {
+          proposal.count++;
+          final parameters = value['params'];
+          final edit = parameters is Map ? parameters['edit'] : null;
+          if (edit is Map) proposal.edit = Map<String, Object?>.from(edit);
+        }
         // Servers cannot execute commands, register arbitrary client handlers,
         // open URLs or apply edits without the application's review flow.
         _send({
@@ -266,6 +321,7 @@ final class LspConnection implements LanguageConnection {
         _events.add(value);
       }
     } else {
+      if (_refactor?.requestId == value['id']) _refactor?.replied = true;
       final completion = _pending[value['id']];
       if (completion == null || completion.isCompleted) return;
       if (value['error'] != null) {
@@ -318,4 +374,11 @@ final class LspConnection implements LanguageConnection {
       await _events.close();
     }
   }
+}
+
+final class _RefactorProposal {
+  int? requestId;
+  bool replied = false;
+  int count = 0;
+  Map<String, Object?>? edit;
 }

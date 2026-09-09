@@ -472,7 +472,11 @@ para Codex. Propostas têm base identificada, revisão antes/depois, aplicação
 somente no buffer e rejeição por alteração de documento/disco ou revogação.
 Fechar o documento, trocar workspace e encerrar o Tabryo revogam o acesso.
 Testes nativos incluem o Codex instalado sem turno de modelo e revisão no Monaco.
-Refatorações avançadas, exposição de diagnósticos, conversas gráficas Codex e aceites IME/DPI continuam pendentes;
+Extração Dart de variável e método/getter recebe seleção e nome, captura a
+proposta do servidor e exige revisão nativa antes de alterar o buffer; desfazer
+permanece no Monaco. Comandos cancelados não podem fornecer uma proposta tardia
+para outra revisão. Refatorações com operações de arquivo, exposição de
+diagnósticos, conversas gráficas Codex e aceites IME/DPI continuam pendentes;
 esta entrega não conclui a matriz Python/Dart/Flutter.
 
 * *Problema atendido:* a edição mínima do Studio não cobre navegação e transformação cotidiana de código.

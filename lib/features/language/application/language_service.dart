@@ -504,6 +504,55 @@ final class LanguageService {
     return result;
   }
 
+  Future<Map<String, Object?>> refactor(
+    LanguageDocument doc,
+    DartRefactor kind,
+    String name,
+    int start,
+    int end, {
+    Cancellation? cancellation,
+  }) async {
+    final session = sessionFor(doc);
+    final connection = session?.connection;
+    final provider = session?.capabilities['executeCommandProvider'];
+    if (session == null ||
+        session.spec.kind != LanguageServerKind.dart ||
+        connection is! LanguageRefactors ||
+        provider is! Map ||
+        provider['commands'] is! List ||
+        !(provider['commands'] as List).contains('refactor.perform')) {
+      throw const LanguageFailure(
+        'Start a Dart server that supports extraction refactorings.',
+      );
+    }
+    if (!RegExp(r'^[A-Za-z_$][A-Za-z0-9_$]*$').hasMatch(name) ||
+        start < 0 ||
+        end <= start ||
+        end > doc.text.length) {
+      throw const LanguageFailure(
+        'Select code and choose a valid Dart identifier.',
+      );
+    }
+    languageOffset(doc.text, languagePosition(doc.text, start));
+    languageOffset(doc.text, languagePosition(doc.text, end));
+    final edit = await (connection as LanguageRefactors).proposeRefactor([
+      kind == DartRefactor.extractVariable
+          ? 'EXTRACT_LOCAL_VARIABLE'
+          : 'EXTRACT_METHOD',
+      doc.path,
+      doc.version,
+      start,
+      end - start,
+      {'name': name},
+    ], cancellation: cancellation);
+    if (!session.ready ||
+        sessions[session.spec.id] != session ||
+        session.documents[doc.path]?.version != doc.version) {
+      throw const Cancelled();
+    }
+    return edit;
+  }
+
   Future<void> stop(String id) async {
     final session = sessions.remove(id);
     if (session == null) return;

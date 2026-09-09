@@ -31,7 +31,7 @@ const editor = monaco.editor.create(container, {
 
 function emit(packet) {
   if (!packet) return;
-  TabryoEditor.postMessage(JSON.stringify({ token, ...packet }));
+  window.tabryoBridge.postMessage(JSON.stringify({ token, ...packet }));
 }
 function validText(doc, text) {
   return text.length <= 512 * 1024 && text.isWellFormed() && !text.includes('\0') &&

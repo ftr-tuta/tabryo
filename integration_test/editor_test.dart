@@ -230,7 +230,8 @@ void main() {
           final details = await browser
               .runJavaScriptReturningResult('''
             JSON.stringify({document: document.readyState,
-              channel: typeof TabryoEditor,
+              channel: typeof window.tabryoBridge,
+              page: location.href.split('#')[0],
               receiver: typeof window.tabryoReceive,
               failures: window.editorFailures ?? []})
           ''')
@@ -244,6 +245,20 @@ void main() {
       debugPrint(
         'Native editor: surface ready; checking keyboard and clipboard',
       );
+      if (Platform.isWindows) {
+        // The page owns its WebView2 bridge; reloading must keep the native
+        // callback working without waiting for injected document scripts.
+        await browser.runJavaScript(
+          'window.editorBeforeReload = true; location.reload()',
+        );
+        await expectWeb(
+          tester,
+          browser,
+          "!window.editorBeforeReload && typeof window.tabryoBridge?.postMessage === 'function' && (document.querySelector('.view-lines')?.textContent.includes('main') ?? false)",
+          true,
+        );
+        await until(tester, () => state.surfaceVisible);
+      }
       if (Platform.isWindows) {
         focusTestWindow();
       } else {
@@ -458,7 +473,7 @@ void main() {
       );
       expect(buffer.controller.text, contains('ação 🌱'));
       await browser.runJavaScript(
-        "TabryoEditor.postMessage(JSON.stringify({token:'wrong',type:'failed'})); location.href='https://example.invalid/';",
+        "window.tabryoBridge.postMessage(JSON.stringify({token:'wrong',type:'failed'})); location.href='https://example.invalid/';",
       );
       await tester.pump(const Duration(milliseconds: 200));
       expect(state.ready, isTrue);
@@ -515,10 +530,10 @@ void main() {
       // Deliberately delay input notifications to exercise the native bridge's
       // version boundary, while allowing the replacement response through.
       await reconnected.runJavaScript("""
-        window.savedEditorPost = TabryoEditor.postMessage;
-        TabryoEditor.postMessage = function(raw) {
+        window.savedEditorPost = window.tabryoBridge.postMessage;
+        window.tabryoBridge.postMessage = function(raw) {
           const type = JSON.parse(raw).type;
-          if (type !== 'change' && type !== 'selection') window.savedEditorPost.call(TabryoEditor, raw);
+          if (type !== 'change' && type !== 'selection') window.savedEditorPost.call(window.tabryoBridge, raw);
         };
         document.querySelector('textarea').focus();
         document.execCommand('insertText', false, '// queued local input\\n');
@@ -531,7 +546,7 @@ void main() {
       expect(buffer.controller.text, isNot('replacement from disk'));
       expect(await editor.save(buffer), isFalse);
       await reconnected.runJavaScript(
-        'TabryoEditor.postMessage = window.savedEditorPost; delete window.savedEditorPost;',
+        'window.tabryoBridge.postMessage = window.savedEditorPost; delete window.savedEditorPost;',
       );
       editor.keepLocalEdits(buffer);
       expect(buffer.reviewRequired, isFalse);
@@ -679,6 +694,48 @@ void main() {
       );
       expect(buffer.dirty, isTrue);
       expect(await file.readAsString(), isNot(contains('count')));
+      await until(tester, () => state.surfaceVisible);
+      const extractionSource = 'void main() { print(40 + 2); }\n';
+      buffer.controller.value = TextEditingValue(
+        text: extractionSource,
+        selection: TextSelection(
+          baseOffset: extractionSource.indexOf('40 + 2'),
+          extentOffset: extractionSource.indexOf('40 + 2') + 6,
+        ),
+      );
+      expect(await editor.synchronizeBuffer(buffer), isTrue);
+      await tester.tap(find.byTooltip('Document actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Extract Dart method / getter'));
+      await until(
+        tester,
+        () => find
+            .widgetWithText(TextField, 'Extracted symbol name')
+            .evaluate()
+            .isNotEmpty,
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Extracted symbol name'),
+        'calculate',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Review extraction'));
+      await until(
+        tester,
+        () => find.text('Review proposed edits').evaluate().isNotEmpty,
+      );
+      expect(buffer.controller.text, extractionSource);
+      await tester.tap(find.text('Apply unsaved edits'));
+      await tester.pumpAndSettle();
+      await until(
+        tester,
+        () => buffer.controller.text.contains('get calculate => 40 + 2'),
+      );
+      expect(buffer.controller.text, contains('print(calculate)'));
+      expect(await file.readAsString(), isNot(contains('calculate')));
+      await until(tester, () => state.surfaceVisible);
+      editor.undoBuffer(buffer);
+      await until(tester, () => buffer.controller.text == extractionSource);
       tester.testTextInput.unregister();
       debugPrint('Native editor: rename review applied; checking completion');
       await until(tester, () => state.surfaceVisible);

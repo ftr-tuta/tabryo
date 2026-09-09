@@ -124,6 +124,57 @@ void main() {
     },
   );
 
+  test('refactor commands capture one proposal, refuse overlapping work and retire cancelled transports', () async {
+    final input = StreamController<List<int>>();
+    final sent = <Map<String, dynamic>>[];
+    var closed = false;
+    final connection = LspConnection(
+      input.stream,
+      (bytes) => sent.addAll(LspFramer().add(bytes)),
+      closeTransport: () async {
+        closed = true;
+      },
+    );
+    addTearDown(() async {
+      await connection.close();
+      await input.close();
+    });
+    final result = connection.proposeRefactor([]);
+    final requestId = sent.single['id'];
+    await expectLater(
+      connection.proposeRefactor([]),
+      throwsA(isA<LanguageFailure>()),
+    );
+    final edit = {'changes': <String, Object?>{}};
+    input.add(
+      LspFramer.encode({
+        'id': 'edit',
+        'method': 'workspace/applyEdit',
+        'params': {'edit': edit},
+      }),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(sent.last['result']['applied'], isFalse);
+    input.add(
+      LspFramer.encode({
+        'id': requestId,
+        'error': {'code': -32803, 'message': 'Client deferred the edit'},
+      }),
+    );
+    expect(await result, edit);
+    final cancellation = Cancellation();
+    final pending = connection.proposeRefactor([], cancellation: cancellation);
+    final cancelled = expectLater(pending, throwsA(isA<Cancelled>()));
+    cancellation.cancel();
+    await cancelled;
+    await connection.close();
+    expect(closed, isTrue);
+    await expectLater(
+      connection.proposeRefactor([]),
+      throwsA(isA<LanguageFailure>()),
+    );
+  });
+
   test(
     'LSP timeout remains handled when the cancellation write fails',
     () async {
@@ -406,6 +457,33 @@ void main() {
         }),
         throwsA(isA<Cancelled>()),
       );
+      for (final kind in DartRefactor.values) {
+        const source = 'void main() {\n  print(40 + 2);\n}\n';
+        buffer.controller.text = source;
+        editor.synchronizeLanguage();
+        final beforeVersion = buffer.version;
+        final name = kind == DartRefactor.extractVariable
+            ? 'answer'
+            : 'calculate';
+        final extracted = await service.refactor(
+          editor.languageDocument(buffer),
+          kind,
+          name,
+          source.indexOf('40 + 2'),
+          source.indexOf('40 + 2') + 6,
+        );
+        expect(buffer.controller.text, source);
+        expect(await file.readAsString(), 'void main() {}\n');
+        final reviewed = await editor.prepareLanguageEdit(
+          buffer,
+          extracted,
+          version: beforeVersion,
+        );
+        await editor.applyReviewedLanguageEdit(reviewed);
+        expect(buffer.controller.text, contains(name));
+        expect(buffer.controller.text, isNot(source));
+        expect(await file.readAsString(), 'void main() {}\n');
+      }
       buffer.controller.text = 'int count=1; void main(){print(count);}\n';
       expect(await editor.save(buffer), isTrue, reason: buffer.error);
       expect(buffer.controller.text, contains('int count = 1;'));

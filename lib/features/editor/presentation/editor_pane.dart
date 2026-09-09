@@ -217,6 +217,8 @@ final class EditorPane extends StatelessWidget {
                       'completion' ||
                       'symbols' ||
                       'references' ||
+                      'extractVariable' ||
+                      'extractMethod' ||
                       'fixes' => model.webCommand?.call(value),
                       'compare' => model.compare(active),
                       'context' => showDialog<void>(
@@ -264,6 +266,17 @@ final class EditorPane extends StatelessWidget {
                           value: 'fixes',
                           child: Text('Quick fixes and refactorings'),
                         ),
+                        if (p.extension(active.path).toLowerCase() == '.dart' &&
+                            !active.readOnly) ...[
+                          const PopupMenuItem(
+                            value: 'extractVariable',
+                            child: Text('Extract Dart variable'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'extractMethod',
+                            child: Text('Extract Dart method / getter'),
+                          ),
+                        ],
                       ],
                       if (active.formatFailed)
                         const PopupMenuItem(

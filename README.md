@@ -361,6 +361,10 @@ All affected files must already be open and synchronized with that language
 session; open any reported missing file and retry. Every affected buffer is
 checked again after review. Normal protected saves write to disk separately.
 File creation/deletion/renaming and commands returned by servers are refused.
+For Dart, select code and use **Extract Dart variable** or **Extract Dart method /
+getter** from Document actions. Choose the symbol name and review the resulting
+unsaved edits; Dart may choose a getter for an expression with no parameters.
+The native Dart refactor command only supplies a proposal for this review.
 Completion resolves additional imports in the current document, preserving undo
 and unsaved text. A late response is accepted only for the exact suggestion
 insertion; further typing invalidates it. Cross-file completion commands and

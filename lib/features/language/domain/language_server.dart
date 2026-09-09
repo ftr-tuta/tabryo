@@ -53,6 +53,17 @@ abstract interface class LanguageServers {
   Future<LanguageConnection> start(LanguageServerSpec spec);
 }
 
+enum DartRefactor { extractVariable, extractMethod }
+
+/// Optional transport capability for Dart's refactor command. The server's edit
+/// is captured as a proposal, never acknowledged as applied or written to disk.
+abstract interface class LanguageRefactors {
+  Future<Map<String, Object?>> proposeRefactor(
+    List<Object?> arguments, {
+    Cancellation? cancellation,
+  });
+}
+
 abstract interface class LanguageSources {
   Future<DocumentSnapshot> open(LanguageServerSpec spec, String path);
 }

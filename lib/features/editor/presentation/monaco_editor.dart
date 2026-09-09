@@ -846,6 +846,16 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
 
   void _command(String command) {
     if (!_ready) return;
+    if (command == 'extractVariable' || command == 'extractMethod') {
+      unawaited(
+        _extract(
+          command == 'extractVariable'
+              ? DartRefactor.extractVariable
+              : DartRefactor.extractMethod,
+        ),
+      );
+      return;
+    }
     if (_commands.length >= 32) {
       _languageError(
         const LanguageFailure('Wait for the pending editor actions to finish.'),
@@ -854,6 +864,81 @@ final class MonacoEditorState extends State<MonacoEditor> with RouteAware {
     }
     _commands.add((command: command, buffer: model.active));
     _schedule();
+  }
+
+  Future<void> _extract(DartRefactor kind) async {
+    final buffer = model.active;
+    if (_promptingRename ||
+        _reviewingLanguage ||
+        buffer == null ||
+        buffer.readOnly) {
+      return;
+    }
+    _promptingRename = true;
+    try {
+      if (!await model.synchronizeBuffer(buffer)) throw const Cancelled();
+      final version = buffer.version;
+      final revision = model.languageRevision;
+      final authority = model.language?.generation ?? 0;
+      final selection = buffer.controller.selection;
+      if (!selection.isValid || selection.isCollapsed) {
+        throw const LanguageFailure(
+          'Select the expression or statements to extract.',
+        );
+      }
+      if (!mounted) return;
+      var name = '';
+      final chosen = await showDialog<String>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+            title: Text(
+              kind == DartRefactor.extractVariable
+                  ? 'Extract Dart variable'
+                  : 'Extract Dart method / getter',
+            ),
+            content: TextField(
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Extracted symbol name',
+              ),
+              onChanged: (value) => update(() => name = value.trim()),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: name.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, name),
+                child: const Text('Review extraction'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      if (buffer.version != version ||
+          model.languageRevision != revision ||
+          model.language?.generation != authority) {
+        throw const Cancelled();
+      }
+      model.synchronizeLanguage();
+      final edit = await model.language!.refactor(
+        model.languageDocument(buffer),
+        kind,
+        chosen,
+        selection.start,
+        selection.end,
+      );
+      await _reviewLanguageEdit(buffer, version, edit, revision, authority);
+    } catch (error) {
+      _languageError(error);
+    } finally {
+      _promptingRename = false;
+    }
   }
 
   @override
