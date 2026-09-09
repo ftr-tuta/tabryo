@@ -951,6 +951,60 @@ unreal.log('TABRYO_CONTENT_VALIDATED')
     expect(host.started, hasLength(2));
   });
 
+  test('Unreal preflight rereads the engine association before executing a reviewed plan', () async {
+    final root = await temporaryProject();
+    await writeFile(
+      root,
+      'Arena.uproject',
+      '{"FileVersion":3,"EngineAssociation":"5.8"}',
+    );
+    await writeFile(
+      root,
+      'UE/Engine/Build/Build.version',
+      '{"MajorVersion":5,"MinorVersion":8}',
+    );
+    final discovery = await LocalProjectEnvironment().discover(
+      root,
+      Cancellation(),
+    );
+    final files = LocalGameWorkspace();
+    final workspace = await files.load(
+      discovery.projects.single,
+      Cancellation(),
+    );
+    final plan = GamePlan(
+      workspace: workspace,
+      title: 'Build',
+      processes: [],
+      toolPaths: {
+        ProjectTool.unreal: p.join(
+          root,
+          'UE',
+          'Engine',
+          'Binaries',
+          'Win64',
+          'UnrealEditor.exe',
+        ),
+      },
+    );
+    await files.validatePlan(plan);
+    await writeFile(
+      root,
+      'Arena.uproject',
+      '{"FileVersion":3,"EngineAssociation":"5.9"}',
+    );
+    await expectLater(
+      files.validatePlan(plan),
+      throwsA(
+        isA<GameFailure>().having(
+          (e) => e.message,
+          'reason',
+          contains('association changed'),
+        ),
+      ),
+    );
+  });
+
   test(
     'compile database output must contain native translation units',
     () async {

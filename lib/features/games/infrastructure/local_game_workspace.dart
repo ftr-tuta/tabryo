@@ -240,12 +240,31 @@ final class LocalGameWorkspace implements GameWorkspaceFiles {
     }
     if (project.kind == ProjectKind.unreal &&
         plan.toolPaths[ProjectTool.unreal] != null) {
+      final descriptor = project.manifests.firstWhere(
+        (m) => m.toLowerCase().endsWith('.uproject'),
+      );
+      final current = jsonDecode(
+        await read(await checkedPath(project, descriptor)),
+      );
+      if (current is! Map || current['FileVersion'] is! int) {
+        throw const GameFailure(
+          'The Unreal descriptor changed or is malformed. Scan the project again.',
+        );
+      }
+      final association = current['EngineAssociation'];
+      if (association != null && association is! String) {
+        throw const GameFailure('The Unreal engine association is malformed.');
+      }
+      if (project.versionHint != null && project.versionHint != association) {
+        throw const GameFailure(
+          'The Unreal engine association changed after discovery. Scan and review the project again.',
+        );
+      }
       final engine = p.dirname(
         p.dirname(p.dirname(p.dirname(plan.toolPaths[ProjectTool.unreal]!))),
       );
       final versionPath = p.join(engine, 'Engine', 'Build', 'Build.version');
       final version = jsonDecode(await read(versionPath));
-      final association = project.versionHint;
       if (version is! Map) {
         throw const GameFailure(
           'Unreal installation is incomplete: Build.version is unavailable.',
