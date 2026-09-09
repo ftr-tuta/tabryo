@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -149,6 +150,10 @@ void requestNativeWindowClose() {
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  // Exercise the production gesture path for native input. The live tester's
+  // inspection dispatcher assumes every event still has a registered RenderView,
+  // which is false during native view removal and runMultiApp root replacement.
+  binding.shouldPropagateDevicePointerEvents = true;
   // The Flutter desktop driver requires debug/profile. A compiled Release
   // test entrypoint still runs the same native integration_test cases; use its
   // aggregate result as the process exit status when launched directly.
@@ -947,6 +952,25 @@ void main() {
       await window.closeWindow();
       await until(tester, () => execution.window == null);
       await tester.pump();
+      await until(
+        tester,
+        () => !binding.renderViews.any((view) => view.flutterView.viewId == id),
+      );
+      // The OS can drain pointer events after the Flutter view has been removed.
+      binding.handlePointerEvent(
+        PointerAddedEvent(
+          viewId: id,
+          device: 9001,
+          kind: ui.PointerDeviceKind.mouse,
+        ),
+      );
+      binding.handlePointerEvent(
+        PointerRemovedEvent(
+          viewId: id,
+          device: 9001,
+          kind: ui.PointerDeviceKind.mouse,
+        ),
+      );
       expect(
         identical(tester.state(find.byType(TerminalPaneView)), terminalState),
         isTrue,

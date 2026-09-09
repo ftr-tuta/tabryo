@@ -29,7 +29,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool openbox
+        # All required packages come from Ubuntu. Unrelated runner repositories
+        # (for example Chrome) can have temporarily inconsistent package indexes.
+        run: |
+          sources=/etc/apt/sources.list.d/ubuntu.sources
+          test -f "$sources"
+          sudo apt-get -o Dir::Etc::sourcelist="$sources" -o Dir::Etc::sourceparts=- update
+          sudo apt-get -o Dir::Etc::sourcelist="$sources" -o Dir::Etc::sourceparts=- install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool openbox
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
