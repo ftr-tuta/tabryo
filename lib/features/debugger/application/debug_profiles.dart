@@ -12,13 +12,20 @@ DebugConfiguration debugProfile({
   bool noDebug = false,
   int port = 8000,
   List<String> arguments = const [],
-  Map<String, List<int>> breakpoints = const {},
+  List<String> toolArguments = const [],
+  Map<String, String> environment = const {},
+  String? workingDirectory,
+  Uri? attachUri,
+  String? flavor,
+  String flutterMode = 'debug',
+  Map<String, List<DebugBreakpoint>> breakpoints = const {},
 }) {
   if (!['Script', 'Django', 'FastAPI'].contains(profile) ||
       (profile != 'Script' && project.kind != ProjectKind.python)) {
     throw const DebugFailure('Choose a profile supported by this project.');
   }
   if (project.kind == ProjectKind.flutter &&
+      attachUri == null &&
       (device == null || device.isEmpty)) {
     throw const DebugFailure('Discover and choose a Flutter device first.');
   }
@@ -27,8 +34,11 @@ DebugConfiguration debugProfile({
   }
   String? module;
   var launchArgs = arguments;
-  if (profile == 'FastAPI') {
-    final relative = p.relative(program, from: project.directory);
+  if (profile == 'FastAPI' && attachUri == null) {
+    final relative = p.relative(
+      program,
+      from: workingDirectory ?? project.directory,
+    );
     final name = p.withoutExtension(relative).split(p.separator);
     if (p.extension(program) != '.py' ||
         name.any((s) => !RegExp(r'^[A-Za-z_]\w*$').hasMatch(s))) {
@@ -45,7 +55,7 @@ DebugConfiguration debugProfile({
       '$port',
       ...arguments,
     ];
-  } else if (profile == 'Django') {
+  } else if (profile == 'Django' && attachUri == null) {
     launchArgs = ['runserver', '127.0.0.1:$port', '--noreload', ...arguments];
   }
   return DebugConfiguration(
@@ -57,6 +67,12 @@ DebugConfiguration debugProfile({
     django: profile == 'Django',
     device: device,
     noDebug: noDebug,
+    attachUri: attachUri,
+    workingDirectory: workingDirectory,
+    environment: environment,
+    toolArguments: toolArguments,
+    flavor: flavor,
+    flutterMode: flutterMode,
     breakpoints: breakpoints,
   );
 }

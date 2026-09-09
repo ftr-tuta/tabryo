@@ -16,12 +16,240 @@ import 'package:tabryo/features/debugger/application/debug_service.dart';
 import 'package:tabryo/features/debugger/application/debug_profiles.dart';
 import 'package:tabryo/features/debugger/domain/debug_session.dart';
 import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
+import 'package:tabryo/features/debugger/infrastructure/debug_process.dart';
 import 'package:tabryo/features/projects/domain/project.dart';
 
 import 'workbench_test.dart'
     show MemoryHost, MemoryLauncher, MemoryFiles, NoGit, MemoryPreferences;
 
 void main() {
+  test('debug configuration rejects external endpoints, escaped directories and breakpoints in run mode', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'tabryo_debug_config_',
+    );
+    final root = await temporary.resolveSymbolicLinks();
+    final source = await File(p.join(root, 'main.dart'))
+        .writeAsString('void main() {}');
+    addTearDown(() => temporary.delete(recursive: true));
+    final project = DevelopmentProject(
+      workspace: root,
+      directory: root,
+      name: 'app',
+      kind: ProjectKind.dart,
+    );
+    final tools = ToolchainSelection({
+      ProjectTool.dart: p.join(
+        Platform.environment['FLUTTER_ROOT']!,
+        'bin',
+        'cache',
+        'dart-sdk',
+        'bin',
+        Platform.isWindows ? 'dart.exe' : 'dart',
+      ),
+    });
+    final configurations = [
+      for (final address in [
+        'http://example.com:1234/',
+        'http://localhost:1234/',
+        'http://user@127.0.0.1:1234/',
+        'http://127.0.0.1:1234/?target=other',
+      ])
+        DebugConfiguration(
+          project: project,
+          tools: tools,
+          program: source.path,
+          attachUri: Uri.parse(address),
+        ),
+      DebugConfiguration(
+        project: project,
+        tools: tools,
+        program: source.path,
+        workingDirectory: p.dirname(root),
+      ),
+      DebugConfiguration(
+        project: project,
+        tools: tools,
+        program: source.path,
+        noDebug: true,
+        breakpoints: {
+          source.path: [const DebugBreakpoint(1)],
+        },
+      ),
+    ];
+    for (final config in configurations) {
+      DebugConnection? connection;
+      try {
+        await expectLater(() async {
+          connection = await LocalDebugAdapters().start(config);
+        }, throwsA(isA<DebugFailure>()));
+      } finally {
+        await connection?.close();
+      }
+    }
+  });
+
+  for (final python in [false, true]) {
+    test(
+      '${python ? 'Python' : 'Dart'} local attach pauses and detaches without stopping the existing application',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'tabryo_attach_',
+        );
+        final root = await directory.resolveSymbolicLinks();
+        final info = File(p.join(root, 'service.json'));
+        final source = File(p.join(root, python ? 'main.py' : 'main.dart'));
+        final text = python
+            ? 'import debugpy, json, sys, time\n'
+                  'address = debugpy.listen(("127.0.0.1", 0))\n'
+                  'with open(sys.argv[1], "w") as f: json.dump({"uri": "tcp://127.0.0.1:" + str(address[1])}, f)\n'
+                  'debugpy.wait_for_client()\n'
+                  'count = 41\n'
+                  'print(count + 1, flush=True)\n'
+                  'while True:\n'
+                  '    print("TICK", flush=True)\n'
+                  '    time.sleep(0.1)\n'
+            : "import 'dart:async';\nvoid main() {\n  var count = 41;\n  print(count + 1);\n  Timer.periodic(const Duration(milliseconds: 100), (_) => print('TICK'));\n}\n";
+        await source.writeAsString(text);
+        final executable = python
+            ? Platform.environment['TABRYO_TEST_PYTHON'] ?? _python()
+            : p.join(
+                Platform.environment['FLUTTER_ROOT']!,
+                'bin',
+                'cache',
+                'dart-sdk',
+                'bin',
+                Platform.isWindows ? 'dart.exe' : 'dart',
+              );
+        final child = await DebugProcess.start(
+          executable,
+          python
+              ? [source.path, info.path]
+              : [
+                  '--enable-vm-service=0',
+                  '--pause-isolates-on-start',
+                  '--write-service-info=${info.path}',
+                  source.path,
+                ],
+          root,
+        );
+        var exited = false;
+        unawaited(child.process.exitCode.then((_) => exited = true));
+        var ticks = 0;
+        final output = child.process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+              if (line == 'TICK') ticks++;
+            });
+        final errors = child.process.stderr.listen((_) {});
+        final service = DebugService(LocalDebugAdapters());
+        addTearDown(() async {
+          await service.dispose();
+          await child.close();
+          await output.cancel();
+          await errors.cancel();
+          await directory.delete(recursive: true);
+        });
+        await _until(() => info.existsSync() && info.lengthSync() > 0);
+        final uri = Uri.parse(
+          (jsonDecode(await info.readAsString()) as Map)['uri'] as String,
+        );
+        await service.start(
+          DebugConfiguration(
+            project: DevelopmentProject(
+              workspace: root,
+              directory: root,
+              name: 'attach',
+              kind: python ? ProjectKind.python : ProjectKind.dart,
+            ),
+            tools: ToolchainSelection({
+              python ? ProjectTool.python : ProjectTool.dart: executable,
+            }),
+            program: source.path,
+            attachUri: uri,
+            breakpoints: {
+              source.path: [DebugBreakpoint(python ? 6 : 4)],
+            },
+          ),
+        );
+        if (!python) {
+          await _until(() => service.status == DebugStatus.paused);
+          expect(service.stopReason, 'entry');
+          await service.control('continue');
+        }
+        await _until(
+          () =>
+              service.status == DebugStatus.paused && service.scopes.isNotEmpty,
+          describe: () =>
+              '${service.status}/${service.stopReason}: ${service.error}, frames=${service.frames.length}, scopes=${service.scopes.length}',
+        );
+        expect(await service.evaluate('count + 1'), '42');
+        await service.addWatch('count');
+        expect(service.watches.single.value, '41');
+        await service.stop();
+        expect(service.active, isFalse);
+        await _until(() => ticks >= 2);
+        expect(exited, isFalse);
+        expect(service.watches.single.value, isNull);
+      },
+      skip: python && Platform.environment['TABRYO_TEST_DEBUG_PYTHON'] != '1',
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+  }
+
+  test('unsupported conditions refuse launch and watches discard a replaced paused frame', () async {
+    final denied = MemoryAdapters();
+    final unsupported = DebugService(denied);
+    final base = memoryConfiguration();
+    addTearDown(unsupported.dispose);
+    await expectLater(
+      unsupported.start(
+        DebugConfiguration(
+          project: base.project,
+          tools: base.tools,
+          program: base.program,
+          breakpoints: {
+            base.program: [const DebugBreakpoint(3, condition: 'count > 0')],
+          },
+        ),
+      ),
+      throwsA(isA<DebugFailure>()),
+    );
+    expect(denied.connection.commands, isNot(contains('launch')));
+    expect(denied.connection.closed, isTrue);
+
+    final adapters = MemoryAdapters();
+    final service = DebugService(adapters);
+    addTearDown(service.dispose);
+    await service.start(base);
+    adapters.connection.emit('stopped', {'threadId': 1});
+    await _until(() => service.scopes.isNotEmpty);
+    final watch = adapters.connection.watchReply =
+        Completer<Map<String, dynamic>>();
+    final adding = service.addWatch('count');
+    await _until(() => adapters.connection.commands.contains('evaluate'));
+    await service.control('continue'); // DAP permits no continued event here.
+    expect(service.status, DebugStatus.running);
+    watch.complete({'result': 'stale'});
+    await adding;
+    expect(service.watches.single.value, isNull);
+    adapters.connection.watchReply = null;
+    adapters.connection.emit('stopped', {'threadId': 1});
+    await _until(() => service.watches.single.value != null);
+    expect(service.watches.single.value, 'fresh');
+    final lateFrame = adapters.connection.watchReply =
+        Completer<Map<String, dynamic>>();
+    final changingFrame = service.selectFrame(10);
+    await _until(() => service.frameId == 10 && service.scopes.isNotEmpty);
+    adapters.connection.watchReply = null;
+    await service.selectFrame(9);
+    lateFrame.complete({'result': 'wrong frame'});
+    await changingFrame;
+    expect(service.watches.single.value, 'fresh');
+    service.removeWatch('count');
+    expect(service.watches, isEmpty);
+  });
+
   test(
     'Flutter discovers the desktop device, runs, reloads and restarts saved code',
     () async {
@@ -154,6 +382,7 @@ void main() {
         );
         final root = await directory.resolveSymbolicLinks();
         final python = Platform.environment['TABRYO_TEST_PYTHON'] ?? _python();
+        final backend = await Directory(p.join(root, 'backend')).create();
         final tools = ToolchainSelection({ProjectTool.python: python});
         final service = DebugService(LocalDebugAdapters());
         final client = HttpClient();
@@ -171,29 +400,32 @@ void main() {
             'django',
             'startproject',
             'app',
-            root,
+            backend.path,
           ]);
           expect(created.exitCode, 0, reason: '${created.stderr}');
-          source = await File(p.join(root, 'app', 'views.py')).writeAsString(
-            'from django.http import JsonResponse\n'
-            'def index(request):\n'
-            '    count = 41\n'
-            '    return JsonResponse({"answer": count + 1})\n',
-          );
-          await File(p.join(root, 'app', 'urls.py')).writeAsString(
+          source = await File(p.join(backend.path, 'app', 'views.py'))
+              .writeAsString(
+                'import os\n'
+                'from django.http import JsonResponse\n'
+                'def index(request):\n'
+                '    count = 41\n'
+                '    return JsonResponse({"answer": count + 1, "setting": os.environ["BACKEND_SETTING"], "directory": os.path.basename(os.getcwd())})\n',
+              );
+          await File(p.join(backend.path, 'app', 'urls.py')).writeAsString(
             'from django.urls import path\nfrom .views import index\nurlpatterns = [path("", index)]\n',
           );
-          program = p.join(root, 'manage.py');
-          line = 4;
+          program = p.join(backend.path, 'manage.py');
+          line = 5;
         } else {
-          source = await File(p.join(root, 'main.py')).writeAsString(
+          source = await File(p.join(backend.path, 'main.py')).writeAsString(
+            'import os\n'
             'from fastapi import FastAPI\napp = FastAPI()\n'
             '@app.get("/")\nasync def index():\n'
             '    count = 41\n'
-            '    return {"answer": count + 1}\n',
+            '    return {"answer": count + 1, "setting": os.environ["BACKEND_SETTING"], "directory": os.path.basename(os.getcwd())}\n',
           );
           program = source.path;
-          line = 6;
+          line = 7;
         }
         final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         final port = socket.port;
@@ -210,8 +442,10 @@ void main() {
             program: program,
             profile: profile,
             port: port,
+            workingDirectory: backend.path,
+            environment: {'BACKEND_SETTING': 'configured'},
             breakpoints: {
-              source.path: [line],
+              source.path: [DebugBreakpoint(line)],
             },
           ),
         );
@@ -242,6 +476,8 @@ void main() {
         expect(result.statusCode, HttpStatus.ok);
         expect(jsonDecode(await result.transform(utf8.decoder).join()), {
           'answer': 42,
+          'setting': 'configured',
+          'directory': 'backend',
         });
         await service.stop();
         expect(service.active, isFalse);
@@ -453,7 +689,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp('tabryo_debug_');
       final root = await directory.resolveSymbolicLinks();
       final source = await File(p.join(root, 'main.dart')).writeAsString(
-        'void main() {\n  var count = 41;\n  print(count + 1);\n}\n',
+        'void main() {\n  for (var count = 39; count < 42; count++) {\n    print(count + 1);\n  }\n}\n',
       );
       final sdk = Platform.environment['FLUTTER_ROOT']!;
       final dart = p.join(
@@ -481,7 +717,7 @@ void main() {
           tools: ToolchainSelection({ProjectTool.dart: dart}),
           program: source.path,
           breakpoints: {
-            source.path: [3],
+            source.path: [const DebugBreakpoint(3, condition: 'count == 41')],
           },
         ),
       );
@@ -506,6 +742,11 @@ void main() {
         isTrue,
       );
       expect(await service.evaluate('count + 1'), '42');
+      expect(service.stopReason, 'breakpoint');
+      await service.addWatch('count');
+      expect(service.watches.single.value, '41');
+      await service.addWatch('missingLocalName');
+      expect(service.watches.last.error, isNotEmpty);
       await _until(() => service.vmService != null);
       final cancellation = Cancellation();
       final devTools = await LocalDebugAdapters().devTools(
@@ -572,8 +813,8 @@ void main() {
         'import subprocess, sys, time\n'
         'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
         'print("CHILD:" + str(child.pid), flush=True)\n'
-        'count = 41\n'
-        'print(count + 1, flush=True)\n'
+        'for count in range(39, 42):\n'
+        '    print(count + 1, flush=True)\n'
         'time.sleep(60)\n',
       );
       final python = Platform.environment['TABRYO_TEST_PYTHON'] ?? _python();
@@ -594,7 +835,7 @@ void main() {
           tools: ToolchainSelection({ProjectTool.python: python}),
           program: source.path,
           breakpoints: {
-            source.path: [5],
+            source.path: [const DebugBreakpoint(5, condition: 'count == 41')],
           },
         ),
       );
@@ -602,6 +843,9 @@ void main() {
         () => service.status == DebugStatus.paused && service.scopes.isNotEmpty,
       );
       expect(service.frames.first['line'], 5);
+      expect(service.stopCount, 1);
+      await service.addWatch('count');
+      expect(service.watches.single.value, '41');
       final child = int.parse(
         RegExp(r'CHILD:(\d+)').firstMatch(service.output)!.group(1)!,
       );
@@ -669,6 +913,7 @@ final class MemoryAdapters implements DebugAdapters {
 }
 
 final class MemoryDebugConnection implements DebugConnection {
+  Completer<Map<String, dynamic>>? watchReply;
   String? lastHotReason;
   Object? stackError;
   final controller = StreamController<Map<String, dynamic>>.broadcast();
@@ -695,6 +940,7 @@ final class MemoryDebugConnection implements DebugConnection {
       return {
         'stackFrames': [
           {'id': 9, 'line': 3},
+          {'id': 10, 'line': 4},
         ],
       };
     }
@@ -706,6 +952,9 @@ final class MemoryDebugConnection implements DebugConnection {
       };
     }
     if (command == 'variables') return variables.future;
+    if (command == 'evaluate') {
+      return watchReply?.future ?? Future.value({'result': 'fresh'});
+    }
     return {};
   }
 

@@ -301,15 +301,49 @@ final class LocalDebugAdapters implements DebugAdapters {
     final launch = command(project, configuration.tools, 'debug_adapter');
     await _validate(project, launch.executable);
     await _file(project, configuration.program);
-    if (configuration.arguments.length > 64 ||
-        configuration.arguments.any(
-          (a) => a.length > 4096 || a.contains('\u0000'),
-        ) ||
+    final directory = configuration.directory;
+    if (!(p.equals(directory, project.directory) ||
+            p.isWithin(project.directory, directory)) ||
+        !p.equals(
+          await Directory(directory).resolveSymbolicLinks(),
+          directory,
+        )) {
+      throw const DebugFailure(
+        'Choose a working directory inside this project without links.',
+      );
+    }
+    final arguments = [
+      ...configuration.arguments,
+      ...configuration.toolArguments,
+    ];
+    if (arguments.length > 64 ||
+        arguments.any((a) => a.length > 4096 || a.contains('\u0000')) ||
         configuration.breakpoints.length > 100 ||
         configuration.breakpoints.values.any(
-          (v) => v.length > 200 || v.any((line) => line < 1),
+          (v) =>
+              v.length > 200 ||
+              v.any(
+                (point) =>
+                    point.line < 1 ||
+                    (point.condition != null &&
+                        (point.condition!.trim().isEmpty ||
+                            point.condition!.length > 4096 ||
+                            point.condition!.contains('\u0000'))),
+              ),
         ) ||
+        configuration.environment.length > 64 ||
+        configuration.environment.entries.any(
+          (entry) =>
+              !RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key) ||
+              entry.value.length > 4096 ||
+              entry.value.contains('\u0000'),
+        ) ||
+        !['debug', 'profile', 'release'].contains(configuration.flutterMode) ||
+        (configuration.flavor != null &&
+            !RegExp(r'^[A-Za-z0-9_-]{1,80}$')
+                .hasMatch(configuration.flavor!)) ||
         (project.kind == ProjectKind.flutter &&
+            !configuration.isAttach &&
             (configuration.device == null || configuration.device!.isEmpty))) {
       throw const DebugFailure(
         'Choose a device and bounded debugger arguments and breakpoints.',
@@ -317,6 +351,56 @@ final class LocalDebugAdapters implements DebugAdapters {
     }
     for (final path in configuration.breakpoints.keys) {
       await _file(project, path);
+    }
+    if ((configuration.noDebug || configuration.flutterMode != 'debug') &&
+        configuration.breakpoints.values.any((points) => points.isNotEmpty)) {
+      throw const DebugFailure(
+        'Breakpoints require debug mode. Clear them before running without debugging.',
+      );
+    }
+    final uri = configuration.attachUri;
+    if (uri != null) {
+      final python = project.kind == ProjectKind.python;
+      if (!['127.0.0.1', '::1'].contains(uri.host) ||
+          uri.port < 1 ||
+          uri.port > 65535 ||
+          uri.userInfo.isNotEmpty ||
+          uri.hasFragment ||
+          uri.hasQuery ||
+          uri.toString().length > 4096 ||
+          (python
+              ? uri.scheme != 'tcp' || uri.path.isNotEmpty
+              : !['http', 'ws'].contains(uri.scheme))) {
+        throw const DebugFailure(
+          'Attach requires a literal loopback endpoint: tcp://127.0.0.1:port for debugpy, or the local Dart VM service URI.',
+        );
+      }
+      if (configuration.noDebug ||
+          configuration.arguments.isNotEmpty ||
+          configuration.toolArguments.isNotEmpty ||
+          configuration.environment.isNotEmpty ||
+          configuration.flavor != null ||
+          configuration.flutterMode != 'debug') {
+        throw const DebugFailure(
+          'Attach uses an existing application; clear launch arguments, environment, flavor and run mode.',
+        );
+      }
+      if (python) {
+        final socket = await Socket.connect(
+          uri.host,
+          uri.port,
+          timeout: const Duration(seconds: 10),
+        );
+        final connection = DapConnection(socket, socket.add, () async {
+          socket.destroy();
+        });
+        unawaited(
+          socket.done.catchError((Object error) {
+            connection._fail('The local debugpy connection closed.');
+          }),
+        );
+        return connection;
+      }
     }
     final child = await DebugProcess.start(
       launch.executable,

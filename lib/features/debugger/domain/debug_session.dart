@@ -27,12 +27,21 @@ final class DebugConfiguration {
     this.noDebug = false,
     this.pythonModule,
     this.django = false,
+    this.attachUri,
+    this.workingDirectory,
+    this.flavor,
+    this.flutterMode = 'debug',
     List<String> arguments = const [],
-    Map<String, List<int>> breakpoints = const {},
+    List<String> toolArguments = const [],
+    Map<String, String> environment = const {},
+    Map<String, List<DebugBreakpoint>> breakpoints = const {},
   }) : arguments = List.unmodifiable(arguments),
+       toolArguments = List.unmodifiable(toolArguments),
+       environment = Map.unmodifiable(environment),
        breakpoints = Map.unmodifiable(
          breakpoints.map(
-           (path, lines) => MapEntry(path, List<int>.unmodifiable(lines)),
+           (path, lines) =>
+               MapEntry(path, List<DebugBreakpoint>.unmodifiable(lines)),
          ),
        );
   final DevelopmentProject project;
@@ -42,8 +51,33 @@ final class DebugConfiguration {
   final bool noDebug;
   final String? pythonModule;
   final bool django;
+  final Uri? attachUri;
+  bool get isAttach => attachUri != null;
+  final String? workingDirectory;
+  String get directory => workingDirectory ?? project.directory;
+  final String? flavor;
+  final String flutterMode;
   final List<String> arguments;
-  final Map<String, List<int>> breakpoints;
+  final List<String> toolArguments;
+  final Map<String, String> environment;
+  final Map<String, List<DebugBreakpoint>> breakpoints;
+}
+
+final class DebugBreakpoint {
+  const DebugBreakpoint(this.line, {this.condition});
+  final int line;
+  final String? condition;
+  Map<String, Object?> toJson() => {
+    'line': line,
+    if (condition != null) 'condition': condition,
+  };
+}
+
+final class DebugWatch {
+  const DebugWatch(this.expression, {this.value, this.error});
+  final String expression;
+  final String? value;
+  final String? error;
 }
 
 abstract interface class DebugConnection {

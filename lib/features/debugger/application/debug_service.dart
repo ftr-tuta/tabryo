@@ -25,6 +25,8 @@ final class DebugService {
   int _generation = 0;
   int _pauseGeneration = 0;
   int _variablesRequest = 0;
+  int _watchRequest = 0;
+  List<DebugWatch> watches = [];
   DebugConfiguration? configuration;
   DebugStatus status = DebugStatus.idle;
   String? error;
@@ -39,6 +41,7 @@ final class DebugService {
   int? frameId;
   int? exitCode;
   int stopCount = 0;
+  String? stopReason;
   Uri? vmService;
   bool appStarted = false;
   bool reloadOnSave = true;
@@ -60,6 +63,7 @@ final class DebugService {
         !reloadOnSave ||
         !active ||
         !appStarted ||
+        configuration?.flutterMode != 'debug' ||
         configuration?.project.kind != ProjectKind.flutter) {
       return;
     }
@@ -140,15 +144,31 @@ final class DebugService {
 
   Map<String, Object?> launchArguments(DebugConfiguration config) => {
     'name': config.project.name,
-    'request': 'launch',
+    'request': config.isAttach ? 'attach' : 'launch',
     'type': config.project.kind == ProjectKind.python ? 'python' : 'dart',
-    'cwd': config.project.directory,
-    if (config.pythonModule == null)
+    'cwd': config.directory,
+    if (config.isAttach && config.project.kind == ProjectKind.python)
+      'connect': {
+        'host': config.attachUri!.host,
+        'port': config.attachUri!.port,
+      }
+    else if (config.isAttach)
+      'vmServiceUri': config.attachUri.toString(),
+    if (!config.isAttach && config.pythonModule == null)
       'program': config.program
-    else
+    else if (!config.isAttach)
       'module': config.pythonModule,
-    'args': config.arguments,
-    'noDebug': config.noDebug,
+    if (!config.isAttach) ...{
+      'args': config.arguments,
+      'noDebug': config.noDebug || config.flutterMode != 'debug',
+      'env': {
+        if (config.project.kind == ProjectKind.python) ...{
+          'PYTHONNOUSERSITE': '1',
+          'PYTHONUNBUFFERED': '1',
+        },
+        ...config.environment,
+      },
+    },
     if (config.project.kind == ProjectKind.python) ...{
       'python': config.tools[ProjectTool.python],
       'console': 'internalConsole',
@@ -156,7 +176,6 @@ final class DebugService {
       'subProcess': false,
       'justMyCode': true,
       'django': config.django,
-      'env': {'PYTHONNOUSERSITE': '1', 'PYTHONUNBUFFERED': '1'},
     } else ...{
       'debugSdkLibraries': false,
       'debugExternalPackageLibraries': false,
@@ -164,7 +183,19 @@ final class DebugService {
       'evaluateToStringInDebugViews': false,
       'sendLogsToClient': false,
       if (config.project.kind == ProjectKind.flutter)
-        'toolArgs': ['--no-pub', '--device-id', config.device!],
+        'toolArgs': [
+          if (!config.isAttach) '--no-pub',
+          if (config.device != null) ...['--device-id', config.device!],
+          if (!config.isAttach && config.flutterMode != 'debug')
+            '--${config.flutterMode}',
+          if (!config.isAttach && config.flavor != null) ...[
+            '--flavor',
+            config.flavor!,
+          ],
+          if (!config.isAttach) ...config.toolArguments,
+        ]
+      else if (!config.isAttach && config.toolArguments.isNotEmpty)
+        'toolArgs': config.toolArguments,
     },
   };
 
@@ -178,6 +209,7 @@ final class DebugService {
     threadId = null;
     frameId = null;
     stopCount = 0;
+    stopReason = null;
     configuration = config;
     status = DebugStatus.starting;
     error = null;
@@ -189,6 +221,8 @@ final class DebugService {
     frames = [];
     scopes = [];
     variables = [];
+    watches = [];
+    ++_watchRequest;
     verifiedBreakpoints.clear();
     _breakpointUpdates.clear();
     final initialized = _initialized = Completer<void>();
@@ -219,9 +253,20 @@ final class DebugService {
         'supportsStartDebuggingRequest': false,
       });
       if (generation != _generation) return;
+      if (config.breakpoints.values
+              .expand((v) => v)
+              .any((b) => b.condition != null) &&
+          capabilities['supportsConditionalBreakpoints'] != true) {
+        throw const DebugFailure(
+          'This adapter does not support conditional breakpoints. Review the breakpoints before starting.',
+        );
+      }
       Object? launchError;
       final launch = connection
-          .request('launch', launchArguments(config))
+          .request(
+            config.isAttach ? 'attach' : 'launch',
+            launchArguments(config),
+          )
           .catchError((Object failure) {
             launchError = failure;
             if (!initialized.isCompleted) initialized.complete();
@@ -236,9 +281,7 @@ final class DebugService {
       for (final entry in config.breakpoints.entries) {
         final response = await connection.request('setBreakpoints', {
           'source': {'path': entry.key},
-          'breakpoints': [
-            for (final line in entry.value) {'line': line},
-          ],
+          'breakpoints': [for (final point in entry.value) point.toJson()],
         });
         verifiedBreakpoints[entry.key] = [
           for (final breakpoint in _maps(response['breakpoints']))
@@ -294,24 +337,18 @@ final class DebugService {
         _clearPauseFailure();
         status = DebugStatus.paused;
         stopCount++;
+        stopReason = body['reason'] as String?;
         frames = [];
         scopes = [];
         variables = [];
+        _clearWatchValues();
         threadId = body['threadId'] is int ? body['threadId'] as int : null;
         unawaited(_loadPause(generation));
       case 'continued':
-        _clearPauseFailure();
-        status = DebugStatus.running;
-        _pauseGeneration++;
-        frames = [];
-        scopes = [];
-        variables = [];
-        frameId = null;
-        if (_savedReloadCheck != null) {
-          scheduleReloadAfterSave(_savedReloadCheck!);
-        }
+        _continued();
       case 'exited':
         _pauseGeneration++;
+        _clearWatchValues();
         _clearPauseFailure();
         exitCode = body['exitCode'] is int ? body['exitCode'] as int : null;
       case 'breakpoint':
@@ -333,6 +370,7 @@ final class DebugService {
         _clearPauseFailure();
         status = DebugStatus.terminated;
         _pauseGeneration++;
+        _clearWatchValues();
         vmService = null;
         appStarted = false;
         if (!_initialized!.isCompleted) _initialized!.complete();
@@ -359,6 +397,94 @@ final class DebugService {
         }
     }
     _changed();
+  }
+
+  void _continued() {
+    _clearPauseFailure();
+    status = DebugStatus.running;
+    stopReason = null;
+    _pauseGeneration++;
+    frames = [];
+    scopes = [];
+    variables = [];
+    frameId = null;
+    _clearWatchValues();
+    if (_savedReloadCheck != null) {
+      scheduleReloadAfterSave(_savedReloadCheck!);
+    }
+  }
+
+  void _clearWatchValues() {
+    ++_watchRequest;
+    watches = [for (final watch in watches) DebugWatch(watch.expression)];
+  }
+
+  Future<void> addWatch(String expression) async {
+    final text = expression.trim();
+    if (status != DebugStatus.paused ||
+        text.isEmpty ||
+        text.length > 4096 ||
+        watches.length >= 20) {
+      throw const DebugFailure(
+        'Pause and enter a watch of up to 4096 characters (maximum 20).',
+      );
+    }
+    if (watches.any((w) => w.expression == text)) return;
+    watches = [...watches, DebugWatch(text)];
+    await _refreshWatches();
+  }
+
+  void removeWatch(String expression) {
+    watches = watches.where((w) => w.expression != expression).toList();
+    _changed();
+  }
+
+  Future<void> _refreshWatches() async {
+    final connection = _connection;
+    final pause = _pauseGeneration;
+    final frame = frameId;
+    final request = ++_watchRequest;
+    if (connection == null || status != DebugStatus.paused || frame == null) {
+      return;
+    }
+    bool current() =>
+        !_disposed &&
+        request == _watchRequest &&
+        pause == _pauseGeneration &&
+        frame == frameId &&
+        status == DebugStatus.paused &&
+        identical(connection, _connection);
+    final expressions = watches.map((w) => w.expression).toList();
+    _changed();
+    for (final expression in expressions) {
+      if (!current()) return;
+      if (!watches.any((watch) => watch.expression == expression)) continue;
+      DebugWatch watch;
+      try {
+        final result = await connection.request('evaluate', {
+          'expression': expression,
+          'frameId': frame,
+          'context': 'watch',
+        });
+        final value = '${result['result'] ?? ''}';
+        watch = DebugWatch(
+          expression,
+          value: value.length > 16384 ? '${value.substring(0, 16384)}…' : value,
+        );
+      } catch (failure) {
+        final message = '$failure';
+        watch = DebugWatch(
+          expression,
+          error: message.substring(0, message.length.clamp(0, 4096)),
+        );
+      }
+      if (!current()) return;
+      watches = [
+        for (final existing in watches)
+          existing.expression == expression ? watch : existing,
+      ];
+      _changed();
+    }
   }
 
   Future<void> _loadPause(int generation) async {
@@ -403,6 +529,7 @@ final class DebugService {
     }
     final pause = _pauseGeneration;
     frameId = id;
+    _clearWatchValues();
     scopes = [];
     variables = [];
     final result = await _connection!.request('scopes', {'frameId': id});
@@ -413,6 +540,7 @@ final class DebugService {
     }
     scopes = _maps(result['scopes']);
     _changed();
+    await _refreshWatches();
   }
 
   Future<void> loadVariables(int reference) async {
@@ -444,15 +572,20 @@ final class DebugService {
       );
     }
     final pause = _pauseGeneration;
+    final frame = frameId;
+    final connection = _connection!;
     ++_variablesRequest;
-    final result = await _connection!.request('evaluate', {
+    final result = await connection.request('evaluate', {
       'expression': expression,
       'frameId': frameId,
       'context': 'repl',
     });
-    if (pause != _pauseGeneration) {
+    if (pause != _pauseGeneration ||
+        frame != frameId ||
+        !identical(connection, _connection) ||
+        status != DebugStatus.paused) {
       throw const DebugFailure(
-        'Execution resumed before evaluation completed.',
+        'The paused frame changed before evaluation completed.',
       );
     }
     return '${result['result'] ?? ''}';
@@ -477,7 +610,9 @@ final class DebugService {
       return;
     }
     if (command == 'hotReload' || command == 'hotRestart') {
-      if (configuration?.project.kind != ProjectKind.flutter || !appStarted) {
+      if (configuration?.project.kind != ProjectKind.flutter ||
+          !appStarted ||
+          configuration?.flutterMode != 'debug') {
         throw const DebugFailure('Wait for the Flutter application to start.');
       }
       await _flutterControl(command, 'manual');
@@ -491,7 +626,24 @@ final class DebugService {
         thread = _maps(result['threads']).firstOrNull?['id'] as int?;
       }
       if (thread == null || generation != _generation) return;
-      await connection.request(command, {'threadId': thread});
+      final resumes = command != 'pause';
+      if (resumes) {
+        _continued();
+        _changed();
+      }
+      final pause = _pauseGeneration;
+      try {
+        await connection.request(command, {'threadId': thread});
+      } catch (_) {
+        if (resumes &&
+            generation == _generation &&
+            pause == _pauseGeneration &&
+            status == DebugStatus.running) {
+          status = DebugStatus.paused;
+          await _loadPause(generation);
+        }
+        rethrow;
+      }
     }
   }
 
@@ -502,6 +654,7 @@ final class DebugService {
     }
     ++_generation;
     ++_pauseGeneration;
+    _clearWatchValues();
     if (_initialized != null && !_initialized!.isCompleted) {
       _initialized!.complete();
     }
@@ -510,7 +663,9 @@ final class DebugService {
     final connection = _connection;
     try {
       await connection
-          ?.request('disconnect', {'terminateDebuggee': true})
+          ?.request('disconnect', {
+            'terminateDebuggee': configuration?.isAttach != true,
+          })
           .timeout(const Duration(seconds: 3));
     } catch (_) {
       /* The owned process tree is the final stop boundary. */
@@ -562,6 +717,7 @@ final class DebugService {
   }
 
   Future<void> _release() {
+    _clearWatchValues();
     _reloadTimer?.cancel();
     _savedReloadCheck = null;
     final previous = _releasing;

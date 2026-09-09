@@ -441,15 +441,31 @@ when the panel opens. Running without debugging is an explicit checkbox.
 The panel shows verified/pending breakpoints, stack frames, scopes, variables,
 console output and continue/pause/step controls. Stack source links use the
 editor's project and read-only dependency boundaries. Evaluation is an explicit
-action that can execute application code. Stop, workspace close and application
+action that can execute application code. Add watches while paused to evaluate
+them again after each pause or frame change; stale results are discarded.
+Expand **Directory, environment and breakpoint conditions** to set a working
+directory within the project, in-memory environment overrides and conditions
+such as `{"5":"count > 2"}` for declared breakpoint lines. An adapter lacking
+conditional-breakpoint support refuses the session before launch.
+Stop, workspace close and application
 shutdown close the owned adapter process tree, including Python descendants.
 The project stays reserved while startup or shutdown is pending.
+
+**Attach to an existing local application** connects to a literal loopback
+endpoint: the Dart/Flutter VM service URI, or `tcp://127.0.0.1:5678` for an
+application started with debugpy listening there. Review the endpoint and project
+source before attaching. **Disconnect debugger** leaves that application running;
+it closes only Tabryo's connection, adapter and inspection tools. A Dart process
+paused at startup can show an entry pause; Continue advances to its breakpoints.
 
 Flutter provides hot reload/restart after application startup, requiring saved
 project buffers. Successful Dart saves automatically reload the active Flutter
 project; rapid saves coalesce and a paused session waits until continued. Disable
 **Hot reload after successful Dart saves** to use manual controls only. A reload
 failure leaves the saved file intact and reports the separate reload error.
+Advanced settings also expose Flutter flavors, SDK tool arguments and
+debug/profile/release modes. Availability depends on the chosen platform;
+breakpoints and reload require debug mode.
 **Open DevTools in Tabryo** starts the selected SDK's DevTools on loopback and
 opens a resizable pane for this session's VM service. The pane has a separate
 browser profile, permits navigation only on that server and hides while a dialog

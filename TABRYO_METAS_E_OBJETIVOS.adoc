@@ -488,8 +488,12 @@ proposta do servidor e exige revisão nativa antes de alterar o buffer; desfazer
 permanece no Monaco. Comandos cancelados não podem fornecer uma proposta tardia
 para outra revisão. A exposição opcional de diagnósticos captura somente faixas
 inteiramente contidas no trecho, limita quantidade/bytes e mostra origem, código
-e versão reportada, mantendo explícita a ausência de versão. Attach, breakpoints
-condicionais/watches, navegação Flutter via DTD, contexto de testes/sessões e
+e versão reportada, mantendo explícita a ausência de versão. Attach local preserva
+o processo externo ao desconectar. Condições de breakpoint exigem capacidade
+anunciada pelo adaptador; watches descartam resultados após continuação ou troca
+de frame. Diretório e ambiente dos perfis backend têm configuração explícita;
+Flutter oferece flavor, argumentos do SDK e modo conforme suporte do alvo.
+Navegação Flutter via DTD, contexto de testes/sessões e
 aceites físicos IME/DPI continuam pendentes na matriz Python/Dart/Flutter.
 Conversas gráficas Codex estão fora do escopo do plano aprovado desta entrega;
 seu planejamento independente permanece em CODEX-02. Operações de arquivo em

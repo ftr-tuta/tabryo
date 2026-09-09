@@ -42,6 +42,14 @@ final class _DebugPanelState extends State<DebugPanel> {
   final breakpoints = TextEditingController();
   final expression = TextEditingController();
   final port = TextEditingController(text: '8000');
+  final attachEndpoint = TextEditingController();
+  final directory = TextEditingController(text: '.');
+  final environment = TextEditingController(text: '{}');
+  final conditions = TextEditingController(text: '{}');
+  final flavor = TextEditingController();
+  final toolArguments = TextEditingController(text: '[]');
+  bool attach = false;
+  String flutterMode = 'debug';
   String profile = 'Script';
   String? device;
   List<FlutterDevice> devices = [];
@@ -58,6 +66,12 @@ final class _DebugPanelState extends State<DebugPanel> {
     breakpoints.dispose();
     expression.dispose();
     port.dispose();
+    attachEndpoint.dispose();
+    directory.dispose();
+    environment.dispose();
+    conditions.dispose();
+    flavor.dispose();
+    toolArguments.dispose();
     super.dispose();
   }
 
@@ -92,6 +106,28 @@ final class _DebugPanelState extends State<DebugPanel> {
               .map((s) => int.parse(s.trim()))
               .toSet()
               .toList();
+    final conditional = jsonDecode(conditions.text);
+    if (conditional is! Map ||
+        conditional.entries.any(
+          (entry) =>
+              entry.key is! String ||
+              entry.value is! String ||
+              !lines.contains(int.tryParse('${entry.key}')),
+        )) {
+      throw const DebugFailure(
+        'Conditions must map a declared breakpoint line to an expression, for example {"5":"count > 2"}.',
+      );
+    }
+    final env = jsonDecode(environment.text);
+    final toolArgs = jsonDecode(toolArguments.text);
+    if (env is! Map ||
+        env.values.any((v) => v is! String) ||
+        toolArgs is! List ||
+        toolArgs.any((v) => v is! String)) {
+      throw const DebugFailure(
+        'Environment must be a JSON object of strings; tool arguments must be a JSON list of strings.',
+      );
+    }
     final config = debugProfile(
       project: widget.project,
       tools: widget.tools,
@@ -101,7 +137,27 @@ final class _DebugPanelState extends State<DebugPanel> {
       port: int.parse(port.text),
       device: device,
       noDebug: noDebug,
-      breakpoints: lines.isEmpty ? {} : {path: lines},
+      attachUri: attach ? Uri.parse(attachEndpoint.text.trim()) : null,
+      workingDirectory: p.normalize(
+        p.isAbsolute(directory.text)
+            ? directory.text
+            : p.join(widget.project.directory, directory.text),
+      ),
+      environment: Map<String, String>.from(env),
+      toolArguments: toolArgs.cast<String>(),
+      flavor: flavor.text.trim().isEmpty ? null : flavor.text.trim(),
+      flutterMode: flutterMode,
+      breakpoints: lines.isEmpty
+          ? {}
+          : {
+              path: [
+                for (final line in lines)
+                  DebugBreakpoint(
+                    line,
+                    condition: conditional['$line'] as String?,
+                  ),
+              ],
+            },
     );
     final approved = await showDialog<bool>(
       context: context,
@@ -111,7 +167,7 @@ final class _DebugPanelState extends State<DebugPanel> {
           width: 720,
           child: SingleChildScrollView(
             child: SelectableText(
-              'Runs saved project code using the selected adapter. Stop closes its owned process tree. Python requires debugpy in this environment.\n\nTools: ${jsonEncode(config.tools.toJson())}\n\n${const JsonEncoder.withIndent('  ').convert(widget.service.launchArguments(config))}\n\nBreakpoints: ${jsonEncode(config.breakpoints)}',
+              '${config.isAttach ? 'Connects to an existing local application. Disconnect keeps that application running.' : 'Runs saved project code using the selected adapter. Stop closes its owned process tree. Python requires debugpy in this environment.'}\n\nTools: ${jsonEncode(config.tools.toJson())}\n\n${const JsonEncoder.withIndent('  ').convert(widget.service.launchArguments(config))}\n\nBreakpoints: ${jsonEncode(config.breakpoints)}',
             ),
           ),
         ),
@@ -164,6 +220,26 @@ final class _DebugPanelState extends State<DebugPanel> {
                       program.text = v == 'Django' ? 'manage.py' : 'main.py';
                     }),
             ),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Attach to an existing local application'),
+            value: attach,
+            onChanged: busy || service.active
+                ? null
+                : (value) => setState(() => attach = value!),
+          ),
+          if (attach)
+            TextField(
+              controller: attachEndpoint,
+              enabled: !busy && !service.active,
+              decoration: InputDecoration(
+                labelText: widget.project.kind == ProjectKind.python
+                    ? 'debugpy endpoint (tcp://127.0.0.1:5678)'
+                    : 'Local Dart VM service URI',
+                helperText:
+                    'Disconnect keeps the existing application running.',
+              ),
+            ),
           TextField(
             controller: program,
             enabled: !busy && !service.active,
@@ -173,10 +249,75 @@ final class _DebugPanelState extends State<DebugPanel> {
           ),
           TextField(
             controller: arguments,
-            enabled: !busy && !service.active,
+            enabled: !attach && !busy && !service.active,
             decoration: const InputDecoration(
               labelText: 'Program arguments (JSON list)',
             ),
+          ),
+          ExpansionTile(
+            title: const Text(
+              'Directory, environment and breakpoint conditions',
+            ),
+            children: [
+              TextField(
+                controller: directory,
+                enabled: !busy && !service.active,
+                decoration: const InputDecoration(
+                  labelText: 'Working directory inside the project',
+                ),
+              ),
+              TextField(
+                controller: environment,
+                enabled: !attach && !busy && !service.active,
+                decoration: const InputDecoration(
+                  labelText: 'Environment overrides (JSON object)',
+                  helperText:
+                      'Kept in memory; values appear in the session review.',
+                ),
+              ),
+              TextField(
+                controller: conditions,
+                enabled: !busy && !service.active,
+                decoration: const InputDecoration(
+                  labelText: 'Breakpoint conditions (JSON line to expression)',
+                  helperText:
+                      'Example: {"5":"count > 2"}. Requires adapter support.',
+                ),
+              ),
+              if (widget.project.kind != ProjectKind.python)
+                TextField(
+                  controller: toolArguments,
+                  enabled: !attach && !busy && !service.active,
+                  decoration: const InputDecoration(
+                    labelText: 'SDK tool arguments (JSON list)',
+                  ),
+                ),
+              if (widget.project.kind == ProjectKind.flutter) ...[
+                TextField(
+                  controller: flavor,
+                  enabled: !attach && !busy && !service.active,
+                  decoration: const InputDecoration(
+                    labelText: 'Flutter flavor (optional)',
+                  ),
+                ),
+                DropdownButton<String>(
+                  value: flutterMode,
+                  items: [
+                    for (final mode in ['debug', 'profile', 'release'])
+                      DropdownMenuItem(
+                        value: mode,
+                        child: Text('Flutter $mode'),
+                      ),
+                  ],
+                  onChanged: attach || busy || service.active
+                      ? null
+                      : (value) => setState(() => flutterMode = value!),
+                ),
+                const Text(
+                  'Profile/Release depend on the target. Breakpoints and hot reload require debug mode.',
+                ),
+              ],
+            ],
           ),
           if (profile != 'Script')
             TextField(
@@ -195,7 +336,7 @@ final class _DebugPanelState extends State<DebugPanel> {
             contentPadding: EdgeInsets.zero,
             value: noDebug,
             title: const Text('Run without debugging'),
-            onChanged: busy || service.active
+            onChanged: attach || busy || service.active
                 ? null
                 : (v) => setState(() => noDebug = v!),
           ),
@@ -268,7 +409,7 @@ final class _DebugPanelState extends State<DebugPanel> {
                 ),
               ),
             Text(
-              'Debugger: ${service.status.name}${service.exitCode == null ? '' : ' · exit ${service.exitCode}'}',
+              'Debugger: ${service.status.name}${service.stopReason == null ? '' : ' · ${service.stopReason}'}${service.exitCode == null ? '' : ' · exit ${service.exitCode}'}',
             ),
             if (service.error != null) Text(service.error!),
             if (service.active)
@@ -277,7 +418,11 @@ final class _DebugPanelState extends State<DebugPanel> {
                 children: [
                   FilledButton(
                     onPressed: () => _act(widget.onStop),
-                    child: const Text('Stop debugger'),
+                    child: Text(
+                      service.configuration?.isAttach == true
+                          ? 'Disconnect debugger'
+                          : 'Stop debugger',
+                    ),
                   ),
                   for (final command
                       in service.status == DebugStatus.paused
@@ -292,7 +437,8 @@ final class _DebugPanelState extends State<DebugPanel> {
                       child: Text(command),
                     ),
                   if (widget.project.kind == ProjectKind.flutter &&
-                      service.appStarted)
+                      service.appStarted &&
+                      service.configuration?.flutterMode == 'debug')
                     for (final command in ['hotReload', 'hotRestart'])
                       OutlinedButton(
                         onPressed: busy
@@ -406,10 +552,38 @@ final class _DebugPanelState extends State<DebugPanel> {
                       }),
                 child: const Text('Evaluate expression'),
               ),
+              OutlinedButton(
+                onPressed: busy
+                    ? null
+                    : () => _act(() => service.addWatch(expression.text)),
+                child: const Text(
+                  'Add watch (evaluates after each pause or frame change)',
+                ),
+              ),
               if (evaluation != null &&
                   evaluationStop == service.stopCount &&
                   evaluationFrame == service.frameId)
                 SelectableText(evaluation!),
+            ],
+            if (service.watches.isNotEmpty) ...[
+              const Text('Watches'),
+              for (final watch in service.watches)
+                ListTile(
+                  dense: true,
+                  title: SelectableText(watch.expression),
+                  subtitle: SelectableText(
+                    watch.error ??
+                        watch.value ??
+                        (service.status == DebugStatus.paused
+                            ? 'Evaluating…'
+                            : 'Waiting for a paused frame'),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Remove watch',
+                    onPressed: () => service.removeWatch(watch.expression),
+                  ),
+                ),
             ],
             if (service.output.isNotEmpty)
               ExpansionTile(
