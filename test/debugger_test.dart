@@ -19,7 +19,7 @@ import 'package:tabryo/features/debugger/application/debug_service.dart';
 import 'package:tabryo/features/debugger/application/debug_profiles.dart';
 import 'package:tabryo/features/debugger/domain/debug_session.dart';
 import 'package:tabryo/features/debugger/infrastructure/dap_connection.dart';
-import 'package:tabryo/features/debugger/infrastructure/debug_process.dart';
+import 'package:tabryo/core/owned_process.dart';
 import 'package:tabryo/features/debugger/infrastructure/local_flutter_devices.dart';
 import 'package:tabryo/features/debugger/presentation/debug_panel.dart';
 import 'package:tabryo/features/projects/domain/project.dart';
@@ -569,7 +569,7 @@ void main() {
                 'bin',
                 Platform.isWindows ? 'dart.exe' : 'dart',
               );
-        final child = await DebugProcess.start(
+        final child = await OwnedProcess.start(
           executable,
           python
               ? [source.path, info.path]
@@ -895,7 +895,7 @@ void main() {
       expect(service.active, isFalse);
       expect(service.dtdUri, isNull);
       await daemon.done.timeout(const Duration(seconds: 10));
-      final existing = await DebugProcess.start(dart, [
+      final existing = await OwnedProcess.start(dart, [
         p.join(sdk, 'bin', 'cache', 'flutter_tools.snapshot'),
         'run',
         '--machine',

@@ -98,7 +98,7 @@ jobs:
           } else {
             $env:LD_LIBRARY_PATH = "${PWD}/build/linux/x64/debug/bundle/lib:$env:LD_LIBRARY_PATH"
           }
-          flutter test test/collaboration_sessions_test.dart test/codex_sessions_test.dart test/mcp_codex_test.dart --concurrency=1 --name 'installed Codex uses authenticated collaboration MCP|steering reaches the active turn|installed Codex'
+          flutter test test/collaboration_sessions_test.dart test/codex_sessions_test.dart test/mcp_codex_test.dart --concurrency=1 --name 'installed Codex uses authenticated collaboration MCP|steering reaches the active turn|installed Codex|standalone client'
           exit $LASTEXITCODE
       - name: Windows desktop integration
         if: runner.os == 'Windows'

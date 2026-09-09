@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../../../core/owned_process.dart';
+
 import '../domain/codex_connection.dart';
 import 'codex_rpc_channel.dart';
 
@@ -39,6 +41,7 @@ final class LocalCodexConnection implements CodexConnection {
       );
     }
     Process process;
+    late final OwnedProcess child;
     try {
       final launchEnvironment = {...Platform.environment, ...?environment};
       // This is an independent client. A Tabryo launched from Codex must not
@@ -51,14 +54,14 @@ final class LocalCodexConnection implements CodexConnection {
       ]) {
         launchEnvironment.remove(name);
       }
-      process = await Process.start(
+      child = await OwnedProcess.start(
         executable!,
         const ['app-server'],
-        workingDirectory: workspace,
+        workspace,
         environment: launchEnvironment,
         includeParentEnvironment: false,
-        mode: ProcessStartMode.normal,
       );
+      process = child.process;
     } catch (_) {
       throw const CodexFailure(
         'Could not start Codex App Server. Check the CLI installation and workspace.',
@@ -74,16 +77,14 @@ final class LocalCodexConnection implements CodexConnection {
         try {
           await process.exitCode.timeout(const Duration(seconds: 3));
         } on TimeoutException {
-          process.kill();
-          try {
-            await process.exitCode.timeout(const Duration(seconds: 2));
-          } on TimeoutException {
-            throw const CodexFailure(
-              'Codex did not stop. Check the owned process before reconnecting.',
-            );
-          }
+          await child.close();
         } finally {
-          await stderr.cancel();
+          try {
+            // Parent exit alone does not retire MCP servers or helper children.
+            await child.close();
+          } finally {
+            await stderr.cancel();
+          }
         }
       },
     );

@@ -263,21 +263,34 @@ void main() {
   );
 
   test(
-    'a standalone client does not inherit the parent Desktop tools context',
+    'a standalone client isolates Desktop context and closes descendants after parent exit',
     () async {
+      await File(p.join(workspace.path, 'child.dart')).writeAsString(r'''
+import 'dart:async';
+import 'dart:io';
+void main() {
+  File('child.ready').writeAsStringSync('$pid');
+  Timer.periodic(const Duration(seconds: 1), (_) {});
+}
+''');
       await File(p.join(workspace.path, 'app-server')).writeAsString(r'''
 import 'dart:convert';
 import 'dart:io';
 Future<void> main() async {
+  Process? child;
   await for (final line in stdin.transform(utf8.decoder).transform(const LineSplitter())) {
     final message = jsonDecode(line) as Map;
     if (message['id'] == null) continue;
+    child ??= await Process.start(Platform.resolvedExecutable, ['child.dart']);
     stdout.writeln(jsonEncode({'id': message['id'], 'result': {
+      'childPid': child.pid,
       'desktopContext': ['CODEX_APP_TOOLS_PIPE_PATH', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE'].any(Platform.environment.containsKey),
       'policyRetained': Platform.environment['CODEX_PERMISSION_PROFILE'] == 'test-policy',
       'homeRetained': Platform.environment['CODEX_HOME'] != null,
     }}));
   }
+  // Simulate a helper which outlives a normally exiting App Server.
+  exit(0);
 }
 ''');
       final independent = LocalCodexConnection(
@@ -291,16 +304,59 @@ Future<void> main() async {
           'CODEX_HOME': configHome.path,
         },
       );
+      late final int childPid;
       try {
         await independent.connect(workspace.path);
-        expect(await independent.request('environment/read', {}), {
+        final received = await independent.request('environment/read', {});
+        expect(received.remove('childPid'), greaterThan(0));
+        expect(received, {
           'desktopContext': false,
           'policyRetained': true,
           'homeRetained': true,
         });
+        final ready = File(p.join(workspace.path, 'child.ready'));
+        for (
+          var attempt = 0;
+          attempt < 100 && !await ready.exists();
+          attempt++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        // The Dart CLI may launch a separate VM process. Inspect the worker's
+        // own PID so the assertion covers descendants beyond that launcher.
+        childPid = int.parse(await ready.readAsString());
       } finally {
         await independent.close();
       }
+      Future<bool> running() async {
+        if (Platform.isWindows) {
+          final result = await Process.run('tasklist', [
+            '/FI',
+            'PID eq $childPid',
+            '/FO',
+            'CSV',
+            '/NH',
+          ]);
+          expect(result.exitCode, 0);
+          return RegExp(
+            '^"[^"\\r\\n]+","$childPid",',
+            multiLine: true,
+          ).hasMatch('${result.stdout}');
+        }
+        try {
+          return !(await File(
+            '/proc/$childPid/stat',
+          ).readAsString()).contains(' Z ');
+        } on FileSystemException catch (error) {
+          if (error.osError?.errorCode != 2) rethrow;
+          return false;
+        }
+      }
+
+      for (var attempt = 0; attempt < 50 && await running(); attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(await running(), isFalse);
     },
     skip: enabled ? false : 'Set TABRYO_TEST_CODEX and TABRYO_TEST_DART for isolated protocol tests.',
   );

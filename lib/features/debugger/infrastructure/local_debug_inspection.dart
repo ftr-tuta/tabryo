@@ -7,13 +7,13 @@ import 'package:vm_service/vm_service.dart' as vm;
 
 import '../../../core/cancellation.dart';
 import '../domain/debug_session.dart';
-import 'debug_process.dart';
+import '../../../core/owned_process.dart';
 
 /// The daemon and VM connection belong to one debug session. Neither its
 /// trusted-client secret nor its authenticated URI is persisted to disk.
 final class LocalDebugInspection {
   LocalDebugInspection._(this._child);
-  final DebugProcess _child;
+  final OwnedProcess _child;
   DartToolingDaemon? _daemon;
   vm.VmService? _vm;
   final _sources = StreamController<DebugSourceLocation>.broadcast();
@@ -32,7 +32,12 @@ final class LocalDebugInspection {
   ) async {
     cancellation.check();
     final result = LocalDebugInspection._(
-      await DebugProcess.start(dart, ['tooling-daemon', '--machine'], root),
+      await OwnedProcess.start(
+        dart,
+        ['tooling-daemon', '--machine'],
+        root,
+        excludedEnvironment: const {'PYTHONHOME', 'PYTHONPATH'},
+      ),
     );
     final ready = Completer<Map>();
     final cancelled = Timer.periodic(const Duration(milliseconds: 30), (_) {

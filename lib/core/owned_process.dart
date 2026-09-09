@@ -5,12 +5,10 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
-import '../domain/debug_session.dart';
-
-/// Adapter children stay in an owned Windows Job / Linux process group. The
-/// adapter receives no protocol input until ownership has been established.
-final class DebugProcess {
-  DebugProcess._(this.process, this._job);
+/// Children stay in an owned Windows Job / Linux process group, including
+/// descendants that outlive the parent. Establish ownership before sending RPC.
+final class OwnedProcess {
+  OwnedProcess._(this.process, this._job);
   final Process process;
   final int? _job;
   Future<void>? _closing;
@@ -18,15 +16,21 @@ final class DebugProcess {
   static final _close = _kernel
       .lookupFunction<Int32 Function(IntPtr), int Function(int)>('CloseHandle');
 
-  static Future<DebugProcess> start(
+  static Future<OwnedProcess> start(
     String executable,
     List<String> arguments,
     String root, {
     Map<String, String> environment = const {},
+    Set<String> excludedEnvironment = const {},
+    bool includeParentEnvironment = true,
   }) async {
-    final env = {...Platform.environment, ...environment};
-    env.remove('PYTHONHOME');
-    env.remove('PYTHONPATH');
+    final env = {
+      if (includeParentEnvironment) ...Platform.environment,
+      ...environment,
+    };
+    for (final name in excludedEnvironment) {
+      env.remove(name);
+    }
     final process = await Process.start(
       Platform.isLinux ? '/usr/bin/setsid' : executable,
       Platform.isLinux ? [executable, ...arguments] : arguments,
@@ -60,8 +64,10 @@ final class DebugProcess {
             >('AssignProcessToJobObject');
         job = create(nullptr, nullptr);
         if (job == 0) {
-          throw const DebugFailure(
-            'Could not create the debugger process job.',
+          throw ProcessException(
+            executable,
+            arguments,
+            'Could not create the owned process job.',
           );
         }
         final info = calloc<Uint8>(
@@ -74,8 +80,10 @@ final class DebugProcess {
           if (configure(job, 9, info.cast(), 144) == 0 ||
               handle == 0 ||
               assign(job, handle) == 0) {
-            throw const DebugFailure(
-              'Could not contain the debugger process tree.',
+            throw ProcessException(
+              executable,
+              arguments,
+              'Could not contain the owned process tree.',
             );
           }
         } finally {
@@ -83,7 +91,7 @@ final class DebugProcess {
           if (handle != 0) _close(handle);
         }
       }
-      return DebugProcess._(process, job);
+      return OwnedProcess._(process, job);
     } catch (_) {
       if (job != null && job != 0) _close(job);
       process.kill();
@@ -105,7 +113,8 @@ final class DebugProcess {
     try {
       await process.stdin.close();
     } catch (_) {
-      /* The adapter can close first. */
+      // The child can close its input first. Its exit was already awaited.
+      return;
     }
   }();
 }

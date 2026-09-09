@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 import '../../projects/domain/project.dart';
 import '../../../core/cancellation.dart';
 import '../domain/debug_session.dart';
-import 'debug_process.dart';
+import '../../../core/owned_process.dart';
 import 'local_devtools.dart';
 import 'local_flutter_devices.dart';
 
@@ -403,11 +403,12 @@ final class LocalDebugAdapters implements DebugAdapters {
         return connection;
       }
     }
-    final child = await DebugProcess.start(
+    final child = await OwnedProcess.start(
       launch.executable,
       launch.arguments,
       project.directory,
       environment: {'PYTHONNOUSERSITE': '1', 'PYTHONUNBUFFERED': '1'},
+      excludedEnvironment: const {'PYTHONHOME', 'PYTHONPATH'},
     );
     final connection = DapConnection(
       child.process.stdout,
@@ -449,10 +450,11 @@ final class LocalDebugAdapters implements DebugAdapters {
     final launch = command(project, tools, 'daemon');
     await _validate(project, launch.executable);
     cancellation.check();
-    final child = await DebugProcess.start(
+    final child = await OwnedProcess.start(
       launch.executable,
       launch.arguments,
       project.directory,
+      excludedEnvironment: const {'PYTHONHOME', 'PYTHONPATH'},
     );
     final discovery = LocalFlutterDevices(
       child.process.stdout,

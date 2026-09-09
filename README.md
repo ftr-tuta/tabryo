@@ -206,12 +206,14 @@ displayed on demand; known credentials and sensitive keys are masked. Results ar
 transient and capped for display, and raw process logs are not retained.
 
 **Reconnect servers** restarts this Hub's owned App Server and inspection session.
-Closing the Hub disconnects it. Disconnecting does not guarantee cancellation of
+Closing the Hub disconnects its App Server and stops its owned MCP/helper process
+tree, including descendants that outlive the parent. Late server readiness
+refreshes the tool inventory automatically. Disconnecting does not guarantee cancellation of
 work already running remotely. Other Codex clients may need a separate reconnect
 after configuration changes. Disabling/removing a definition does not revoke
 credentials at its provider. Server-initiated approvals and elicitation forms are
 explicitly refused in this initial inspector; use the Codex terminal for those
-flows. Authenticated remote providers and Linux interaction remain unqualified.
+flows. Authenticated remote provider flows remain unqualified.
 The editor can now publish a reviewed excerpt through its local MCP endpoint;
 graphical Codex conversations remain planned.
 see [metas e objetivos](TABRYO_METAS_E_OBJETIVOS.adoc).

@@ -7,7 +7,7 @@ import 'package:ffi/ffi.dart';
 
 import '../domain/debug_session.dart';
 import '../../../core/cancellation.dart';
-import 'debug_process.dart';
+import '../../../core/owned_process.dart';
 import 'local_debug_inspection.dart';
 
 final class LocalDevTools implements DebugTools {
@@ -29,7 +29,7 @@ final class LocalDevTools implements DebugTools {
   @override
   Future<DebugSourceLocation> selectedWidgetSource() =>
       _inspection.selectedWidgetSource();
-  final DebugProcess child;
+  final OwnedProcess child;
   final StreamSubscription<String> _output;
   final StreamSubscription<List<int>> _errors;
   @override
@@ -52,19 +52,24 @@ final class LocalDevTools implements DebugTools {
       service,
       cancellation,
     );
-    late final DebugProcess child;
+    late final OwnedProcess child;
     try {
-      child = await DebugProcess.start(dart, [
-        'devtools',
-        '--machine',
-        '--host',
-        '127.0.0.1',
-        '--port',
-        '0',
-        '--no-launch-browser',
-        '--dtd-uri',
-        inspection.uri.toString(),
-      ], root);
+      child = await OwnedProcess.start(
+        dart,
+        [
+          'devtools',
+          '--machine',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          '0',
+          '--no-launch-browser',
+          '--dtd-uri',
+          inspection.uri.toString(),
+        ],
+        root,
+        excludedEnvironment: const {'PYTHONHOME', 'PYTHONPATH'},
+      );
     } catch (_) {
       await inspection.close();
       rethrow;
