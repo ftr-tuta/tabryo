@@ -20,6 +20,7 @@ final class McpHubViewModel extends DartitectViewModel {
   List<McpServer> servers = const [];
   final statuses = <String, String>{};
   bool busy = false;
+  bool _inventoryPending = false;
   bool _disposed = false;
   int _generation = 0;
 
@@ -40,11 +41,14 @@ final class McpHubViewModel extends DartitectViewModel {
     _notify();
   }
 
-  Future<bool> _run(Future<void> Function() action) async {
+  Future<bool> _run(
+    Future<void> Function() action, {
+    bool clearMessage = true,
+  }) async {
     if (busy || _disposed) return false;
     final generation = _generation;
     busy = true;
-    message = null;
+    if (clearMessage) message = null;
     _notify();
     try {
       await action();
@@ -63,6 +67,7 @@ final class McpHubViewModel extends DartitectViewModel {
       if (generation == _generation && !_disposed) {
         busy = false;
         _notify();
+        _refreshReadyInventory();
       }
     }
   }
@@ -72,6 +77,12 @@ final class McpHubViewModel extends DartitectViewModel {
     if (!servers.any((s) => s.name == selectedName)) {
       selectedName = servers.firstOrNull?.name;
     }
+  }
+
+  void _refreshReadyInventory() {
+    if (!_inventoryPending || busy || _disposed || !connected) return;
+    _inventoryPending = false;
+    unawaited(_run(hub.refreshInventory, clearMessage: false));
   }
 
   Future<bool> connect() => _run(() async {
@@ -147,6 +158,7 @@ final class McpHubViewModel extends DartitectViewModel {
   void _event(CodexEvent event) {
     if (_disposed) return;
     if (event.method == 'connection/closed') {
+      _inventoryPending = false;
       servers = const [];
       inspection = null;
       authorizationUrl = null;
@@ -160,6 +172,10 @@ final class McpHubViewModel extends DartitectViewModel {
       if (name is String &&
           ['starting', 'ready', 'failed', 'cancelled'].contains(status)) {
         statuses[name] = status as String;
+        if (status == 'ready') {
+          _inventoryPending = true;
+          _refreshReadyInventory();
+        }
       }
     } else if (event.method == 'mcpServer/oauthLogin/completed') {
       authorizationUrl = null;
@@ -172,6 +188,7 @@ final class McpHubViewModel extends DartitectViewModel {
 
   Future<void> disconnect() async {
     ++_generation;
+    _inventoryPending = false;
     busy = false;
     servers = const [];
     selectedName = null;

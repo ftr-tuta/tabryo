@@ -18,6 +18,8 @@ final class MemoryCodex implements CodexConnection {
   bool versionConflict = false;
   bool repeatCursor = false;
   bool projectOverride = false;
+  bool inventoryReady = true;
+  Completer<void>? inventoryBarrier;
   int connections = 0;
   int version = 1;
   Completer<Map<String, Object?>>? toolResult;
@@ -90,23 +92,26 @@ final class MemoryCodex implements CodexConnection {
           'thread': {'id': 'inspection'},
         };
       case 'mcpServerStatus/list':
+        await inventoryBarrier?.future;
         return {
           'data': [
             for (final name in definitions.keys)
               {
                 'name': name,
                 'authStatus': 'unsupported',
-                'tools': {
-                  if (name == 'dart_flutter')
-                    'dtd': {
-                      'name': 'dtd',
-                      'inputSchema': {'type': 'object'},
-                    },
-                  'echo': {
-                    'name': 'echo',
-                    'inputSchema': {'type': 'object'},
-                  },
-                },
+                'tools': inventoryReady
+                    ? {
+                        if (name == 'dart_flutter')
+                          'dtd': {
+                            'name': 'dtd',
+                            'inputSchema': {'type': 'object'},
+                          },
+                        'echo': {
+                          'name': 'echo',
+                          'inputSchema': {'type': 'object'},
+                        },
+                      }
+                    : {},
                 'resources': [
                   {'name': 'Hello', 'uri': 'fixture://hello'},
                 ],
@@ -187,6 +192,47 @@ void main() {
     await model.selectWorkspace(root);
     expect(connection.connections, 0);
     expect(connection.requests, isEmpty);
+  });
+
+  test('late MCP readiness refreshes tools and coalesces updates during an operation', () async {
+    connection.inventoryReady = false;
+    await connect();
+    expect(model.servers.single.tools, isEmpty);
+    model.message = 'Previous command result.';
+    connection.inventoryReady = true;
+    void ready() => connection.controller.add(
+      const CodexEvent('mcpServer/startupStatus/updated', {
+        'name': 'echo',
+        'status': 'ready',
+      }),
+    );
+    ready();
+    await Future<void>.delayed(Duration.zero);
+    expect(model.servers.single.tools, contains('echo'));
+    expect(model.statuses['echo'], 'ready');
+    expect(model.message, 'Previous command result.');
+    final before = connection.requests
+        .where((r) => r.$1 == 'mcpServerStatus/list')
+        .length;
+    connection.inventoryBarrier = Completer<void>();
+    final refreshing = model.refresh();
+    await Future<void>.delayed(Duration.zero);
+    ready();
+    ready();
+    await Future<void>.delayed(Duration.zero);
+    connection.inventoryBarrier!.complete();
+    expect(await refreshing, isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      connection.requests.where((r) => r.$1 == 'mcpServerStatus/list').length,
+      before + 2,
+    );
+    expect(model.servers.single.tools, contains('echo'));
+    await model.disconnect();
+    ready();
+    await Future<void>.delayed(Duration.zero);
+    expect(model.servers, isEmpty);
+    expect(model.busy, isFalse);
   });
 
   test('Dart session sharing requires the selected SDK and rejects retired sessions or tool errors', () async {

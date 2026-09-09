@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -125,7 +126,30 @@ void main() {
         arguments: ['mcp-server', '--dart-sdk', p.dirname(p.dirname(dart!))],
         workingDirectory: workspace.path,
       );
+      final startup = Completer<CodexEvent>();
+      final notifications = hub.events.listen((event) {
+        if (event.method == 'mcpServer/startupStatus/updated' &&
+            event.parameters['name'] == sdk.name &&
+            [
+              'ready',
+              'failed',
+              'cancelled',
+            ].contains(event.parameters['status']) &&
+            !startup.isCompleted) {
+          startup.complete(event);
+        }
+      });
+      addTearDown(notifications.cancel);
       await hub.apply(hub.configure(sdk));
+      final initialized = await startup.future.timeout(
+        const Duration(seconds: 45),
+      );
+      expect(
+        initialized.parameters['status'],
+        'ready',
+        reason: hub.safeText('${initialized.parameters['error']}'),
+      );
+      await hub.refreshInventory();
       final official = hub.servers.single;
       expect(official.tools, contains('dtd'));
       expect(official.tools, contains('widget_inspector'));
