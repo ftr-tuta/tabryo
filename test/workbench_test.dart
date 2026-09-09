@@ -285,6 +285,20 @@ void main() {
       expect(utf8.decode(input), '´');
       tester.testTextInput.updateEditingValue(TextEditingValue.empty);
       input.clear();
+      for (final alt in [
+        LogicalKeyboardKey.altLeft,
+        LogicalKeyboardKey.altRight,
+      ]) {
+        await tester.sendKeyDownEvent(alt, platform: 'windows');
+        await tester.sendKeyEvent(
+          LogicalKeyboardKey.keyA,
+          character: 'a',
+          platform: 'windows',
+        );
+        await tester.sendKeyUpEvent(alt, platform: 'windows');
+      }
+      expect(utf8.decode(input), '\x1ba\x1ba');
+      input.clear();
       await tester.sendKeyDownEvent(
         LogicalKeyboardKey.controlLeft,
         platform: 'windows',

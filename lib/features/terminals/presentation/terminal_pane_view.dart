@@ -166,9 +166,10 @@ final class _TerminalPaneViewState extends State<TerminalPaneView> {
     // xterm's hardware fallback inserts dead-key labels before Windows commits
     // their composed text. Let the platform text client handle printable input
     // (including AltGr), while xterm retains control/navigation key encoding.
-    final altGr = keyboard.physicalKeysPressed.contains(
-      PhysicalKeyboardKey.altRight,
-    );
+    final altGr =
+        keyboard.isControlPressed &&
+        keyboard.isAltPressed &&
+        keyboard.physicalKeysPressed.contains(PhysicalKeyboardKey.altRight);
     final plainText =
         !keyboard.isMetaPressed &&
         ((!keyboard.isControlPressed && !keyboard.isAltPressed) || altGr);
