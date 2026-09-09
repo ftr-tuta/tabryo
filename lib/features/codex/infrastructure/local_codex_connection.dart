@@ -6,11 +6,27 @@ import '../../../core/owned_process.dart';
 import '../domain/codex_connection.dart';
 import 'codex_rpc_channel.dart';
 
-final class LocalCodexConnection implements CodexConnection {
-  LocalCodexConnection({required this.executable, this.environment});
+final class LocalCodexConnection implements InteractiveCodexConnection {
+  LocalCodexConnection({
+    required this.executable,
+    this.environment,
+    this.interactive = false,
+  });
+  final bool interactive;
   final String? executable;
   final Map<String, String>? environment;
   final _events = StreamController<CodexEvent>.broadcast();
+  final _requests = StreamController<CodexServerRequest>.broadcast();
+  @override
+  Stream<CodexServerRequest> get requests => _requests.stream;
+  @override
+  void respond(Object requestId, Map<String, Object?> response) {
+    if (!interactive || !connected) {
+      throw const CodexFailure('This interaction is disconnected.');
+    }
+    _channel!.respond(requestId, response);
+  }
+
   CodexRpcChannel? _channel;
   StreamSubscription<CodexEvent>? _subscription;
   bool _ready = false;
@@ -51,6 +67,7 @@ final class LocalCodexConnection implements CodexConnection {
         'CODEX_THREAD_ID',
         'CODEX_SESSION_ID',
         'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+        'CODEX_PERMISSION_PROFILE',
       ]) {
         launchEnvironment.remove(name);
       }
@@ -72,6 +89,7 @@ final class LocalCodexConnection implements CodexConnection {
     final channel = CodexRpcChannel(
       input: process.stdout,
       send: process.stdin.add,
+      onServerRequest: interactive ? _requests.add : null,
       closeTransport: () async {
         await _closeInput(process);
         try {

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'editor_view_model.dart';
 import 'editor_context_dialog.dart';
 import 'monaco_editor.dart';
+import '../../git/presentation/git_review_view_model.dart';
 
 /// The caller closes only after this returns true; Cancel never drops a buffer.
 Future<bool> confirmDocumentClose(
@@ -67,9 +68,15 @@ Future<bool> confirmDocumentClose(
 }
 
 final class EditorPane extends StatelessWidget {
-  const EditorPane({required this.model, this.visible = true, super.key});
+  const EditorPane({
+    required this.model,
+    this.visible = true,
+    this.review,
+    super.key,
+  });
   final EditorViewModel model;
   final bool visible;
+  final GitReviewViewModel? review;
 
   Future<void> _close(BuildContext context, EditorBuffer buffer) async {
     if (await confirmDocumentClose(context, model, [buffer])) {
@@ -111,6 +118,69 @@ final class EditorPane extends StatelessWidget {
     listenable: model,
     builder: (context, _) {
       final active = model.active;
+      if (review != null) {
+        final diff = review!.diff;
+        return Column(
+          children: [
+            Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  diff == null
+                      ? 'Select a file to compare'
+                      : '${diff.originalPath == null ? '' : '${diff.originalPath} → '}${diff.path}',
+                ),
+                TextButton(
+                  onPressed: () => review!.setSideBySide(!review!.sideBySide),
+                  child: Text(review!.sideBySide ? 'Side by side' : 'Inline'),
+                ),
+                IconButton(
+                  tooltip: 'Previous change',
+                  onPressed: () => review!.navigate(-1),
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                ),
+                IconButton(
+                  tooltip: 'Next change',
+                  onPressed: () => review!.navigate(1),
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                ),
+                if (review!.stale) const Text('Outdated comparison'),
+                IconButton(
+                  tooltip: 'Reload comparison',
+                  onPressed: review!.reloadDiff,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (model.webAssets != null)
+                    MonacoEditor(
+                      key: model.webSurfaceKey,
+                      model: model,
+                      visible: visible && diff?.textual == true,
+                      reviewMode: true,
+                      reviewDiff: diff,
+                      sideBySide: review!.sideBySide,
+                      diffNavigation: review!.navigation,
+                    ),
+                  if (diff == null || !diff.textual || model.webAssets == null)
+                    Center(
+                      child: SelectableText(
+                        diff == null
+                            ? 'Choose a local change, commit or two references.'
+                            : 'Original: ${diff.original.kind.name} · ${diff.original.bytes} bytes\nModified: ${diff.modified.kind.name} · ${diff.modified.bytes} bytes${diff.textual ? '\n${diff.modified.text}' : '\nText comparison is unavailable for this content.'}',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      }
       return Column(
         children: [
           if (model.recoveryError != null)
@@ -329,7 +399,11 @@ final class EditorPane extends StatelessWidget {
           ],
           Expanded(
             child: model.webAssets != null && model.buffers.isNotEmpty
-                ? MonacoEditor(model: model, visible: visible)
+                ? MonacoEditor(
+                    key: model.webSurfaceKey,
+                    model: model,
+                    visible: visible,
+                  )
                 : IndexedStack(
                     index: active == null
                         ? model.buffers.length

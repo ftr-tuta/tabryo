@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   fullscreen_window
+  multiview_desktop
   webview_win_floating
 )
 

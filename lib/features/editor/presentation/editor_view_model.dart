@@ -60,6 +60,7 @@ final class EditorBuffer {
 }
 
 final class EditorViewModel extends DartitectViewModel {
+  final GlobalKey webSurfaceKey = GlobalKey();
   EditorViewModel(
     this.files, {
     this.webAssets,

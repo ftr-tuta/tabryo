@@ -68,6 +68,153 @@ void main() {
     await temporary.delete(recursive: true);
   });
 
+  test(
+    'structured review separates index and disk and detects stale contents',
+    () async {
+      final repo = await git.repository(checkout.path);
+      final file = File(p.join(checkout.path, 'mixed.txt'));
+      await file.writeAsString('base\n');
+      await fixtureGit(['add', '.']);
+      await fixtureGit(['commit', '-m', 'base']);
+      await file.writeAsString('index\n');
+      await fixtureGit(['add', '.']);
+      await file.writeAsString('working\n');
+      final change = (await git.status(repo)).single;
+      final staged = await git.localDiff(repo, change, staged: true);
+      final unstaged = await git.localDiff(repo, change, staged: false);
+      expect(staged.original.text, 'base\n');
+      expect(staged.modified.text, 'index\n');
+      expect(unstaged.original.text, 'index\n');
+      expect(unstaged.modified.text, 'working\n');
+      await file.writeAsString('changed again\n');
+      expect(
+        (await git.localDiff(repo, change, staged: false)).identity,
+        isNot(unstaged.identity),
+      );
+      expect(
+        (await git.localDiff(repo, change, staged: true)).identity,
+        staged.identity,
+      );
+    },
+  );
+
+  test(
+    'revision review handles roots, renames, removals, binary and large files',
+    () async {
+      final repo = await git.repository(checkout.path);
+      await File(p.join(checkout.path, 'old name.txt'))
+          .writeAsString('hello\n');
+      await File(p.join(checkout.path, 'binary.dat')).writeAsBytes([0, 1, 2]);
+      await File(p.join(checkout.path, 'large.txt'))
+          .writeAsString('x' * 600000);
+      await fixtureGit(['add', '.']);
+      await fixtureGit(['commit', '-m', 'root']);
+      final root = await git.compare(repo, 'HEAD');
+      expect(root.base, isNull);
+      expect(root.files.length, 3);
+      final initial = await git.revisionDiff(
+        repo,
+        root,
+        root.files.singleWhere((f) => f.path == 'old name.txt'),
+      );
+      expect(initial.original.kind, GitContentKind.missing);
+      expect(initial.modified.text, 'hello\n');
+      expect(
+        (await git.revisionDiff(
+          repo,
+          root,
+          root.files.singleWhere((f) => f.path == 'binary.dat'),
+        )).modified.kind,
+        GitContentKind.binary,
+      );
+      expect(
+        (await git.revisionDiff(
+          repo,
+          root,
+          root.files.singleWhere((f) => f.path == 'large.txt'),
+        )).modified.kind,
+        GitContentKind.large,
+      );
+      await fixtureGit(['mv', 'old name.txt', 'new name.txt']);
+      await fixtureGit(['commit', '-m', 'rename']);
+      final renamed = await git.compare(repo, 'HEAD');
+      expect(renamed.files.single.originalPath, 'old name.txt');
+      final diff = await git.revisionDiff(repo, renamed, renamed.files.single);
+      expect(diff.original.text, diff.modified.text);
+      await fixtureGit(['rm', 'new name.txt']);
+      await fixtureGit(['commit', '-m', 'delete']);
+      final deleted = await git.compare(repo, 'HEAD');
+      expect(
+        (await git.revisionDiff(
+          repo,
+          deleted,
+          deleted.files.single,
+        )).modified.kind,
+        GitContentKind.missing,
+      );
+      expect(
+        (await git.revisionDiff(
+          repo,
+          renamed,
+          renamed.files.single,
+        )).modified.text,
+        'hello\n',
+      );
+    },
+  );
+
+  test(
+    'history pins pages while references move and exposes both merge parents',
+    () async {
+      final repo = await git.repository(checkout.path);
+      await fixtureGit(['commit', '--allow-empty', '-m', 'root']);
+      await fixtureGit(['checkout', '-b', 'topic']);
+      await File(p.join(checkout.path, 'topic.txt')).writeAsString('topic');
+      await fixtureGit(['add', '.']);
+      await fixtureGit(['commit', '-m', 'topic']);
+      await fixtureGit(['checkout', 'main']);
+      await File(p.join(checkout.path, 'main.txt')).writeAsString('main');
+      await fixtureGit(['add', '.']);
+      await fixtureGit(['commit', '-m', 'main']);
+      await fixtureGit(['merge', '--no-ff', 'topic', '-m', 'merge']);
+      final merged = await git.historyPage(repo, const GitHistoryQuery());
+      expect(merged.commits.first.parents, hasLength(2));
+      expect(
+        (await git.compare(repo, 'HEAD', parent: 0)).files.single.path,
+        'topic.txt',
+      );
+      expect(
+        (await git.compare(repo, 'HEAD', parent: 1)).files.single.path,
+        'main.txt',
+      );
+      // Real commit objects, without external fixtures or synthetic runners.
+      for (var i = 0; i < 99; i++) {
+        await fixtureGit(['commit', '--allow-empty', '-m', 'change $i']);
+      }
+      final page = await git.historyPage(repo, const GitHistoryQuery());
+      expect(page.commits, hasLength(100));
+      expect(page.nextOffset, 100);
+      await fixtureGit(['commit', '--allow-empty', '-m', 'new head']);
+      final next = await git.historyPage(
+        repo,
+        const GitHistoryQuery(),
+        anchors: page.anchors,
+        offset: page.nextOffset!,
+      );
+      final all = [...page.commits, ...next.commits];
+      expect(all.map((c) => c.hash).toSet(), hasLength(103));
+      expect(all.any((c) => c.subject == 'new head'), isFalse);
+      expect(next.nextOffset, isNull);
+      expect(
+        (await git.historyPage(
+          repo,
+          const GitHistoryQuery(message: 'topic'),
+        )).commits.single.subject,
+        'topic',
+      );
+    },
+  );
+
   test('selected repository ignores inherited repository overrides', () async {
     final isolated = LocalGit(
       executable: executable,

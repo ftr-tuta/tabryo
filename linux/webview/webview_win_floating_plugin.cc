@@ -152,6 +152,36 @@ static void my_fixed_class_init(MyFixedClass *klass) {
 static void my_fixed_init(MyFixed *self) {
 }
 
+// Secondary FlViews must enter their final GTK hierarchy before realization.
+// Wrapping a running FlView restarts its compositor and loses native focus.
+static void attach_view_host(GtkContainer* window, GtkWidget* child, gpointer) {
+  if (!FL_IS_VIEW(child) || gtk_widget_get_realized(child)) return;
+  auto* host = GTK_WIDGET(g_object_new(my_fixed_get_type(), nullptr));
+  reinterpret_cast<MyFixed*>(host)->main_widget = child;
+  g_object_ref(child);
+  gtk_container_remove(window, child);
+  gtk_fixed_put(GTK_FIXED(host), child, 0, 0);
+  g_object_unref(child);
+  gtk_container_add(window, host);
+  g_object_set_data(G_OBJECT(window), "tabryo-webview-host", host);
+  gtk_widget_show_all(host);
+}
+
+static void watch_window(GtkApplication*, GtkWindow* window, gpointer) {
+  g_signal_connect_after(window, "add", G_CALLBACK(attach_view_host), nullptr);
+}
+
+static GtkWidget* find_view_host(WebviewWinFloatingPlugin* self, int64_t id) {
+  auto* app = gtk_window_get_application(get_window(self));
+  if (!app) return nullptr;
+  for (auto* row = gtk_application_get_windows(app); row; row = row->next) {
+    auto* host = static_cast<GtkWidget*>(g_object_get_data(
+        G_OBJECT(row->data), "tabryo-webview-host"));
+    if (host && fl_view_get_id(FL_VIEW(reinterpret_cast<MyFixed*>(host)->main_widget)) == id) return host;
+  }
+  return nullptr;
+}
+
 void initWidgetContainer(WebviewWinFloatingPlugin* self) {
   if (self->webviewContainer) return;
 
@@ -201,6 +231,7 @@ void initWidgetContainer(WebviewWinFloatingPlugin* self) {
 
   // put webviewContainer into window
   gtk_container_add(GTK_CONTAINER(window), self->webviewContainer);
+  g_object_set_data(G_OBJECT(window), "tabryo-webview-host", self->webviewContainer);
   gtk_widget_show_all(self->webviewContainer);
 
   gtk_widget_set_can_focus(self->flView, TRUE);
@@ -371,7 +402,17 @@ static void webview_win_floating_plugin_handle_method_call(
     return;
   }
 
-  if (isCreateCall) {
+  if (strcmp(method, "attachToView") == 0) {
+    auto* value = fl_value_lookup_string(args, "viewId");
+    auto* host = value && fl_value_get_type(value) == FL_VALUE_TYPE_INT
+        ? find_view_host(self, fl_value_get_int(value)) : nullptr;
+    if (!host) {
+      setErrorResult(method_call, "The destination window is unavailable.");
+      return;
+    }
+    webview->setContainer(host);
+    setVoidResult(method_call);
+  } else if (isCreateCall) {
     const gchar* url = fl_value_get_string(fl_value_lookup_string(args, "url"));
     const gchar* userDataFolder = fl_value_get_string(fl_value_lookup_string(args, "userDataFolder"));    
     createWebview(channel, self, webviewId, url, userDataFolder);
@@ -535,6 +576,9 @@ void webview_win_floating_plugin_register_with_registrar(FlPluginRegistrar* regi
   // GTK hierarchy now; a Dart 'init' must never reparent an active compositor.
   // This creates only GTK widgets, with no browser or child process at startup.
   initWidgetContainer(plugin);
+  auto* application = gtk_window_get_application(get_window(plugin));
+  if (application) g_signal_connect_object(application, "window-added",
+      G_CALLBACK(watch_window), plugin, G_CONNECT_DEFAULT);
   // Jacky }
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();

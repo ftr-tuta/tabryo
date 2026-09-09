@@ -7,7 +7,7 @@ import 'codex_rpc_channel.dart';
 
 /// Attaches to an explicitly selected local App Server. Closing the connection
 /// does not stop the server or cancel its turns; its owner controls that lifetime.
-final class WebSocketCodexConnection implements CodexConnection {
+final class WebSocketCodexConnection implements InteractiveCodexConnection {
   WebSocketCodexConnection({
     required this.endpoint,
     this.bearerToken,
@@ -28,6 +28,7 @@ final class WebSocketCodexConnection implements CodexConnection {
   bool get connected => _ready && (_channel?.connected ?? false);
   @override
   Stream<CodexEvent> get events => _events.stream;
+  @override
   Stream<CodexServerRequest> get requests => _requests.stream;
 
   @override
@@ -135,6 +136,7 @@ final class WebSocketCodexConnection implements CodexConnection {
     return _channel!.request(method, parameters);
   }
 
+  @override
   void respond(Object requestId, Map<String, Object?> result) {
     if (!connected) throw const CodexFailure('Codex is disconnected.');
     _channel!.respond(requestId, result);

@@ -7,12 +7,16 @@
 #include "generated_plugin_registrant.h"
 
 #include <fullscreen_window/fullscreen_window_plugin.h>
+#include <multiview_desktop/multiview_desktop_plugin.h>
 #include <webview_win_floating/webview_win_floating_plugin.h>
 
 void fl_register_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) fullscreen_window_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "FullscreenWindowPlugin");
   fullscreen_window_plugin_register_with_registrar(fullscreen_window_registrar);
+  g_autoptr(FlPluginRegistrar) multiview_desktop_registrar =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "MultiviewDesktopPlugin");
+  multiview_desktop_plugin_register_with_registrar(multiview_desktop_registrar);
   g_autoptr(FlPluginRegistrar) webview_win_floating_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "WebviewWinFloatingPlugin");
   webview_win_floating_plugin_register_with_registrar(webview_win_floating_registrar);

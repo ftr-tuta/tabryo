@@ -1,24 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:dartitect_flutter/dartitect_flutter.dart';
+import 'package:multiview_desktop/multiview_desktop.dart';
 
 import 'composition/dependencies.dart';
 import 'composition/collaboration_service.dart';
 import 'features/preferences/domain/preferences.dart';
+import 'features/preferences/presentation/workbench_theme.dart';
 import 'features/workspaces/presentation/workbench_view_model.dart';
 import 'features/workspaces/presentation/workbench_screen.dart';
+import 'features/workspaces/presentation/window_coordinator.dart';
 import 'features/editor/presentation/monaco_editor.dart';
 
 void main(List<String> arguments) {
   if (arguments.contains('--collaboration-service')) {
     runCollaborationService();
   } else {
-    runApp(const TabryoApp());
+    final windows = WindowCoordinator();
+    runMultiApp(
+      home: (_, _) => TabryoApp(windows: windows),
+      config: MultiAppConfig(
+        observers: [windows],
+        generalParams: const MultiPlatformParams(enableDynamicAnchor: false),
+        globalWindowOptions: const WindowOptions(
+          title: 'Tabryo',
+          size: Size(1280, 800),
+          minimumSize: Size(680, 480),
+        ),
+      ),
+    );
   }
 }
 
 final class TabryoApp extends StatelessWidget {
-  const TabryoApp({this.createViewModel, super.key});
+  const TabryoApp({this.createViewModel, this.windows, super.key});
   final WorkbenchViewModel Function()? createViewModel;
+  final WindowCoordinator? windows;
   @override
   Widget build(BuildContext context) => ViewModelHost.create(
     create: () => (createViewModel ?? createWorkbench)()..initialize(),
@@ -30,25 +46,20 @@ final class TabryoApp extends StatelessWidget {
         title: 'Tabryo',
         debugShowCheckedModeBanner: false,
         navigatorObservers: [editorRoutes],
-        themeMode: switch (model.preferences.theme) {
+        themeMode: switch (model.displayPreferences.theme) {
           AppTheme.system => ThemeMode.system,
           AppTheme.dark => ThemeMode.dark,
           AppTheme.light => ThemeMode.light,
         },
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff347d70)),
-          useMaterial3: true,
-          visualDensity: VisualDensity.compact,
+        theme: workbenchTheme(
+          model.displayPreferences.appearance,
+          Brightness.light,
         ),
-        darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xff73d9b5),
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-          visualDensity: VisualDensity.compact,
+        darkTheme: workbenchTheme(
+          model.displayPreferences.appearance,
+          Brightness.dark,
         ),
-        home: WorkbenchScreen(model: model),
+        home: WorkbenchScreen(model: model, windows: windows),
       ),
     ),
   );

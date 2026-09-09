@@ -15,13 +15,16 @@ let changing = false;
 let diff = null;
 let diffVisible = false;
 let diskModel = null;
+let reviewOriginal = null;
+let reviewModified = null;
+let reviewMode = false;
 let composing = null;
 const diffContainer = document.createElement('div');
 diffContainer.style.width = '100%';
 diffContainer.style.height = '100%';
 const container = document.getElementById('editor');
 const editor = monaco.editor.create(container, {
-  theme: 'vs-dark', automaticLayout: true, minimap: { enabled: false },
+  theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs', automaticLayout: true, minimap: { enabled: false },
   fontFamily: 'Consolas, "DejaVu Sans Mono", monospace', fontSize: 14,
   scrollBeyondLastLine: false, fixedOverflowWidgets: false,
   accessibilitySupport: 'auto', ariaLabel: 'Tabryo code editor',
@@ -111,7 +114,7 @@ function closeDiff() {
 }
 function activate(doc) {
   if (active === doc) return;
-  closeDiff();
+  if (!reviewMode) closeDiff();
   if (active) {
     active.view = editor.saveViewState();
     active.selection = snapshot(active);
@@ -152,6 +155,33 @@ window.tabryoReceive = (packet) => {
   changing = true;
   try {
     switch (packet.type) {
+      case 'reviewDiff': {
+        closeDiff();
+        reviewMode = true;
+        reviewOriginal?.dispose(); reviewModified?.dispose();
+        reviewOriginal = monaco.editor.createModel(packet.original, undefined, monaco.Uri.parse(`tabryo-review://original/${encodeURIComponent(packet.path)}`));
+        reviewModified = monaco.editor.createModel(packet.modified, undefined, monaco.Uri.parse(`tabryo-review://modified/${encodeURIComponent(packet.path)}`));
+        container.replaceChildren(diffContainer);
+        diff ??= monaco.editor.createDiffEditor(diffContainer, {
+          automaticLayout: true, readOnly: true, originalEditable: false, minimap: { enabled: false },
+          hideUnchangedRegions: { enabled: true },
+        });
+        diff.updateOptions({renderSideBySide: packet.sideBySide, readOnly: true, originalEditable: false, hideUnchangedRegions: { enabled: true }});
+        diff.setModel({ original: reviewOriginal, modified: reviewModified });
+        diffVisible = true; diff.layout();
+        break;
+      }
+      case 'diffNavigate': diff?.goToDiff(packet.forward ? 'next' : 'previous'); break;
+      case 'closeReview':
+        reviewMode = false;
+        closeDiff(); reviewOriginal?.dispose(); reviewModified?.dispose();
+        reviewOriginal = null; reviewModified = null;
+        break;
+      case 'theme':
+        monaco.editor.defineTheme('tabryo', { base: packet.dark ? 'vs-dark' : 'vs', inherit: true, rules: [], colors: packet.colors });
+        monaco.editor.setTheme('tabryo');
+        document.body.style.background = packet.colors['editor.background'];
+        break;
       case 'languageResult': language.receive(packet); break;
       case 'sync': {
         const keep = new Set(packet.documents.map(d => d.id));
@@ -208,7 +238,6 @@ window.tabryoReceive = (packet) => {
           editor.setSelection(new monaco.Selection(start.lineNumber, start.column, end.lineNumber, end.column));
           active.pendingSelection = null;
         }
-        monaco.editor.setTheme(packet.dark ? 'vs-dark' : 'vs');
         editor.updateOptions({ readOnly: active?.repair ? true : (active?.readOnly ?? true) });
         if (active) emit(snapshot(active, { type: 'state' }));
         break;
@@ -223,7 +252,7 @@ window.tabryoReceive = (packet) => {
         break;
       }
       case 'command': {
-        if (packet.command === 'focus') editor.focus();
+        if (packet.command === 'focus') (diffVisible ? diff.getModifiedEditor() : editor).focus();
         else if (packet.command === 'undo' || packet.command === 'redo') {
           changing = false;
           editor.trigger('tabryo', packet.command);

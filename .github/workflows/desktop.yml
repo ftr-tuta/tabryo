@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y clang clangd cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xdotool openbox
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -147,17 +147,19 @@ jobs:
         run: flutter test integration_test/editor_test.dart -d windows
       - name: Linux desktop integration
         if: runner.os == 'Linux'
-        run: xvfb-run -a flutter test integration_test/workbench_test.dart -d linux
+        run: xvfb-run -a sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; flutter test integration_test/workbench_test.dart -d linux'
       - name: Linux embedded editor integration
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: xvfb-run -a flutter test integration_test/editor_test.dart -d linux --reporter expanded
         env:
           LC_ALL: C
-      - name: Linux HiDPI editor integration
+      - name: Linux HiDPI editor and shared windows integration
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a -s '-screen 0 2560x1600x24' flutter test integration_test/editor_test.dart -d linux --reporter expanded
+        run: |
+          xvfb-run -a -s '-screen 0 2560x1600x24' flutter test integration_test/editor_test.dart -d linux --reporter expanded
+          xvfb-run -a -s '-screen 0 2560x1600x24' sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; flutter test integration_test/workbench_test.dart -d linux --plain-name "shared windows" --reporter expanded'
         env:
           GDK_SCALE: '2'
           GDK_DPI_SCALE: '0.5'
@@ -188,7 +190,7 @@ jobs:
       - name: Linux Release integration and memory
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a build/linux/x64/release/bundle/tabryo
+        run: xvfb-run -a sh -eu -c 'openbox >/dev/null 2>&1 & wm=$!; trap "kill $wm 2>/dev/null || true" EXIT; build/linux/x64/release/bundle/tabryo'
       - run: flutter build ${{ matrix.device }} --release
       - name: Package Windows
         if: runner.os == 'Windows'

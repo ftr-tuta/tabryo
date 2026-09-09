@@ -38,7 +38,22 @@ import 'package:tabryo/features/terminals/infrastructure/local_text_clipboard.da
 import 'package:tabryo/features/terminals/presentation/terminal_session.dart';
 import 'package:tabryo/features/workspaces/domain/workspace.dart';
 import 'package:tabryo/features/workspaces/presentation/workbench_view_model.dart';
+import 'package:tabryo/features/workspaces/presentation/window_coordinator.dart';
+import 'package:tabryo/features/preferences/domain/preferences.dart';
+import 'package:tabryo/features/terminals/presentation/terminal_pane_view.dart';
+import 'package:tabryo/features/debugger/presentation/devtools_pane.dart';
+import 'package:webview_win_floating/webview_win_floating.dart';
+import 'package:multiview_desktop/multiview_desktop.dart';
 import 'package:tabryo/main.dart';
+
+final class WindowEvents extends WindowObserver {
+  final events = <String>[];
+  @override
+  void onWindowEvent(int viewId, String eventName) {
+    events.add('$viewId:$eventName');
+    if (events.length > 100) events.removeAt(0);
+  }
+}
 
 final class CountingHost implements PtyHost {
   int starts = 0;
@@ -707,12 +722,21 @@ void main() {
         await temporary.delete(recursive: true);
       });
       final boundary = GlobalKey();
-      await tester.pumpWidget(
-        RepaintBoundary(
+      final nativeWindows = WindowCoordinator();
+      runMultiApp(
+        home: (_, _) => RepaintBoundary(
           key: boundary,
-          child: TabryoApp(createViewModel: () => model),
+          child: TabryoApp(
+            createViewModel: () => model,
+            windows: nativeWindows,
+          ),
+        ),
+        config: MultiAppConfig(
+          observers: [nativeWindows],
+          generalParams: const MultiPlatformParams(enableDynamicAnchor: false),
         ),
       );
+      await until(tester, () => nativeWindows.primary != null);
       await model.openWorkspace(root);
       await model.openFile(file.path);
       await tester.pumpAndSettle();
@@ -816,6 +840,193 @@ void main() {
       expect(command.exitCode, 0, reason: terminalText(command));
       expect(host.starts, 1);
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  testWidgets(
+    'shared windows move execution and local preview without restarting services',
+    (tester) async {
+      final temporary = await Directory.systemTemp.createTemp(
+        'tabryo-windows-',
+      );
+      final root = await temporary.resolveSymbolicLinks();
+      final cache = PreviewCache();
+      final git = LocalGit(
+        executable: findExecutable(['git.exe', 'git'])!,
+        cache: cache,
+      );
+      final host = CountingHost();
+      final model = WorkbenchViewModel(
+        host: host,
+        launcher: InteractiveLauncher(),
+        files: LocalWorkspaceFiles(cache),
+        gitReader: git,
+        gitMutator: git,
+        preferencesStore: LocalPreferencesStore(
+          File(p.join(root, 'preferences.json')),
+        ),
+        editor: EditorViewModel(LocalDocumentFiles(cache)),
+        devToolsProfileDirectory: p.join(root, 'webview'),
+      );
+      final windows = WindowCoordinator();
+      final windowEvents = WindowEvents();
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requests = <String>[];
+      server.listen((request) async {
+        requests.add(request.uri.path);
+        request.response.headers.contentType = ContentType.html;
+        request.response.write(
+          '<!doctype html><html><body style="background:#abc"><input id="value" value="initial"><script>window.presentationMarker=41</script></body></html>',
+        );
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await model.shutdown();
+        await server.close(force: true);
+        try {
+          await temporary.delete(recursive: true);
+        } on FileSystemException {
+          /* Native profile still closing. */
+        }
+      });
+      runMultiApp(
+        home: (_, _) =>
+            TabryoApp(createViewModel: () => model, windows: windows),
+        config: MultiAppConfig(
+          observers: [windows, windowEvents],
+          generalParams: const MultiPlatformParams(enableDynamicAnchor: false),
+        ),
+      );
+      await until(tester, () => windows.primary != null);
+      await model.openWorkspace(root);
+      await model.openTerminal();
+      await until(
+        tester,
+        () => terminalText(model.activeSession!).contains('SHELL_READY'),
+      );
+      final session = model.activeSession!;
+      await tester.pump();
+      final terminalState = tester.state(find.byType(TerminalPaneView));
+      await tester.tap(find.text('Open execution in window'));
+      await until(tester, () => windows.detached.length == 1);
+      final execution = windows.detached.single;
+      await until(
+        tester,
+        () => find.byType(TerminalPaneView).evaluate().length == 1,
+      );
+      expect(
+        identical(tester.state(find.byType(TerminalPaneView)), terminalState),
+        isTrue,
+      );
+      expect(host.starts, 1);
+      final id = execution.window!;
+      await windows.detach(execution);
+      expect(execution.window, id);
+      final window = MultiViewDesktop.fromId(id);
+      await window.minimize();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(
+        await window.isMinimized(),
+        isTrue,
+        reason: '${windowEvents.events}',
+      );
+      await until(tester, () => execution.minimized);
+      session.terminal.textInput('still running\r');
+      await until(
+        tester,
+        () => terminalText(session).contains('ECHO:still running'),
+      );
+      await windows.focus(execution);
+      await window.closeWindow();
+      await until(tester, () => execution.window == null);
+      await tester.pump();
+      expect(
+        identical(tester.state(find.byType(TerminalPaneView)), terminalState),
+        isTrue,
+      );
+      expect(host.starts, 1);
+
+      await tester.tap(find.text('Web preview'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextField),
+        'http://127.0.0.1:${server.port}/',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Open'));
+      await until(
+        tester,
+        () => find.byType(WinWebViewWidget).evaluate().isNotEmpty,
+      );
+      final browser = tester
+          .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
+          .controller;
+      await until(
+        tester,
+        () => tester
+            .state<DevToolsPaneState>(find.byType(DevToolsPane))
+            .surfaceVisible,
+      );
+      await browser.runJavaScript(
+        'document.getElementById("value").value="ação preserved"; window.presentationMarker=42',
+      );
+      await tester.tap(find.byTooltip('Open in window'));
+      await until(
+        tester,
+        () => windows.detached.any(
+          (entry) => entry.category == ToolWindow.preview,
+        ),
+      );
+      final preview = windows.detached.singleWhere(
+        (entry) => entry.category == ToolWindow.preview,
+      );
+      await tester.pump();
+      expect(
+        identical(
+          tester
+              .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
+              .controller,
+          browser,
+        ),
+        isTrue,
+      );
+      expect(
+        await browser.runJavaScriptReturningResult('window.presentationMarker'),
+        42,
+      );
+      model.previewPreferences(
+        model.preferences.copyWith(theme: AppTheme.dark),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        await browser.runJavaScriptReturningResult(
+          'document.getElementById("value").value === "ação preserved"',
+        ),
+        isTrue,
+      );
+      expect(
+        await browser.runJavaScriptReturningResult(
+          'getComputedStyle(document.body).backgroundColor === "rgb(170, 187, 204)"',
+        ),
+        isTrue,
+      );
+      final returning = windows.reattach(preview);
+      await until(tester, () => preview.window == null);
+      await tester.pump(const Duration(milliseconds: 300));
+      await returning;
+      expect(
+        await browser.runJavaScriptReturningResult('window.presentationMarker'),
+        42,
+      );
+      expect(requests.where((path) => path == '/'), hasLength(1));
+      expect(host.starts, 1);
+      expect(model.sessions[session.id], same(session));
+      expect(tester.takeException(), isNull);
+      debugPrint(
+        'Shared windows: ${host.starts} PTY; one preserved browser; one Flutter engine; RSS ${ProcessInfo.currentRss ~/ (1024 * 1024)} MiB',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
     timeout: const Timeout(Duration(minutes: 3)),

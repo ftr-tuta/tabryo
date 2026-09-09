@@ -1,10 +1,14 @@
 import '../../projects/domain/project.dart';
+import 'appearance.dart';
 
 enum AppTheme { system, dark, light }
 
 final class Preferences {
   const Preferences({
     this.theme = AppTheme.system,
+    this.appearance = const Appearance(),
+    this.activityLayouts = const {},
+    this.chatDrafts = const {},
     this.fontFamily = 'monospace',
     this.fontSize = 14,
     this.rememberPreferences = false,
@@ -18,6 +22,9 @@ final class Preferences {
     this.layout = const [],
   });
   final AppTheme theme;
+  final Appearance appearance;
+  final Map<String, Map<String, Object?>> activityLayouts;
+  final Map<String, String> chatDrafts;
   final String fontFamily;
   final double fontSize;
   final bool rememberPreferences;
@@ -32,6 +39,9 @@ final class Preferences {
 
   Preferences copyWith({
     AppTheme? theme,
+    Appearance? appearance,
+    Map<String, Map<String, Object?>>? activityLayouts,
+    Map<String, String>? chatDrafts,
     String? fontFamily,
     double? fontSize,
     bool? rememberPreferences,
@@ -45,6 +55,9 @@ final class Preferences {
     List<Map<String, Object?>>? layout,
   }) => Preferences(
     theme: theme ?? this.theme,
+    appearance: appearance ?? this.appearance,
+    activityLayouts: activityLayouts ?? this.activityLayouts,
+    chatDrafts: chatDrafts ?? this.chatDrafts,
     fontFamily: fontFamily ?? this.fontFamily,
     fontSize: fontSize ?? this.fontSize,
     rememberPreferences: rememberPreferences ?? this.rememberPreferences,
@@ -66,6 +79,8 @@ final class Preferences {
     'recoverDocuments': recoverDocuments,
     if (rememberPreferences) ...{
       'theme': theme.name,
+      'appearance': appearance.toJson(),
+      'chatDrafts': chatDrafts,
       'fontFamily': fontFamily,
       'fontSize': fontSize,
       'watchFiles': watchFiles,
@@ -77,6 +92,7 @@ final class Preferences {
     },
     if (rememberWorkspaces) 'roots': roots,
     if (restoreLayout) 'layout': layout,
+    if (restoreLayout) 'activityLayouts': activityLayouts,
   };
 
   factory Preferences.fromJson(Map<String, dynamic> json) {
@@ -86,6 +102,29 @@ final class Preferences {
     final remember = json['rememberPreferences'] == true;
     final size = (json['fontSize'] as num?)?.toDouble() ?? 14;
     return Preferences(
+      appearance: remember
+          ? Appearance.fromJson(json['appearance'])
+          : const Appearance(),
+      chatDrafts: remember
+          ? {
+              for (final entry
+                  in (json['chatDrafts'] as Map? ?? {}).entries.take(30))
+                if (entry.key is String &&
+                    entry.value is String &&
+                    (entry.value as String).length <= 16384)
+                  entry.key as String: entry.value as String,
+            }
+          : const {},
+      activityLayouts: json['restoreLayout'] == true
+          ? {
+              for (final entry
+                  in (json['activityLayouts'] as Map? ?? {}).entries.take(8))
+                if (entry.key is String && entry.value is Map)
+                  entry.key as String: Map<String, Object?>.from(
+                    entry.value as Map,
+                  ),
+            }
+          : const {},
       rememberPreferences: remember,
       rememberWorkspaces: json['rememberWorkspaces'] == true,
       restoreLayout: json['restoreLayout'] == true,

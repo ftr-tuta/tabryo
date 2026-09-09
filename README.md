@@ -126,6 +126,42 @@ Input arriving while a replacement crosses the native bridge is retained and
 requires an explicit **Keep local edits** or reload choice before saving.
 Terminal output cannot silently access the clipboard, open links or download files.
 
+## Activities, appearance and shared windows
+
+**Develop**, **Converse** and **Review** share the same workspace and open buffers.
+Use Ctrl+Alt+1/2/3 to change activity, Ctrl+B to toggle navigation and Ctrl+Alt+M
+to maximize the main area. The command palette also restores the activity layout.
+Drag the panel dividers to resize them; narrow windows use a navigation popup and
+tool tabs. **Settings** opens a tab with category search, System/Light/Dark modes,
+Tabryo/Ocean/Violet presets and independent advanced colors for each mode.
+Previewing is temporary; **Apply**, **Cancel**, contrast correction and restoration
+keep the existing persistence choices in control.
+
+**Review** groups conflicts, staged, unstaged and untracked files. History starts
+at the current branch, supports filters and loads pages from pinned commit IDs.
+Choose a commit, a merge parent or two references, then a file for the shared
+Monaco diff. Local staged and unstaged versions remain distinct. F5 checks the
+current comparison for disk, index or reference changes; historical pages retain
+their original anchors until the history is refreshed.
+
+**Converse** starts the installed Codex CLI's App Server only after **Connect CLI**
+or **New conversation**. The CLI supplies models, permissions, account limits and
+history. Direct chat messages are separate from collaboration envelopes. Only
+conversations created by this client are controlled; external and collaboration
+sessions are available as history. Reconnection reconciles item IDs and uncertain
+sends without automatic replay. Context is attached only through explicit review.
+Up to 200 recent turns, 2,000 items and 2 MiB of text per conversation are retained for display;
+the CLI keeps the full history. Draft persistence follows remembered preferences.
+
+Execution, DevTools and a chosen local web preview can **Open in window**,
+**Bring to front** or **Return to panel**. Each category has at most one detached
+window and keeps its original workspace/session. Closing an auxiliary window
+returns its content without stopping the process. Windows share one Flutter
+engine and isolate (`multiview_desktop` 1.2.2); moving a WebView preserves its
+controller and profile through the local Windows/Linux host adapters. Preview
+requires an explicit loopback URL and uses a separate profile without editor
+bridges. Saved disposition never starts a command or service on its own.
+
 ## Projects and toolchains
 
 Open **Projects and toolchains** from the toolbar or command palette to scan the
@@ -365,9 +401,9 @@ after configuration changes. Disabling/removing a definition does not revoke
 credentials at its provider. Server-initiated approvals and elicitation forms are
 explicitly refused in this initial inspector; use the Codex terminal for those
 flows. Authenticated remote provider flows remain unqualified.
-The editor can now publish a reviewed excerpt through its local MCP endpoint;
-graphical Codex conversations remain planned.
-see [metas e objetivos](TABRYO_METAS_E_OBJETIVOS.adoc).
+The editor can publish a reviewed excerpt through its local MCP endpoint;
+direct graphical conversations use **Converse**, with their own approval flow.
+See [metas e objetivos](TABRYO_METAS_E_OBJETIVOS.adoc).
 
 The native `test/mcp_codex_test.dart` checks the real App Server with disposable
 configuration and local STDIO/HTTP fixtures, without invoking a model or using
@@ -600,8 +636,8 @@ stays in collaboration history after the editor endpoint is revoked.
 
 **Revoke editor context**, closing the source document, changing workspace and
 closing Tabryo revoke the endpoint. Clients cannot browse arbitrary files or
-apply edits through MCP. The endpoint is local and temporary; remote exposure and
-graphical agent conversations remain outside this slice.
+apply edits through MCP. The endpoint is local and temporary; remote exposure
+remains outside this slice. **Converse** also supports explicitly attached context.
 Native tests cover authentication, revocation, stale edits, real Codex MCP calls
 and Monaco review/undo without invoking a model.
 

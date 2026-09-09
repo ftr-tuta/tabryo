@@ -31,11 +31,125 @@ final class GitChange {
 }
 
 final class GitCommit {
-  const GitCommit(this.hash, this.author, this.date, this.subject);
+  const GitCommit(
+    this.hash,
+    this.author,
+    this.date,
+    this.subject, {
+    this.parents = const [],
+    this.references = const [],
+  });
   final String hash;
   final String author;
   final String date;
   final String subject;
+  final List<String> parents;
+  final List<String> references;
+}
+
+final class GitReference {
+  const GitReference(this.name, this.hash);
+  final String name, hash;
+}
+
+final class GitHistoryQuery {
+  const GitHistoryQuery({
+    this.reference = 'HEAD',
+    this.allReferences = false,
+    this.author = '',
+    this.since = '',
+    this.until = '',
+    this.path = '',
+    this.message = '',
+  });
+  final String reference, author, since, until, path, message;
+  final bool allReferences;
+}
+
+final class GitHistoryPage {
+  const GitHistoryPage(this.commits, this.anchors, this.nextOffset);
+  final List<GitCommit> commits;
+  final List<String> anchors;
+  final int? nextOffset;
+}
+
+final class GitFileChange {
+  const GitFileChange(
+    this.path,
+    this.status, {
+    this.originalPath,
+    this.additions,
+    this.deletions,
+  });
+  final String path, status;
+  final String? originalPath;
+  final int? additions, deletions;
+}
+
+final class GitComparison {
+  const GitComparison({required this.target, required this.files, this.base});
+  final String? base;
+  final String target;
+  final List<GitFileChange> files;
+}
+
+enum GitContentKind { text, binary, large, missing, unavailable }
+
+final class GitContent {
+  const GitContent(this.kind, this.identity, {this.text = '', this.bytes = 0});
+  final GitContentKind kind;
+  final String identity, text;
+  final int bytes;
+}
+
+final class GitFileDiff {
+  const GitFileDiff(
+    this.path,
+    this.original,
+    this.modified, {
+    this.originalPath,
+  });
+  final String path;
+  final String? originalPath;
+  final GitContent original, modified;
+  bool get textual => [original, modified].every(
+    (c) => c.kind == GitContentKind.text || c.kind == GitContentKind.missing,
+  );
+  String get identity => '${original.identity}:${modified.identity}';
+}
+
+/// Structured, bounded review queries; all revision comparisons pin object IDs.
+abstract interface class GitReviewReader {
+  Future<List<GitReference>> references(
+    GitRepository repo, {
+    Cancellation? cancellation,
+  });
+  Future<GitHistoryPage> historyPage(
+    GitRepository repo,
+    GitHistoryQuery query, {
+    List<String>? anchors,
+    int offset = 0,
+    Cancellation? cancellation,
+  });
+  Future<GitComparison> compare(
+    GitRepository repo,
+    String target, {
+    String? base,
+    int parent = 0,
+    Cancellation? cancellation,
+  });
+  Future<GitFileDiff> revisionDiff(
+    GitRepository repo,
+    GitComparison comparison,
+    GitFileChange file, {
+    Cancellation? cancellation,
+  });
+  Future<GitFileDiff> localDiff(
+    GitRepository repo,
+    GitChange change, {
+    required bool staged,
+    Cancellation? cancellation,
+  });
 }
 
 final class GitIdentity {

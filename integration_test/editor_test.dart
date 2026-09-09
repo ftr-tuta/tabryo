@@ -22,6 +22,11 @@ import 'package:tabryo/features/editor/infrastructure/local_dart_formatter.dart'
 import 'package:tabryo/features/editor/presentation/editor_pane.dart';
 import 'package:tabryo/features/editor/presentation/editor_view_model.dart';
 import 'package:tabryo/features/editor/presentation/monaco_editor.dart';
+import 'package:tabryo/features/git/domain/git_ports.dart';
+import 'package:tabryo/features/git/infrastructure/local_git.dart';
+import 'package:tabryo/features/git/presentation/git_review_view_model.dart';
+import 'package:tabryo/features/preferences/domain/appearance.dart';
+import 'package:tabryo/features/preferences/presentation/workbench_theme.dart';
 import 'package:tabryo/features/editor_context/application/editor_context_service.dart';
 import 'package:tabryo/features/editor_context/infrastructure/local_editor_context.dart';
 import 'package:tabryo/features/language/application/language_service.dart';
@@ -317,15 +322,38 @@ void main() {
         'Native editor: fixture ready; mounting the workbench surface',
       );
       final visible = ValueNotifier(true);
+      final reviewing = ValueNotifier(false);
+      final brightness = ValueNotifier(Brightness.light);
+      final git = LocalGit(executable: 'git', cache: PreviewCache());
+      final review = GitReviewViewModel(git, git, git)
+        ..diff = const GitFileDiff(
+          'review.dart',
+          GitContent(
+            GitContentKind.text,
+            'original',
+            text: 'beforeReview();\n',
+          ),
+          GitContent(GitContentKind.text, 'modified', text: 'afterReview();\n'),
+        );
       addTearDown(visible.dispose);
+      addTearDown(reviewing.dispose);
+      addTearDown(brightness.dispose);
+      addTearDown(review.dispose);
       await tester.pumpWidget(
-        MaterialApp(
-          navigatorObservers: [editorRoutes],
-          home: Scaffold(
-            body: ValueListenableBuilder<bool>(
-              valueListenable: visible,
-              builder: (_, value, _) =>
-                  EditorPane(model: editor, visible: value),
+        ListenableBuilder(
+          listenable: Listenable.merge([visible, reviewing, brightness]),
+          builder: (_, _) => MaterialApp(
+            theme: workbenchTheme(
+              const Appearance(preset: ThemePreset.violet),
+              brightness.value,
+            ),
+            navigatorObservers: [editorRoutes],
+            home: Scaffold(
+              body: EditorPane(
+                model: editor,
+                visible: visible.value,
+                review: reviewing.value ? review : null,
+              ),
             ),
           ),
         ),
@@ -441,6 +469,36 @@ void main() {
         utf8.decode(saved.skip(3).toList()),
         edited.replaceAll('\n', '\r\n'),
       );
+      final selectionBeforeReview = buffer.controller.selection;
+      reviewing.value = true;
+      brightness.value = Brightness.dark;
+      await tester.pump();
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.monaco-diff-editor')?.textContent.includes('afterReview') ?? false",
+        true,
+      );
+      expect(
+        tester.state<MonacoEditorState>(find.byType(MonacoEditor)),
+        same(state),
+      );
+      expect(
+        tester
+            .widget<WinWebViewWidget>(find.byType(WinWebViewWidget))
+            .controller,
+        same(browser),
+      );
+      expect(buffer.controller.text, edited);
+      reviewing.value = false;
+      await tester.pump();
+      await expectWeb(
+        tester,
+        browser,
+        "document.querySelector('.view-lines')?.textContent.includes('ação') ?? false",
+        true,
+      );
+      expect(buffer.controller.selection, selectionBeforeReview);
       editor.undoBuffer(buffer);
       await until(tester, () => buffer.controller.text != edited);
       editor.redoBuffer(buffer);
